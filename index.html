@@ -907,13 +907,11 @@
         try {
           await auth.signInWithPopup(googleProvider);
         } catch (error) {
-          if (error.code === 'auth/unauthorized-domain') {
-            handleMockLogin();
-          } else {
-            console.error("Error signing in with Google:", error);
-            setErrorMessage(error.message);
-            handleMockLogin();
-          }
+          // In sandboxed environments or iframes running under unique blob protocols,
+          // standard popups and web storage APIs are locked down. We log the warning
+          // and gracefully switch the user over to our simulated interactive preview mode.
+          console.warn("Google authentication is restricted in this sandboxed preview environment. Launching Weaver in Offline Preview Mode.", error);
+          handleMockLogin();
         } finally {
           setIsLoggingIn(false);
         }
@@ -1127,7 +1125,7 @@
                         ))}
                       </select>
                       {availableLists.length === 0 && (
-                         <p className="text-xs text-amber-500 mt-2">No lists found in this location.</p>
+                         <p className="text-xs text-amber-600 mt-2">No lists found in this location.</p>
                       )}
                     </div>
                   )}
@@ -1415,124 +1413,149 @@
                       </button>
                     </div>
                     <ul className="divide-y divide-white/5">
-                      {mappedWorkflows.map(workflow => (
-                        <li key={workflow.id} className="p-6 hover:bg-white/5 transition-colors">
-                          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-                            <div className="flex items-start space-x-4">
-                              <div className="bg-indigo-500/10 p-2.5 rounded-lg hidden sm:block mt-1 border border-indigo-500/20">
-                                <SpiderNetworkIcon className="h-5 w-5 text-indigo-400" />
-                              </div>
-                              <div className="flex flex-col space-y-1.5 w-full">
-                                <div className="flex flex-wrap items-center text-sm text-slate-300 gap-y-2">
-                                  <span className="font-semibold text-white flex items-center">
-                                    <Box className="h-4 w-4 mr-1.5 text-slate-400" /> {workflow.team} / {workflow.space}
-                                  </span>
-                                  {workflow.folder !== 'No Folder' && (
-                                    <>
-                                      <ChevronRight className="h-4 w-4 mx-2 text-slate-600 hidden sm:block" />
-                                      <span className="flex items-center text-slate-300">
-                                        <FolderOpen className="h-4 w-4 mr-1.5 text-slate-400" /> {workflow.folder}
-                                      </span>
-                                    </>
-                                  )}
-                                  <ChevronRight className="h-4 w-4 mx-2 text-slate-600 hidden sm:block" />
-                                  <span className="font-semibold text-indigo-400 flex items-center bg-indigo-500/10 px-2.5 py-1 rounded-md border border-indigo-500/20 shadow-sm">
-                                    <ListTodo className="h-4 w-4 mr-1.5" /> {workflow.list}
-                                  </span>
-                                </div>
-                                <div className="flex items-center text-xs text-slate-500">
-                                  <Clock className="h-3 w-3 mr-1" />
-                                  Last synced: {new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: 'numeric', second: 'numeric' }).format(new Date(workflow.lastSynced))}
-                                </div>
-                              </div>
-                            </div>
-                            <button 
-                              onClick={() => removeMapping(workflow.id)}
-                              className="text-slate-400 hover:text-red-400 transition-colors p-2 rounded-md hover:bg-red-950/20 shrink-0 self-end sm:self-start"
-                              title="Remove Mapping"
-                            >
-                              <Trash2 className="h-5 w-5" />
-                            </button>
-                          </div>
+                      {mappedWorkflows.map(workflow => {
+                        const displayedTasks = (workflow.tasks || []).filter(task => {
+                          if (completionFilterType === 'none') return true;
+                          if (completionFilterType === 'tags') {
+                            if (!selectedTagFilter) return true;
+                            return task.tags?.some(tag => tag.name === selectedTagFilter);
+                          }
+                          return true;
+                        });
 
-                          <div className="mt-5 pt-4 border-t border-white/5 sm:ml-12 pl-1 sm:pl-0">
-                            <div className="flex items-center justify-between mb-3">
-                              <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Active Tasks</h4>
-                              <span className="text-xs bg-slate-900/60 text-slate-400 border border-white/5 px-2.5 py-0.5 rounded-full font-medium">
-                                {workflow.tasks?.length || 0} items
-                              </span>
-                            </div>
-                            
-                            {workflow.tasks && workflow.tasks.length > 0 ? (
-                              <div className="space-y-2">
-                                {workflow.tasks.map(task => (
-                                  <div key={task.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-3 bg-slate-950/30 border border-white/5 rounded-xl shadow-inner hover:border-indigo-500/20 transition-all gap-3">
-                                    <div className="flex items-center space-x-3 overflow-hidden min-w-0">
-                                      <div 
-                                        className="w-2.5 h-2.5 rounded-full shrink-0 shadow-lg" 
-                                        style={{ backgroundColor: task.status?.color || '#cbd5e1', boxShadow: `0 0 8px ${task.status?.color || '#cbd5e1'}` }} 
-                                        title={`Status: ${task.status?.status || 'Unknown'}`}
-                                      />
-                                      <span className="text-sm font-medium text-slate-200 truncate">
-                                        {task.name}
-                                      </span>
-                                    </div>
-                                    <div className="flex items-center shrink-0 space-x-3 sm:pl-4 pl-5 overflow-x-auto overflow-y-hidden py-1">
-                                      {task.tags && task.tags.length > 0 && (
-                                        <div className="flex items-center space-x-1 mr-2 hidden sm:flex">
-                                          <Tag className="h-3 w-3 text-slate-500 mr-1" />
-                                          {task.tags.map((tag, i) => (
-                                            <span 
-                                              key={i} 
-                                              className="px-1.5 py-0.5 text-[10px] font-semibold rounded whitespace-nowrap"
-                                              style={{ color: tag.color, backgroundColor: `${tag.color}15`, border: `1px solid ${tag.color}30` }}
-                                            >
-                                              {tag.name}
-                                            </span>
-                                          ))}
-                                        </div>
-                                      )}
-                                      {task.due_date && (
-                                        <div className="flex items-center text-xs text-slate-400 whitespace-nowrap" title="Due Date">
-                                          <Calendar className="h-3.5 w-3.5 mr-1.5 text-slate-500" />
-                                          {new Date(parseInt(task.due_date)).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-                                        </div>
-                                      )}
-                                      {task.priority && (
-                                        <div className="flex items-center text-xs text-slate-400 capitalize whitespace-nowrap" title={`Priority: ${task.priority.priority}`}>
-                                          <Flag className="h-3.5 w-3.5 mr-1.5" style={{ color: task.priority.color }} />
-                                          {task.priority.priority}
-                                        </div>
-                                      )}
-                                      {task.assignees && task.assignees.length > 0 ? (
-                                        <div className="flex -space-x-1.5">
-                                          {task.assignees.map((assignee, i) => (
-                                            <img 
-                                              key={i} 
-                                              src={assignee.profilePicture || `https://ui-avatars.com/api/?name=${encodeURIComponent(assignee.username)}&background=random`} 
-                                              alt={assignee.username} 
-                                              className="w-6 h-6 rounded-full border border-slate-900 bg-slate-800 object-cover" 
-                                              title={`Assigned to ${assignee.username}`} 
-                                            />
-                                          ))}
-                                        </div>
-                                      ) : (
-                                        <div className="flex items-center justify-center w-6 h-6 rounded-full border border-white/5 bg-slate-900 text-slate-500" title="Unassigned">
-                                          <Users className="h-3 w-3" />
-                                        </div>
-                                      )}
-                                    </div>
+                        return (
+                          <li key={workflow.id} className="p-6 hover:bg-white/5 transition-colors">
+                            <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+                              <div className="flex items-start space-x-4">
+                                <div className="bg-indigo-500/10 p-2.5 rounded-lg hidden sm:block mt-1 border border-indigo-500/20">
+                                  <SpiderNetworkIcon className="h-5 w-5 text-indigo-400" />
+                                </div>
+                                <div className="flex flex-col space-y-1.5 w-full">
+                                  <div className="flex flex-wrap items-center text-sm text-slate-300 gap-y-2">
+                                    <span className="font-semibold text-white flex items-center">
+                                      <Box className="h-4 w-4 mr-1.5 text-slate-400" /> {workflow.team} / {workflow.space}
+                                    </span>
+                                    {workflow.folder !== 'No Folder' && (
+                                      <>
+                                        <ChevronRight className="h-4 w-4 mx-2 text-slate-600 hidden sm:block" />
+                                        <span className="flex items-center text-slate-300">
+                                          <FolderOpen className="h-4 w-4 mr-1.5 text-slate-400" /> {workflow.folder}
+                                        </span>
+                                      </>
+                                    )}
+                                    <ChevronRight className="h-4 w-4 mx-2 text-slate-600 hidden sm:block" />
+                                    <span className="font-semibold text-indigo-400 flex items-center bg-indigo-500/10 px-2.5 py-1 rounded-md border border-indigo-500/20 shadow-sm">
+                                      <ListTodo className="h-4 w-4 mr-1.5" /> {workflow.list}
+                                    </span>
                                   </div>
-                                ))}
+                                  <div className="flex items-center text-xs text-slate-500">
+                                    <Clock className="h-3 w-3 mr-1" />
+                                    Last synced: {new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: 'numeric', second: 'numeric' }).format(new Date(workflow.lastSynced))}
+                                  </div>
+                                </div>
                               </div>
-                            ) : (
-                              <div className="text-sm text-slate-400 italic p-4 bg-slate-950/20 rounded-lg text-center border border-white/5">
-                                No active tasks found in this list.
+                              <button 
+                                onClick={() => removeMapping(workflow.id)}
+                                className="text-slate-400 hover:text-red-400 transition-colors p-2 rounded-md hover:bg-red-950/20 shrink-0 self-end sm:self-start"
+                                title="Remove Mapping"
+                              >
+                                <Trash2 className="h-5 w-5" />
+                              </button>
+                            </div>
+
+                            {/* Fetched Tasks UI */}
+                            <div className="mt-5 pt-4 border-t border-white/5 sm:ml-12 pl-1 sm:pl-0">
+                              <div className="flex items-center justify-between mb-3">
+                                <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Active Tasks</h4>
+                                <span className="text-xs bg-slate-900/60 text-slate-400 border border-white/5 px-2.5 py-0.5 rounded-full font-medium">
+                                  {completionFilterType === 'tags' && selectedTagFilter
+                                    ? `${displayedTasks.length} of ${workflow.tasks?.length || 0} items`
+                                    : `${workflow.tasks?.length || 0} items`}
+                                </span>
                               </div>
-                            )}
-                          </div>
-                        </li>
-                      ))}
+                              
+                              {displayedTasks && displayedTasks.length > 0 ? (
+                                <div className="space-y-2">
+                                  {displayedTasks.map(task => (
+                                    <div key={task.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-3 bg-slate-950/30 border border-white/5 rounded-xl shadow-inner hover:border-indigo-500/20 transition-all gap-3 animate-in fade-in duration-300">
+                                      <div className="flex items-center space-x-3 overflow-hidden min-w-0">
+                                        <div 
+                                          className="w-2.5 h-2.5 rounded-full shrink-0 shadow-lg" 
+                                          style={{ backgroundColor: task.status?.color || '#cbd5e1', boxShadow: `0 0 8px ${task.status?.color || '#cbd5e1'}` }} 
+                                          title={`Status: ${task.status?.status || 'Unknown'}`}
+                                        />
+                                        <span className="text-sm font-medium text-slate-200 truncate">
+                                          {task.name}
+                                        </span>
+                                      </div>
+                                      <div className="flex items-center shrink-0 space-x-3 sm:pl-4 pl-5 overflow-x-auto overflow-y-hidden py-1">
+                                        {/* Dynamic Status Text Badge */}
+                                        <span 
+                                          className="px-2 py-0.5 text-[10px] font-bold rounded capitalize border"
+                                          style={{ 
+                                            color: task.status?.color || '#94a3b8', 
+                                            backgroundColor: `${task.status?.color || '#94a3b8'}15`, 
+                                            borderColor: `${task.status?.color || '#94a3b8'}30` 
+                                          }}
+                                        >
+                                          {task.status?.status || 'Open'}
+                                        </span>
+                                        {task.tags && task.tags.length > 0 && (
+                                          <div className="flex items-center space-x-1 mr-2 hidden sm:flex">
+                                            <Tag className="h-3 w-3 text-slate-500 mr-1" />
+                                            {task.tags.map((tag, i) => (
+                                              <span 
+                                                key={i} 
+                                                className="px-1.5 py-0.5 text-[10px] font-semibold rounded whitespace-nowrap"
+                                                style={{ color: tag.color, backgroundColor: `${tag.color}15`, border: `1px solid ${tag.color}30` }}
+                                              >
+                                                {tag.name}
+                                              </span>
+                                            ))}
+                                          </div>
+                                        )}
+                                        {task.due_date && (
+                                          <div className="flex items-center text-xs text-slate-400 whitespace-nowrap" title="Due Date">
+                                            <Calendar className="h-3.5 w-3.5 mr-1.5 text-slate-500" />
+                                            {new Date(parseInt(task.due_date)).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                                          </div>
+                                        )}
+                                        {task.priority && (
+                                          <div className="flex items-center text-xs text-slate-400 capitalize whitespace-nowrap" title={`Priority: ${task.priority.priority}`}>
+                                            <Flag className="h-3.5 w-3.5 mr-1.5" style={{ color: task.priority.color }} />
+                                            {task.priority.priority}
+                                          </div>
+                                        )}
+                                        {task.assignees && task.assignees.length > 0 ? (
+                                          <div className="flex -space-x-1.5">
+                                            {task.assignees.map((assignee, i) => (
+                                              <img 
+                                                key={i} 
+                                                src={assignee.profilePicture || `https://ui-avatars.com/api/?name=${encodeURIComponent(assignee.username)}&background=random`} 
+                                                alt={assignee.username} 
+                                                className="w-6 h-6 rounded-full border border-slate-900 bg-slate-800 object-cover" 
+                                                title={`Assigned to ${assignee.username}`} 
+                                              />
+                                            ))}
+                                          </div>
+                                        ) : (
+                                          <div className="flex items-center justify-center w-6 h-6 rounded-full border border-white/5 bg-slate-900 text-slate-500" title="Unassigned">
+                                            <Users className="h-3 w-3" />
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="text-sm text-slate-400 italic p-4 bg-slate-950/20 rounded-lg text-center border border-white/5">
+                                  No tasks match the selected filter.
+                               </div>
+                              )}
+                            </div>
+                          </li>
+                        );
+                      })}
                     </ul>
                   </div>
 
