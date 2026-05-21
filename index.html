@@ -579,7 +579,7 @@
       return <canvas ref={canvasRef} className="absolute inset-0 w-full h-full block z-0 transition-opacity duration-1000" style={{ opacity }} />;
     };
 
-    // --- Mock Data ---
+    // --- Mock Data with Nested Subtasks Support ---
     const MOCK_CLICKUP_DATA = {
       teams: [{ id: 'mock_team_1', name: 'Acme Corp Workspace' }],
       spaces: {
@@ -607,7 +607,11 @@
             priority: { priority: 'high', color: '#ef4444' },
             due_date: (Date.now() + 86400000).toString(),
             assignees: [{ username: 'Alex D.', profilePicture: 'https://ui-avatars.com/api/?name=Alex+D&background=indigo&color=fff' }],
-            tags: [{ name: 'backend', color: '#3b82f6' }, { name: 'bug', color: '#ef4444' }]
+            tags: [{ name: 'backend', color: '#3b82f6' }, { name: 'bug', color: '#ef4444' }],
+            subtasks: [
+              { id: 'sub_t1_1', name: 'Verify OAuth Redirect URL in production Settings', status: { status: 'complete', color: '#10b981' }, priority: { priority: 'high', color: '#ef4444' } },
+              { id: 'sub_t1_2', name: 'Patch sandbox CORS whitelist policies', status: { status: 'in progress', color: '#3b82f6' }, priority: null }
+            ]
           },
           {
             id: 't_2', name: 'Design new dashboard layout', 
@@ -615,7 +619,11 @@
             priority: { priority: 'normal', color: '#eab308' },
             due_date: null,
             assignees: [{ username: 'Sarah W.', profilePicture: 'https://ui-avatars.com/api/?name=Sarah+W&background=emerald&color=fff' }],
-            tags: [{ name: 'frontend', color: '#f59e0b' }, { name: 'design', color: '#8b5cf6' }]
+            tags: [{ name: 'frontend', color: '#f59e0b' }, { name: 'design', color: '#8b5cf6' }],
+            subtasks: [
+              { id: 'sub_t2_1', name: 'Draw core mockup wireframes', status: { status: 'closed', color: '#10b981' }, priority: null },
+              { id: 'sub_t2_2', name: 'Obtain initial developer design feedback', status: { status: 'closed', color: '#10b981' }, priority: null }
+            ]
           }
         ],
         'mock_list_3': [
@@ -625,7 +633,10 @@
             priority: null,
             due_date: null,
             assignees: [],
-            tags: [{ name: 'backend', color: '#3b82f6' }, { name: 'docs', color: '#64748b' }]
+            tags: [{ name: 'backend', color: '#3b82f6' }, { name: 'docs', color: '#64748b' }],
+            subtasks: [
+              { id: 'sub_t3_1', name: 'Document nested ClickUp subtask parsing logic', status: { status: 'review', color: '#8b5cf6' }, priority: null }
+            ]
           }
         ]
       }
@@ -648,6 +659,9 @@
       
       const [completionFilterType, setCompletionFilterType] = useState('none');
       const [selectedTagFilter, setSelectedTagFilter] = useState('');
+
+      // State to track expanded subtask drawers for individual parent tasks
+      const [expandedTasks, setExpandedTasks] = useState({});
 
       // Per-workflow Task Status Tab State
       const [workflowTabs, setWorkflowTabs] = useState({});
@@ -675,6 +689,13 @@
         setClickUpToken('mock_token');
         setClickUpError(null);
         setIntegrationStep('selecting');
+      };
+
+      const toggleTaskExpand = (taskId) => {
+        setExpandedTasks(prev => ({
+          ...prev,
+          [taskId]: !prev[taskId]
+        }));
       };
 
       const fetchClickUp = async (endpoint, token) => {
@@ -812,7 +833,8 @@
           initialTasks = MOCK_CLICKUP_DATA.tasks[selectedList] || [];
         } else {
           try {
-            const data = await fetchClickUp(`list/${selectedList}/task?subtasks=false`, clickUpToken);
+            // Updated subtasks parameter to fetch nested subtasks directly
+            const data = await fetchClickUp(`list/${selectedList}/task?subtasks=true`, clickUpToken);
             initialTasks = data.tasks || [];
           } catch (err) {
             console.error("Error fetching tasks for list", err);
@@ -856,7 +878,8 @@
               updatedTasks = MOCK_CLICKUP_DATA.tasks[workflow.listId] || [];
             } else {
               try {
-                const data = await fetchClickUp(`list/${workflow.listId}/task?subtasks=false`, clickUpToken);
+                // Fetch latest tasks including nested subtasks
+                const data = await fetchClickUp(`list/${workflow.listId}/task?subtasks=true`, clickUpToken);
                 updatedTasks = data.tasks || [];
               } catch (err) {
                 console.error(`Error syncing tasks for list ${workflow.listId}`, err);
@@ -1527,77 +1550,136 @@
                               </div>
                               
                               {displayedTasks && displayedTasks.length > 0 ? (
-                                <div className="space-y-2">
-                                  {displayedTasks.map(task => (
-                                    <div key={task.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-3 bg-slate-950/30 border border-white/5 rounded-xl shadow-inner hover:border-indigo-500/20 transition-all gap-3 animate-in fade-in duration-300">
-                                      <div className="flex items-center space-x-3 overflow-hidden min-w-0">
-                                        <div 
-                                          className="w-2.5 h-2.5 rounded-full shrink-0 shadow-lg" 
-                                          style={{ backgroundColor: task.status?.color || '#cbd5e1', boxShadow: `0 0 8px ${task.status?.color || '#cbd5e1'}` }} 
-                                          title={`Status: ${task.status?.status || 'Unknown'}`}
-                                        />
-                                        <span className="text-sm font-medium text-slate-200 truncate">
-                                          {task.name}
-                                        </span>
-                                      </div>
-                                      <div className="flex items-center shrink-0 space-x-3 sm:pl-4 pl-5 overflow-x-auto overflow-y-hidden py-1">
-                                        {/* Dynamic Status Text Badge */}
-                                        <span 
-                                          className="px-2 py-0.5 text-[10px] font-bold rounded capitalize border"
-                                          style={{ 
-                                            color: task.status?.color || '#94a3b8', 
-                                            backgroundColor: `${task.status?.color || '#94a3b8'}15`, 
-                                            borderColor: `${task.status?.color || '#94a3b8'}30` 
-                                          }}
-                                        >
-                                          {task.status?.status || 'Open'}
-                                        </span>
-                                        {task.tags && task.tags.length > 0 && (
-                                          <div className="flex items-center space-x-1 mr-2 hidden sm:flex">
-                                            <Tag className="h-3 w-3 text-slate-500 mr-1" />
-                                            {task.tags.map((tag, i) => (
-                                              <span 
-                                                key={i} 
-                                                className="px-1.5 py-0.5 text-[10px] font-semibold rounded whitespace-nowrap"
-                                                style={{ color: tag.color, backgroundColor: `${tag.color}15`, border: `1px solid ${tag.color}30` }}
+                                <div className="space-y-3">
+                                  {displayedTasks.map(task => {
+                                    const hasSubtasks = task.subtasks && task.subtasks.length > 0;
+                                    const isExpanded = !!expandedTasks[task.id];
+
+                                    return (
+                                      <div key={task.id} className="bg-slate-950/30 border border-white/5 rounded-xl shadow-inner hover:border-indigo-500/20 transition-all overflow-hidden animate-in fade-in duration-300">
+                                        <div className="flex flex-col sm:flex-row sm:items-center justify-between p-3 gap-3">
+                                          <div className="flex items-center space-x-3 overflow-hidden min-w-0">
+                                            <div 
+                                              className="w-2.5 h-2.5 rounded-full shrink-0 shadow-lg" 
+                                              style={{ backgroundColor: task.status?.color || '#cbd5e1', boxShadow: `0 0 8px ${task.status?.color || '#cbd5e1'}` }} 
+                                              title={`Status: ${task.status?.status || 'Unknown'}`}
+                                            />
+                                            <span className="text-sm font-medium text-slate-200 truncate">
+                                              {task.name}
+                                            </span>
+                                          </div>
+                                          
+                                          <div className="flex items-center shrink-0 space-x-3 sm:pl-4 pl-5 overflow-x-auto overflow-y-hidden py-1">
+                                            {/* Expand Subtasks button */}
+                                            {hasSubtasks && (
+                                              <button 
+                                                onClick={() => toggleTaskExpand(task.id)}
+                                                className="flex items-center space-x-1.5 px-2 py-0.5 rounded bg-indigo-500/10 hover:bg-indigo-500/20 text-[10px] text-indigo-300 font-bold border border-indigo-500/20 transition-colors"
                                               >
-                                                {tag.name}
-                                              </span>
+                                                <span>Subtasks ({task.subtasks.length})</span>
+                                                <ChevronRight className={`h-3 w-3 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                                              </button>
+                                            )}
+
+                                            {/* Dynamic Status Text Badge */}
+                                            <span 
+                                              className="px-2 py-0.5 text-[10px] font-bold rounded capitalize border"
+                                              style={{ 
+                                                color: task.status?.color || '#94a3b8', 
+                                                backgroundColor: `${task.status?.color || '#94a3b8'}15`, 
+                                                borderColor: `${task.status?.color || '#94a3b8'}30` 
+                                              }}
+                                            >
+                                              {task.status?.status || 'Open'}
+                                            </span>
+                                            {task.tags && task.tags.length > 0 && (
+                                              <div className="flex items-center space-x-1 mr-2 hidden sm:flex">
+                                                <Tag className="h-3 w-3 text-slate-500 mr-1" />
+                                                {task.tags.map((tag, i) => (
+                                                  <span 
+                                                    key={i} 
+                                                    className="px-1.5 py-0.5 text-[10px] font-semibold rounded whitespace-nowrap"
+                                                    style={{ color: tag.color, backgroundColor: `${tag.color}15`, border: `1px solid ${tag.color}30` }}
+                                                  >
+                                                    {tag.name}
+                                                  </span>
+                                                ))}
+                                              </div>
+                                            )}
+                                            {task.due_date && (
+                                              <div className="flex items-center text-xs text-slate-400 whitespace-nowrap" title="Due Date">
+                                                <Calendar className="h-3.5 w-3.5 mr-1.5" />
+                                                {new Date(parseInt(task.due_date)).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                                              </div>
+                                            )}
+                                            {task.priority && (
+                                              <div className="flex items-center text-xs text-slate-400 capitalize whitespace-nowrap" title={`Priority: ${task.priority.priority}`}>
+                                                <Flag className="h-3.5 w-3.5 mr-1.5" style={{ color: task.priority.color }} />
+                                                {task.priority.priority}
+                                              </div>
+                                            )}
+                                            {task.assignees && task.assignees.length > 0 ? (
+                                              <div className="flex -space-x-1.5">
+                                                {task.assignees.map((assignee, i) => (
+                                                  <img 
+                                                    key={i} 
+                                                    src={assignee.profilePicture || `https://ui-avatars.com/api/?name=${encodeURIComponent(assignee.username)}&background=random`} 
+                                                    alt={assignee.username} 
+                                                    className="w-6 h-6 rounded-full border border-slate-900 bg-slate-800 object-cover" 
+                                                    title={`Assigned to ${assignee.username}`} 
+                                                  />
+                                                ))}
+                                              </div>
+                                            ) : (
+                                              <div className="flex items-center justify-center w-6 h-6 rounded-full border border-white/5 bg-slate-900 text-slate-500" title="Unassigned">
+                                                <Users className="h-3 w-3" />
+                                              </div>
+                                            )}
+                                          </div>
+                                        </div>
+
+                                        {/* Subtask nested layout drawer */}
+                                        {isExpanded && hasSubtasks && (
+                                          <div className="bg-slate-950/40 border-t border-white/5 p-3 space-y-2 animate-in slide-in-from-top-2 duration-200">
+                                            {task.subtasks.map(sub => (
+                                              <div key={sub.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-2 pl-4 border-l-2 border-dashed border-indigo-500/30 bg-slate-900/10 rounded-r-lg gap-2 text-xs">
+                                                <div className="flex items-center space-x-2.5 overflow-hidden min-w-0">
+                                                  <div 
+                                                    className="w-2 h-2 rounded-full shrink-0 shadow-md" 
+                                                    style={{ backgroundColor: sub.status?.color || '#cbd5e1', boxShadow: `0 0 6px ${sub.status?.color || '#cbd5e1'}` }} 
+                                                    title={`Status: ${sub.status?.status || 'Unknown'}`}
+                                                  />
+                                                  <span className="font-medium text-slate-300 truncate">
+                                                    {sub.name}
+                                                  </span>
+                                                </div>
+                                                
+                                                <div className="flex items-center space-x-3 shrink-0">
+                                                  {/* Subtask Status Badge */}
+                                                  <span 
+                                                    className="px-1.5 py-0.5 text-[9px] font-bold rounded capitalize border"
+                                                    style={{ 
+                                                      color: sub.status?.color || '#94a3b8', 
+                                                      backgroundColor: `${sub.status?.color || '#94a3b8'}15`, 
+                                                      borderColor: `${sub.status?.color || '#94a3b8'}30` 
+                                                    }}
+                                                  >
+                                                    {sub.status?.status || 'Open'}
+                                                  </span>
+                                                  {sub.priority && (
+                                                    <div className="flex items-center text-[10px] text-slate-500 capitalize" title={`Priority: ${sub.priority.priority}`}>
+                                                      <Flag className="h-3 w-3 mr-1" style={{ color: sub.priority.color }} />
+                                                      {sub.priority.priority}
+                                                    </div>
+                                                  )}
+                                                </div>
+                                              </div>
                                             ))}
-                                          </div>
-                                        )}
-                                        {task.due_date && (
-                                          <div className="flex items-center text-xs text-slate-400 whitespace-nowrap" title="Due Date">
-                                            <Calendar className="h-3.5 w-3.5 mr-1.5" />
-                                            {new Date(parseInt(task.due_date)).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-                                          </div>
-                                        )}
-                                        {task.priority && (
-                                          <div className="flex items-center text-xs text-slate-400 capitalize whitespace-nowrap" title={`Priority: ${task.priority.priority}`}>
-                                            <Flag className="h-3.5 w-3.5 mr-1.5" style={{ color: task.priority.color }} />
-                                            {task.priority.priority}
-                                          </div>
-                                        )}
-                                        {task.assignees && task.assignees.length > 0 ? (
-                                          <div className="flex -space-x-1.5">
-                                            {task.assignees.map((assignee, i) => (
-                                              <img 
-                                                key={i} 
-                                                src={assignee.profilePicture || `https://ui-avatars.com/api/?name=${encodeURIComponent(assignee.username)}&background=random`} 
-                                                alt={assignee.username} 
-                                                className="w-6 h-6 rounded-full border border-slate-900 bg-slate-800 object-cover" 
-                                                title={`Assigned to ${assignee.username}`} 
-                                              />
-                                            ))}
-                                          </div>
-                                        ) : (
-                                          <div className="flex items-center justify-center w-6 h-6 rounded-full border border-white/5 bg-slate-900 text-slate-500" title="Unassigned">
-                                            <Users className="h-3 w-3" />
                                           </div>
                                         )}
                                       </div>
-                                    </div>
-                                  ))}
+                                    );
+                                  })}
                                 </div>
                               ) : (
                                 <div className="text-sm text-slate-400 italic p-4 bg-slate-950/20 rounded-lg text-center border border-white/5">
