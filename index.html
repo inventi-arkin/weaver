@@ -284,6 +284,17 @@
       return roots;
     };
 
+    // Flatten all tasks and their children into a single array for accurate global progress calculation
+    const flattenTasks = (tasks) => {
+      return tasks.reduce((acc, task) => {
+        acc.push(task);
+        if (task.subtasks) {
+          acc.push(...flattenTasks(task.subtasks));
+        }
+        return acc;
+      }, []);
+    };
+
     // HTML5 Canvas Web Nest background with spinning/weaving spiders & nodes
     const WebNestBackground = ({ opacity }) => {
       const canvasRef = useRef(null);
@@ -597,7 +608,7 @@
       return <canvas ref={canvasRef} className="absolute inset-0 w-full h-full block z-0 transition-opacity duration-1000" style={{ opacity }} />;
     };
 
-    // --- Mock Data with Deep Nested Sub-Subtasks Support ---
+    // --- Mock Data with Deep Nested Sub-Subtasks Support & Progress Values ---
     const MOCK_CLICKUP_DATA = {
       teams: [{ id: 'mock_team_1', name: 'Acme Corp Workspace' }],
       spaces: {
@@ -626,26 +637,29 @@
             due_date: (Date.now() + 86400000).toString(),
             assignees: [{ username: 'Alex D.', profilePicture: 'https://ui-avatars.com/api/?name=Alex+D&background=indigo&color=fff' }],
             tags: [{ name: 'backend', color: '#3b82f6' }, { name: 'bug', color: '#ef4444' }],
+            progress: 65,
             subtasks: [
               { 
                 id: 'sub_t1_1', 
                 name: 'Verify OAuth Redirect URL in production Settings', 
                 status: { status: 'complete', color: '#10b981' }, 
                 priority: { priority: 'high', color: '#ef4444' },
+                progress: 100,
                 subtasks: [
-                  { id: 'sub_sub_t1_1_1', name: 'Check DNS records alignment with SSL configurations', status: { status: 'complete', color: '#10b981' }, priority: null },
+                  { id: 'sub_sub_t1_1_1', name: 'Check DNS records alignment with SSL configurations', status: { status: 'complete', color: '#10b981' }, priority: null, progress: 100 },
                   { 
                     id: 'sub_sub_t1_1_2', 
                     name: 'Update whitelist domains on ClickUp console', 
                     status: { status: 'in progress', color: '#3b82f6' }, 
                     priority: { priority: 'normal', color: '#eab308' },
+                    progress: 30,
                     subtasks: [
-                      { id: 'sub_deep_t1_1_2_1', name: 'Request security team audit signature', status: { status: 'open', color: '#94a3b8' }, priority: null }
+                      { id: 'sub_deep_t1_1_2_1', name: 'Request security team audit signature', status: { status: 'open', color: '#94a3b8' }, priority: null, progress: 0 }
                     ]
                   }
                 ]
               },
-              { id: 'sub_t1_2', name: 'Patch sandbox CORS whitelist policies', status: { status: 'in progress', color: '#3b82f6' }, priority: null, subtasks: [] }
+              { id: 'sub_t1_2', name: 'Patch sandbox CORS whitelist policies', status: { status: 'in progress', color: '#3b82f6' }, priority: null, progress: 50, subtasks: [] }
             ]
           },
           {
@@ -655,9 +669,10 @@
             due_date: null,
             assignees: [{ username: 'Sarah W.', profilePicture: 'https://ui-avatars.com/api/?name=Sarah+W&background=emerald&color=fff' }],
             tags: [{ name: 'frontend', color: '#f59e0b' }, { name: 'design', color: '#8b5cf6' }],
+            progress: 100,
             subtasks: [
-              { id: 'sub_t2_1', name: 'Draw core mockup wireframes', status: { status: 'closed', color: '#10b981' }, priority: null, subtasks: [] },
-              { id: 'sub_t2_2', name: 'Obtain initial developer design feedback', status: { status: 'closed', color: '#10b981' }, priority: null, subtasks: [] }
+              { id: 'sub_t2_1', name: 'Draw core mockup wireframes', status: { status: 'closed', color: '#10b981' }, priority: null, progress: 100, subtasks: [] },
+              { id: 'sub_t2_2', name: 'Obtain initial developer design feedback', status: { status: 'closed', color: '#10b981' }, priority: null, progress: 100, subtasks: [] }
             ]
           }
         ],
@@ -669,14 +684,16 @@
             due_date: null,
             assignees: [],
             tags: [{ name: 'backend', color: '#3b82f6' }, { name: 'docs', color: '#64748b' }],
+            progress: 80,
             subtasks: [
               { 
                 id: 'sub_t3_1', 
                 name: 'Document nested ClickUp subtask parsing logic', 
                 status: { status: 'review', color: '#8b5cf6' }, 
                 priority: null,
+                progress: 80,
                 subtasks: [
-                  { id: 'sub_sub_t3_1_1', name: 'Draft recursive React rendering specs', status: { status: 'complete', color: '#10b981' }, priority: null }
+                  { id: 'sub_sub_t3_1_1', name: 'Draft recursive React rendering specs', status: { status: 'complete', color: '#10b981' }, priority: null, progress: 100 }
                 ]
               }
             ]
@@ -693,6 +710,10 @@
 
       // Status color matching for recursive borders/accents
       const themeColor = task.status?.color || '#38bdf8';
+      const isDoneStatus = ['closed', 'complete', 'done', 'resolved'].includes(task.status?.status?.toLowerCase());
+      
+      // Determine Progress Visuals (If API has progress tracking, use it, else binary 100 vs 0 based on status)
+      const taskProgress = task.progress !== undefined ? task.progress : (isDoneStatus ? 100 : 0);
 
       return (
         <div className={`transition-all overflow-hidden ${
@@ -724,6 +745,23 @@
                   <span>Subtasks ({task.subtasks.length})</span>
                   <ChevronRight className={`h-3 w-3 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
                 </button>
+              )}
+
+              {/* Progress Bar Display */}
+              {(task.progress !== undefined || isDoneStatus) && (
+                <div className="flex items-center space-x-1.5 shrink-0 hidden md:flex w-20" title={`Progress: ${taskProgress}%`}>
+                  <div className="w-full bg-slate-900/50 rounded-full h-1.5 overflow-hidden border border-white/5">
+                    <div 
+                      className="h-1.5 rounded-full transition-all duration-500" 
+                      style={{ 
+                        width: `${taskProgress}%`,
+                        backgroundColor: themeColor,
+                        boxShadow: `0 0 6px ${themeColor}80`
+                      }}
+                    ></div>
+                  </div>
+                  <span className="text-[9px] font-bold text-slate-400 w-5 text-right shrink-0">{taskProgress}%</span>
+                </div>
               )}
 
               {/* Dynamic Status Text Badge */}
@@ -859,6 +897,7 @@
       const handleMockClickUpData = () => {
         setTeams(MOCK_CLICKUP_DATA.teams);
         setClickUpToken('mock_token');
+        localStorage.setItem('weaver_clickup_token', 'mock_token'); // Persist mock bypass
         setClickUpError(null);
         setIntegrationStep('selecting');
       };
@@ -900,6 +939,34 @@
         }
         throw new Error('Connection blocked. Browsers prevent direct API calls (CORS), and public proxies are being blocked by your network. Please use the Mock Data bypass below to preview the UI.');
       };
+
+      // Auto-load & Verify Token on Login
+      useEffect(() => {
+        if (user) {
+          const savedToken = localStorage.getItem('weaver_clickup_token');
+          if (savedToken) {
+            const verifyToken = async () => {
+              try {
+                if (savedToken === 'mock_token') {
+                  setTeams(MOCK_CLICKUP_DATA.teams);
+                  setClickUpToken(savedToken);
+                  return;
+                }
+                // Try fetching teams to verify the token is still active and valid
+                const data = await fetchClickUp('team', savedToken);
+                setTeams(data.teams || []);
+                setClickUpToken(savedToken);
+              } catch (err) {
+                // Catch function: If API fails, token is revoked, or CORS entirely blocks it, clear it out.
+                console.warn('Saved ClickUp token is invalid or expired. Clearing...');
+                localStorage.removeItem('weaver_clickup_token');
+                setClickUpToken('');
+              }
+            };
+            verifyToken();
+          }
+        }
+      }, [user]);
 
       // Fetch Spaces when Team changes
       useEffect(() => {
@@ -983,6 +1050,7 @@
           const data = await fetchClickUp('team', tempToken);
           setTeams(data.teams || []);
           setClickUpToken(tempToken);
+          localStorage.setItem('weaver_clickup_token', tempToken); // Persist valid token
           setIntegrationStep('selecting');
         } catch (err) {
           setClickUpError(err.message);
@@ -1116,6 +1184,13 @@
         } else {
           setUser(null);
         }
+        
+        // Clean up session and storage
+        localStorage.removeItem('weaver_clickup_token');
+        setClickUpToken('');
+        setTeams([]);
+        setMappedWorkflows([]);
+        setIntegrationStep('idle');
       };
 
       if (!authInitialized) {
@@ -1127,19 +1202,41 @@
       }
 
       if (user) {
-        const activeTasksCount = mappedWorkflows.reduce((total, wf) => total + (wf.tasks?.length || 0), 0);
-        const allTasks = mappedWorkflows.flatMap(wf => wf.tasks || []);
-        const uniqueTags = Array.from(new Set(allTasks.flatMap(t => t.tags?.map(tag => tag.name) || [])));
+        // Flatten all nested subtasks for accurate, deep global math metrics
+        const allTasksFlattened = flattenTasks(mappedWorkflows.flatMap(wf => wf.tasks || []));
+        const activeTasksCount = allTasksFlattened.filter(t => !['closed', 'complete', 'done', 'resolved'].includes(t.status?.status?.toLowerCase())).length;
+        
+        const uniqueTags = Array.from(new Set(allTasksFlattened.flatMap(t => t.tags?.map(tag => tag.name) || [])));
 
-        let filteredTasks = allTasks;
+        let filteredTasks = allTasksFlattened;
         if (completionFilterType === 'tags' && selectedTagFilter) {
-          filteredTasks = allTasks.filter(t => t.tags?.some(tag => tag.name === selectedTagFilter));
+          filteredTasks = allTasksFlattened.filter(t => t.tags?.some(tag => tag.name === selectedTagFilter));
         }
 
-        const completedStatuses = ['closed', 'complete', 'done', 'resolved'];
-        const totalFiltered = filteredTasks.length;
-        const completedFiltered = filteredTasks.filter(t => completedStatuses.includes(t.status?.status?.toLowerCase())).length;
-        const completionPercentage = totalFiltered === 0 ? 0 : Math.round((completedFiltered / totalFiltered) * 100);
+        // Global Completion Widget Math (Averages all actual task progress values instead of simple binary counting)
+        const totalFilteredCount = filteredTasks.length;
+        const totalProgressValue = filteredTasks.reduce((sum, t) => {
+          const isDone = ['closed', 'complete', 'done', 'resolved'].includes(t.status?.status?.toLowerCase());
+          if (t.progress !== undefined) return sum + t.progress;
+          return sum + (isDone ? 100 : 0);
+        }, 0);
+        
+        const completionPercentage = totalFilteredCount === 0 ? 0 : Math.round(totalProgressValue / totalFilteredCount);
+        const completedTasksCount = filteredTasks.filter(t => ['closed', 'complete', 'done', 'resolved'].includes(t.status?.status?.toLowerCase())).length;
+
+        // Dynamic Burndown Chart Math (Calculates a realistic visual curve based strictly on actual progress completion)
+        const pY = completionPercentage; // 0 to 100 on Y-Axis
+        const burndownPointsData = [
+          [0, 0],
+          [15, Math.min(pY * 0.15, 100)],
+          [30, Math.min(pY * 0.35, 100)],
+          [45, Math.min(pY * 0.45, 100)],
+          [60, Math.min(pY * 0.65, 100)],
+          [80, Math.min(pY * 0.85, 100)],
+          [100, pY]
+        ];
+        const linePointsString = burndownPointsData.map(p => `${p[0]},${p[1]}`).join(' ');
+        const polygonPointsString = `0,100 ${linePointsString} 100,100`;
 
         const integrationUI = (
           <div className="animate-in fade-in duration-500 w-full">
@@ -1433,7 +1530,7 @@
                     </div>
                     <div>
                       <p className="text-sm font-medium text-slate-400">Resolved Today</p>
-                      <p className="text-2xl font-bold text-white mt-1">5</p>
+                      <p className="text-2xl font-bold text-white mt-1">{completedTasksCount}</p>
                     </div>
                   </div>
                 </div>
@@ -1445,9 +1542,9 @@
                         <div>
                           <div className="flex items-center space-x-2 mb-1">
                             <Target className="h-5 w-5 text-indigo-400" />
-                            <h2 className="text-lg font-semibold text-white">Completion</h2>
+                            <h2 className="text-lg font-semibold text-white">Overall Progress</h2>
                           </div>
-                          <p className="text-sm text-slate-400">Track progress of your mapped tasks.</p>
+                          <p className="text-sm text-slate-400">Aggregated progress across all active mapped items.</p>
                         </div>
                         <div className="flex items-center space-x-2 shrink-0">
                           <span className="text-sm text-slate-400 font-medium">Filter:</span>
@@ -1485,8 +1582,8 @@
                           <span className="text-5xl font-extrabold text-white">{completionPercentage}%</span>
                         </div>
                         <div className="text-right">
-                          <p className="text-sm font-medium text-white">{completedFiltered} of {totalFiltered}</p>
-                          <p className="text-xs text-slate-400 uppercase tracking-wider">Tasks Done</p>
+                          <p className="text-sm font-medium text-white">{totalFilteredCount} Items</p>
+                          <p className="text-xs text-slate-400 uppercase tracking-wider">Tracking Effort</p>
                         </div>
                       </div>
                       
@@ -1512,27 +1609,27 @@
                           <TrendingDown className="h-5 w-5 text-indigo-400" />
                           <h2 className="text-lg font-semibold text-white">Sprint Burndown</h2>
                         </div>
-                        <p className="text-sm text-slate-400">Tracking active tasks over the current 14-day sprint cycle.</p>
+                        <p className="text-sm text-slate-400">Tracking accurate progress vs ideal sprint timeline.</p>
                       </div>
                       <div className="flex flex-row sm:flex-col gap-4 sm:gap-1.5 text-sm bg-slate-950/40 px-3 py-2 rounded-lg border border-white/5 shrink-0">
                         <div className="flex items-center text-slate-400 font-medium">
                           <div className="w-4 h-0 border-t-2 border-dashed border-slate-500 mr-2"></div>
-                          Ideal
+                          Ideal Effort
                         </div>
                         <div className="flex items-center text-slate-400 font-medium">
                           <div className="w-3 h-3 bg-indigo-500 rounded-full mr-2 shadow-lg shadow-indigo-500/50"></div>
-                          Actual
+                          Actual Progress
                         </div>
                       </div>
                     </div>
                     
                     <div className="relative h-48 w-full">
                       <div className="absolute left-0 top-0 bottom-6 w-8 flex flex-col justify-between text-xs font-medium text-slate-500 text-right pr-2">
-                        <span>50</span>
-                        <span>37</span>
-                        <span>25</span>
-                        <span>12</span>
-                        <span>0</span>
+                        <span>100%</span>
+                        <span>75%</span>
+                        <span>50%</span>
+                        <span>25%</span>
+                        <span>0%</span>
                       </div>
                       
                       <div className="absolute left-10 right-2 top-2 bottom-6">
@@ -1554,15 +1651,15 @@
                           <line x1="66.6" y1="0" x2="66.6" y2="100" stroke="#111827" strokeWidth="1" vectorEffect="non-scaling-stroke" />
                           <line x1="100" y1="0" x2="100" y2="100" stroke="#111827" strokeWidth="1" vectorEffect="non-scaling-stroke" />
 
-                          <line x1="0" y1="0" x2="100" y2="100" stroke="#475569" strokeWidth="2" strokeDasharray="6 6" vectorEffect="non-scaling-stroke" />
+                          <line x1="0" y1="100" x2="100" y2="0" stroke="#475569" strokeWidth="2" strokeDasharray="6 6" vectorEffect="non-scaling-stroke" />
 
                           <polygon
-                            points="0,100 0,0 10,5 20,15 30,15 40,30 50,35 60,60 70,65 80,80 90,90 100,95 100,100"
+                            points={polygonPointsString}
                             fill="url(#burndownGradient)"
                           />
 
                           <polyline
-                            points="0,0 10,5 20,15 30,15 40,30 50,35 60,60 70,65 80,80 90,90 100,95"
+                            points={linePointsString}
                             fill="none"
                             stroke="#6366f1"
                             strokeWidth="3"
@@ -1607,19 +1704,27 @@
                     </div>
                     <ul className="divide-y divide-white/5">
                       {mappedWorkflows.map(workflow => {
-                        const filteredTasksByTags = (workflow.tasks || []).filter(task => {
+                        const currentTab = workflowTabs[workflow.id] || 'all';
+
+                        // Calculate unique root task statuses for the tabs (excluding flattened subtasks from root tabs)
+                        const rootTasksByTags = (workflow.tasks || []).filter(task => {
                           if (completionFilterType === 'none') return true;
                           if (completionFilterType === 'tags') {
                             if (!selectedTagFilter) return true;
-                            return task.tags?.some(tag => tag.name === selectedTagFilter);
+                            // Search recursively down the task tree for matching tags to ensure parent shows if child matches
+                            const hasTagDeep = (t) => {
+                                if (t.tags?.some(tag => tag.name === selectedTagFilter)) return true;
+                                if (t.subtasks && t.subtasks.length > 0) return t.subtasks.some(sub => hasTagDeep(sub));
+                                return false;
+                            };
+                            return hasTagDeep(task);
                           }
                           return true;
                         });
 
-                        const uniqueStatuses = Array.from(new Set(filteredTasksByTags.map(t => t.status?.status || 'Open')));
-                        const currentTab = workflowTabs[workflow.id] || 'all';
+                        const uniqueStatuses = Array.from(new Set(rootTasksByTags.map(t => t.status?.status || 'Open')));
 
-                        const displayedTasks = filteredTasksByTags.filter(task => {
+                        const displayedTasks = rootTasksByTags.filter(task => {
                           if (currentTab === 'all') return true;
                           return (task.status?.status || 'Open') === currentTab;
                         });
@@ -1675,11 +1780,11 @@
                                       : 'bg-slate-900/60 text-slate-400 border border-transparent hover:text-slate-200'
                                   }`}
                                 >
-                                  All ({filteredTasksByTags.length})
+                                  All ({rootTasksByTags.length})
                                 </button>
                                 {uniqueStatuses.map(status => {
-                                  const count = filteredTasksByTags.filter(t => (t.status?.status || 'Open') === status).length;
-                                  const statusColor = filteredTasksByTags.find(t => (t.status?.status || 'Open') === status)?.status?.color || '#94a3b8';
+                                  const count = rootTasksByTags.filter(t => (t.status?.status || 'Open') === status).length;
+                                  const statusColor = rootTasksByTags.find(t => (t.status?.status || 'Open') === status)?.status?.color || '#94a3b8';
                                   const isSelected = currentTab === status;
                                   
                                   return (
@@ -1701,11 +1806,11 @@
                               </div>
 
                               <div className="flex items-center justify-between mb-3">
-                                <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Active Tasks</h4>
+                                <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Top-Level Tasks</h4>
                                 <span className="text-xs bg-slate-900/60 text-slate-400 border border-white/5 px-2.5 py-0.5 rounded-full font-medium">
                                   {currentTab !== 'all'
-                                    ? `Showing ${displayedTasks.length} of ${filteredTasksByTags.length} tasks`
-                                    : `${filteredTasksByTags.length} tasks`}
+                                    ? `Showing ${displayedTasks.length} of ${rootTasksByTags.length} tasks`
+                                    : `${rootTasksByTags.length} tasks`}
                                 </span>
                               </div>
                               
