@@ -708,7 +708,7 @@
         'mock_list_1': [
           {
             id: 't_qa_release', name: 'Release Candidate Validation', 
-            status: { status: 'in progress', color: '#3b82f6' }, 
+            status: { status: 'ongoing dev', color: '#3b82f6' }, 
             priority: { priority: 'high', color: '#ef4444' },
             date_created: (Date.now() - 10 * 86400000).toString(),
             start_date: (Date.now() - 4 * 86400000).toString(),
@@ -730,7 +730,7 @@
                   { 
                     id: 'bug_1', 
                     name: 'Login button unresponsive on iOS Safari', 
-                    status: { status: 'in progress', color: '#3b82f6' }, 
+                    status: { status: 'ongoing dev', color: '#3b82f6' }, 
                     priority: { priority: 'critical', color: '#dc2626' }, 
                     date_created: (Date.now() - 12 * 86400000).toString(),
                     time_estimate: 7200000, time_spent: 3600000,
@@ -740,7 +740,7 @@
                   { 
                     id: 'bug_2', 
                     name: 'Data sync drops packets on weak connections', 
-                    status: { status: 'open', color: '#94a3b8' }, 
+                    status: { status: 'sprint backlog', color: '#94a3b8' }, 
                     priority: { priority: 'high', color: '#ef4444' }, 
                     date_created: (Date.now() - 6 * 86400000).toString(),
                     time_estimate: 14400000, time_spent: 0,
@@ -1403,9 +1403,45 @@
         });
         const avgVelocityDays = fixVelocityCount > 0 ? (fixVelocitySumMs / fixVelocityCount / 86400000).toFixed(1) : "0";
 
-        // Top 5 Stalled Tasks Math (Active tasks sorted by age descending)
-        const stalledTasks = allTasksFlattened
-          .filter(t => !['closed', 'complete', 'done', 'resolved'].includes(t.status?.status?.toLowerCase()))
+        // Top 5 Stalled Tasks Math (Active tasks sorted by age descending, filtered by estimated time vs duration)
+        const stalledTasksCandidates = allTasksFlattened
+          .filter(t => {
+            const nameLower = t.name.toLowerCase();
+            const statusLower = t.status?.status?.toLowerCase() || '';
+            
+            // Exclude specific container tasks
+            if (nameLower === 'ui bugs' || nameLower === 'qa bugs') return false;
+            
+            // Exclude closed/done and sprint backlog tasks
+            if (['closed', 'complete', 'done', 'resolved', 'sprint backlog'].includes(statusLower)) return false;
+            
+            // Include specific active development statuses
+            const isActiveStatus = ['ongoing dev', 'in progress', 'open', 'review'].includes(statusLower);
+            
+            if (isActiveStatus) {
+              const createdDate = parseInt(t.date_created);
+              const estimateMs = parseInt(t.time_estimate);
+              
+              // Stalled if duration since creation exceeds estimated time
+              if (createdDate && estimateMs > 0) {
+                const durationMs = Date.now() - createdDate;
+                if (durationMs > estimateMs) {
+                  return true;
+                }
+              }
+            }
+            return false;
+          });
+
+        const stalledTaskIds = new Set(stalledTasksCandidates.map(t => t.id));
+
+        const hasStalledDescendant = (task) => {
+          if (!task.subtasks || task.subtasks.length === 0) return false;
+          return task.subtasks.some(sub => stalledTaskIds.has(sub.id) || hasStalledDescendant(sub));
+        };
+
+        const stalledTasks = stalledTasksCandidates
+          .filter(t => !hasStalledDescendant(t))
           .sort((a, b) => {
              const ageA = Date.now() - (parseInt(a.date_created) || Date.now());
              const ageB = Date.now() - (parseInt(b.date_created) || Date.now());
@@ -2231,6 +2267,7 @@
                             const themeColor = task.status?.color || '#94a3b8';
                             const createdDate = task.date_created ? parseInt(task.date_created) : Date.now();
                             const daysOld = Math.floor((Date.now() - createdDate) / 86400000);
+                            const estimatedHours = Math.round((parseInt(task.time_estimate) || 0) / 3600000);
                             
                             return (
                               <li 
@@ -2247,7 +2284,8 @@
                                     <span className="text-sm font-semibold text-slate-200 truncate group-hover:text-white transition-colors">{task.name}</span>
                                   </div>
                                   <div className="flex items-center text-xs text-slate-500 ml-4">
-                                    Open for {daysOld} {daysOld === 1 ? 'day' : 'days'}
+                                    <ClockAlert className="h-3 w-3 mr-1 text-amber-500/70" />
+                                    Elapsed: {daysOld}d / Est: {estimatedHours}h
                                   </div>
                                 </div>
                                 
