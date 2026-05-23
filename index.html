@@ -63,7 +63,6 @@
       measurementId: "G-ZY3SWFL8WV"
     };
 
-    // Initialize compat version
     firebase.initializeApp(firebaseConfig);
     const auth = firebase.auth();
     const googleProvider = new firebase.auth.GoogleAuthProvider();
@@ -117,6 +116,32 @@
     const Activity = ({ className }) => (
       <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+      </svg>
+    );
+
+    const Zap = ({ className }) => (
+      <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+      </svg>
+    );
+
+    const MessageSquare = ({ className }) => (
+      <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+      </svg>
+    );
+
+    const XIcon = ({ className }) => (
+      <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <line x1="18" y1="6" x2="6" y2="18"></line>
+        <line x1="6" y1="6" x2="18" y2="18"></line>
+      </svg>
+    );
+
+    const ClockAlert = ({ className }) => (
+      <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="10"></circle>
+        <polyline points="12 6 12 12 15 15"></polyline>
       </svg>
     );
 
@@ -310,7 +335,7 @@
       return roots;
     };
 
-    // Flatten all tasks and their children into a single array for accurate global progress calculation
+    // Flatten all tasks and their children into a single array
     const flattenTasks = (tasks) => {
       return tasks.reduce((acc, task) => {
         acc.push(task);
@@ -321,7 +346,7 @@
       }, []);
     };
 
-    // Helper to specifically extract QA and Bug tasks from the tree
+    // Helper to specifically extract QA, UI, and Bug tasks from the tree
     const extractBugs = (tasks, inBugContext = false) => {
       let bugs = [];
       tasks.forEach(t => {
@@ -340,7 +365,6 @@
           }
           
           if (t.subtasks && t.subtasks.length > 0) {
-              // Pass the bug context state downward
               bugs.push(...extractBugs(t.subtasks, isContext));
           }
       });
@@ -683,49 +707,76 @@
       tasks: {
         'mock_list_1': [
           {
-            id: 't_1', name: 'Fix authentication callback bug', 
+            id: 't_qa_release', name: 'Release Candidate Validation', 
             status: { status: 'in progress', color: '#3b82f6' }, 
             priority: { priority: 'high', color: '#ef4444' },
-            due_date: (Date.now() + 86400000).toString(),
+            date_created: (Date.now() - 10 * 86400000).toString(),
+            start_date: (Date.now() - 4 * 86400000).toString(),
+            due_date: (Date.now() + 5 * 86400000).toString(),
             assignees: [{ username: 'Alex D.', profilePicture: 'https://ui-avatars.com/api/?name=Alex+D&background=indigo&color=fff' }],
-            tags: [{ name: 'backend', color: '#3b82f6' }, { name: 'bug', color: '#ef4444' }],
-            time_estimate: 28800000, // 8 hours
-            time_spent: 14400000,    // 4 hours
+            tags: [{ name: 'qa', color: '#10b981' }],
+            time_estimate: 28800000, 
+            time_spent: 14400000,    
+            description: "Perform final validation pass on Release Candidate 4. Ensure all unit tests are green and no regressions were introduced.",
             subtasks: [
               { 
-                id: 'sub_t1_1', 
-                name: 'Verify OAuth Redirect URL in production Settings', 
-                status: { status: 'complete', color: '#10b981' }, 
+                id: 'sub_qa_1', 
+                name: 'UI Bugs', 
+                status: { status: 'open', color: '#94a3b8' }, 
                 priority: { priority: 'high', color: '#ef4444' },
-                time_estimate: 7200000, time_spent: 7200000, // 2h / 2h
+                date_created: (Date.now() - 8 * 86400000).toString(),
+                time_estimate: 0, time_spent: 0, 
                 subtasks: [
-                  { id: 'sub_sub_t1_1_1', name: 'Check DNS records alignment with SSL configurations', status: { status: 'complete', color: '#10b981' }, priority: null, time_estimate: 3600000, time_spent: 3600000 },
                   { 
-                    id: 'sub_sub_t1_1_2', 
-                    name: 'Update whitelist domains on ClickUp console', 
+                    id: 'bug_1', 
+                    name: 'Login button unresponsive on iOS Safari', 
                     status: { status: 'in progress', color: '#3b82f6' }, 
-                    priority: { priority: 'normal', color: '#eab308' },
-                    time_estimate: 7200000, time_spent: 3600000, // 1h / 2h
-                    subtasks: [
-                      { id: 'sub_deep_t1_1_2_1', name: 'Request security team audit signature', status: { status: 'open', color: '#94a3b8' }, priority: null, time_estimate: 3600000, time_spent: 0 }
-                    ]
+                    priority: { priority: 'critical', color: '#dc2626' }, 
+                    date_created: (Date.now() - 12 * 86400000).toString(),
+                    time_estimate: 7200000, time_spent: 3600000,
+                    description: "When tapping the login button on iOS 16 Safari, nothing happens. It appears the touch event listener is being swallowed by the canvas background.",
+                    assignees: [{ username: 'Sarah W.', profilePicture: 'https://ui-avatars.com/api/?name=Sarah+W&background=emerald&color=fff' }]
+                  },
+                  { 
+                    id: 'bug_2', 
+                    name: 'Data sync drops packets on weak connections', 
+                    status: { status: 'open', color: '#94a3b8' }, 
+                    priority: { priority: 'high', color: '#ef4444' }, 
+                    date_created: (Date.now() - 6 * 86400000).toString(),
+                    time_estimate: 14400000, time_spent: 0,
+                    description: "Network timeout is too aggressive. Set it to 15s instead of 5s.",
+                    assignees: []
+                  },
+                  { 
+                    id: 'bug_3', 
+                    name: 'Typo in onboarding tooltip', 
+                    status: { status: 'resolved', color: '#10b981' }, 
+                    priority: { priority: 'low', color: '#8b5cf6' }, 
+                    date_created: (Date.now() - 9 * 86400000).toString(),
+                    date_closed: (Date.now() - 7 * 86400000).toString(),
+                    time_estimate: 3600000, time_spent: 3600000,
+                    description: "It says 'Weaver creates a seemless bridge' instead of 'seamless'.",
+                    assignees: []
                   }
                 ]
-              },
-              { id: 'sub_t1_2', name: 'Patch sandbox CORS whitelist policies', status: { status: 'in progress', color: '#3b82f6' }, priority: null, time_estimate: 10800000, time_spent: 3600000, subtasks: [] }
+              }
             ]
           },
           {
             id: 't_2', name: 'Design new dashboard layout', 
             status: { status: 'closed', color: '#10b981' }, 
             priority: { priority: 'normal', color: '#eab308' },
-            due_date: null,
+            date_created: (Date.now() - 15 * 86400000).toString(),
+            date_closed: (Date.now() - 1 * 86400000).toString(),
+            start_date: (Date.now() - 7 * 86400000).toString(),
+            due_date: (Date.now() + 2 * 86400000).toString(),
             assignees: [{ username: 'Sarah W.', profilePicture: 'https://ui-avatars.com/api/?name=Sarah+W&background=emerald&color=fff' }],
             tags: [{ name: 'frontend', color: '#f59e0b' }, { name: 'design', color: '#8b5cf6' }],
-            time_estimate: 43200000, time_spent: 43200000, // 12h / 12h
+            time_estimate: 43200000, time_spent: 43200000,
+            description: "Create high-fidelity wireframes for the new glassmorphic dashboard.",
             subtasks: [
-              { id: 'sub_t2_1', name: 'Draw core mockup wireframes', status: { status: 'closed', color: '#10b981' }, priority: null, time_estimate: 14400000, time_spent: 14400000, subtasks: [] },
-              { id: 'sub_t2_2', name: 'Obtain initial developer design feedback', status: { status: 'closed', color: '#10b981' }, priority: null, time_estimate: 7200000, time_spent: 7200000, subtasks: [] }
+              { id: 'sub_t2_1', name: 'Draw core mockup wireframes', status: { status: 'closed', color: '#10b981' }, date_created: (Date.now() - 14 * 86400000).toString(), date_closed: (Date.now() - 4 * 86400000).toString(), priority: null, time_estimate: 14400000, time_spent: 14400000, subtasks: [] },
+              { id: 'sub_t2_2', name: 'Obtain initial developer design feedback', status: { status: 'closed', color: '#10b981' }, date_created: (Date.now() - 4 * 86400000).toString(), date_closed: (Date.now() - 1 * 86400000).toString(), priority: null, time_estimate: 7200000, time_spent: 7200000, subtasks: [] }
             ]
           }
         ],
@@ -734,19 +785,23 @@
             id: 't_3', name: 'Update API documentation', 
             status: { status: 'review', color: '#8b5cf6' }, 
             priority: null,
-            due_date: null,
+            date_created: (Date.now() - 18 * 86400000).toString(),
+            start_date: (Date.now() - 2 * 86400000).toString(),
+            due_date: (Date.now() + 7 * 86400000).toString(),
             assignees: [],
             tags: [{ name: 'backend', color: '#3b82f6' }, { name: 'docs', color: '#64748b' }],
-            time_estimate: 18000000, time_spent: 14400000, // 4h / 5h
+            time_estimate: 18000000, time_spent: 14400000,
+            description: "The API payload parameters for tasks are outdated. Need to include subtasks=true in the docs.",
             subtasks: [
               { 
                 id: 'sub_t3_1', 
                 name: 'Document nested ClickUp subtask parsing logic', 
                 status: { status: 'review', color: '#8b5cf6' }, 
                 priority: null,
+                date_created: (Date.now() - 17 * 86400000).toString(),
                 time_estimate: 7200000, time_spent: 7200000,
                 subtasks: [
-                  { id: 'sub_sub_t3_1_1', name: 'Draft recursive React rendering specs', status: { status: 'complete', color: '#10b981' }, priority: null, time_estimate: 3600000, time_spent: 3600000 }
+                  { id: 'sub_sub_t3_1_1', name: 'Draft recursive React rendering specs', status: { status: 'complete', color: '#10b981' }, date_created: (Date.now() - 16 * 86400000).toString(), date_closed: (Date.now() - 5 * 86400000).toString(), priority: null, time_estimate: 3600000, time_spent: 3600000 }
                 ]
               }
             ]
@@ -764,7 +819,6 @@
       const themeColor = task.status?.color || '#38bdf8';
       const isDoneStatus = ['closed', 'complete', 'done', 'resolved'].includes(task.status?.status?.toLowerCase());
       
-      // Handle tracked time
       const estimateMs = task.time_estimate ? parseInt(task.time_estimate) : 0;
       const spentMs = task.time_spent ? parseInt(task.time_spent) : (isDoneStatus ? estimateMs : 0);
       const hasTimeData = estimateMs > 0 || spentMs > 0;
@@ -919,6 +973,11 @@
 
       const [expandedTasks, setExpandedTasks] = useState({});
       const [workflowTabs, setWorkflowTabs] = useState({});
+      
+      // Interactive Ticket Modal State
+      const [selectedTicketForModal, setSelectedTicketForModal] = useState(null);
+      const [commentText, setCommentText] = useState('');
+      const [localMockComments, setLocalMockComments] = useState({}); // Stores comments offline
 
       const mappedWorkflowsRef = useRef(mappedWorkflows);
       useEffect(() => {
@@ -941,7 +1000,7 @@
       const handleMockClickUpData = () => {
         setTeams(MOCK_CLICKUP_DATA.teams);
         setClickUpToken('mock_token');
-        localStorage.setItem('weaver_clickup_token', 'mock_token'); // Persist mock bypass
+        localStorage.setItem('weaver_clickup_token', 'mock_token'); 
         setClickUpError(null);
         setIntegrationStep('selecting');
       };
@@ -953,7 +1012,8 @@
         }));
       };
 
-      const fetchClickUp = async (endpoint, token) => {
+      // Support generic methods including POST for comments
+      const fetchClickUp = async (endpoint, token, method = 'GET', body = null) => {
         const targetUrl = `https://api.clickup.com/api/v2/${endpoint}`;
         const proxies = [
           `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
@@ -963,12 +1023,18 @@
 
         for (const proxyUrl of proxies) {
           try {
-            const res = await fetch(proxyUrl, {
+            const fetchOptions = {
+              method,
               headers: { 
                 'Authorization': token,
                 'Content-Type': 'application/json' 
               }
-            });
+            };
+            if (body) {
+              fetchOptions.body = JSON.stringify(body);
+            }
+
+            const res = await fetch(proxyUrl, fetchOptions);
             if (!res.ok) {
               throw new Error('Invalid Token or unauthorized request. Please verify your token.');
             }
@@ -984,7 +1050,42 @@
         throw new Error('Connection blocked. Browsers prevent direct API calls (CORS), and public proxies are being blocked by your network. Please use the Mock Data bypass below to preview the UI.');
       };
 
-      // Auto-load & Verify Token on Login
+      // Send Comment Logic
+      const handleSendComment = async () => {
+        if (!commentText.trim() || !selectedTicketForModal) return;
+        
+        const newComment = {
+          id: Date.now().toString(),
+          comment_text: commentText,
+          date: Date.now().toString(),
+          user: { username: user.name, profilePicture: user.avatar }
+        };
+
+        if (clickUpToken === 'mock_token') {
+            // Update UI optimistically for offline preview
+            setLocalMockComments(prev => ({
+              ...prev,
+              [selectedTicketForModal.id]: [...(prev[selectedTicketForModal.id] || []), newComment]
+            }));
+        } else {
+            try {
+              // Real ClickUp API Call
+              await fetchClickUp(`task/${selectedTicketForModal.id}/comment`, clickUpToken, 'POST', { 
+                  comment_text: commentText, 
+                  notify_all: true 
+              });
+              setLocalMockComments(prev => ({
+                ...prev,
+                [selectedTicketForModal.id]: [...(prev[selectedTicketForModal.id] || []), newComment]
+              }));
+            } catch (err) {
+              console.error("Failed to post comment to ClickUp", err);
+              alert("Failed to sync comment with ClickUp. " + err.message);
+            }
+        }
+        setCommentText('');
+      };
+
       useEffect(() => {
         if (user) {
           const savedToken = localStorage.getItem('weaver_clickup_token');
@@ -1010,7 +1111,6 @@
         }
       }, [user]);
 
-      // Fetch Spaces when Team changes
       useEffect(() => {
         if (!selectedTeam || !clickUpToken) return;
         if (clickUpToken === 'mock_token') {
@@ -1030,7 +1130,6 @@
         fetchSpaces();
       }, [selectedTeam, clickUpToken]);
 
-      // Fetch Folders & Folderless Lists when Space changes
       useEffect(() => {
         if (!selectedSpace || !clickUpToken) return;
         if (clickUpToken === 'mock_token') {
@@ -1054,7 +1153,6 @@
         fetchSpaceData();
       }, [selectedSpace, clickUpToken]);
 
-      // Fetch Lists when Folder changes
       useEffect(() => {
         if (!selectedFolder || !clickUpToken) return;
         if (clickUpToken === 'mock_token') {
@@ -1256,7 +1354,7 @@
 
         const totalFilteredCount = filteredTasks.length;
 
-        // Global Completion Widget Math (Uses Time Tracking)
+        // Global Completion Widget Math
         let totalEstimateMs = 0;
         let totalRemainingMs = 0;
         
@@ -1269,7 +1367,6 @@
           if (t.start_date) minDate = Math.min(minDate, parseInt(t.start_date));
           if (t.due_date) maxDate = Math.max(maxDate, parseInt(t.due_date));
           
-          // Fallback to 0 if task has no estimate tracking
           const estimate = t.time_estimate ? parseInt(t.time_estimate) : 0; 
           
           let spent = 0;
@@ -1287,13 +1384,34 @@
           totalRemainingMs += remaining;
         });
         
-        // Bug & Defect Tracking Math
+        // Bug & Defect Velocity & KPI Math
         const allBugs = extractBugs(mappedWorkflows.flatMap(wf => wf.tasks || []));
         const totalBugsCount = allBugs.length;
         const resolvedBugsCount = allBugs.filter(t => ['closed', 'complete', 'done', 'resolved'].includes(t.status?.status?.toLowerCase())).length;
         const activeBugsCount = totalBugsCount - resolvedBugsCount;
         const criticalBugsCount = allBugs.filter(t => ['high', 'urgent', 'critical'].includes(t.priority?.priority?.toLowerCase())).length;
         const bugResolutionRate = totalBugsCount === 0 ? 0 : Math.round((resolvedBugsCount / totalBugsCount) * 100);
+
+        // Velocity Math: Calculate average time to fix bugs
+        let fixVelocitySumMs = 0;
+        let fixVelocityCount = 0;
+        allBugs.forEach(b => {
+          if (['closed', 'complete', 'done', 'resolved'].includes(b.status?.status?.toLowerCase()) && b.date_closed && b.date_created) {
+            fixVelocitySumMs += (parseInt(b.date_closed) - parseInt(b.date_created));
+            fixVelocityCount++;
+          }
+        });
+        const avgVelocityDays = fixVelocityCount > 0 ? (fixVelocitySumMs / fixVelocityCount / 86400000).toFixed(1) : "0";
+
+        // Top 5 Stalled Tasks Math (Active tasks sorted by age descending)
+        const stalledTasks = allTasksFlattened
+          .filter(t => !['closed', 'complete', 'done', 'resolved'].includes(t.status?.status?.toLowerCase()))
+          .sort((a, b) => {
+             const ageA = Date.now() - (parseInt(a.date_created) || Date.now());
+             const ageB = Date.now() - (parseInt(b.date_created) || Date.now());
+             return ageB - ageA; 
+          })
+          .slice(0, 5);
 
         // Timeline processing for Burndown
         const now = Date.now();
@@ -1314,14 +1432,11 @@
             formatDate(maxDate)
         ];
 
-        // Use minimum 1 hour scale if 0 tasks are mapped with estimates to prevent division by zero visually
         const totalEstHours = Math.round(totalEstimateMs / 3600000) || 1;
         const totalRemHours = Math.round(totalRemainingMs / 3600000);
-        
         const totalSpentHours = totalEstHours - totalRemHours;
         const completionPercentage = Math.round((totalSpentHours / totalEstHours) * 100);
         
-        // Realistic dynamic chart projection: Line drops from Max Effort to Current Remaining Effort
         const currentY = 100 - ((totalRemHours / totalEstHours) * 100);
         
         const burndownPointsData = [
@@ -1547,6 +1662,115 @@
         return (
           <div className="min-h-screen bg-slate-950 font-sans text-slate-100 relative">
             <WebNestBackground opacity={0.35} />
+
+            {/* Modal for Ticket Details & Comments */}
+            {selectedTicketForModal && (
+              <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+                <div className="bg-slate-900 border border-white/10 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden animate-in slide-in-from-bottom-4">
+                  {/* Modal Header */}
+                  <div className="flex items-center justify-between p-6 border-b border-white/5 bg-slate-900/50">
+                    <div>
+                      <div className="flex items-center space-x-2 mb-2">
+                        <span className="text-xs font-mono text-slate-500 uppercase">#{selectedTicketForModal.id}</span>
+                        <span 
+                          className="px-2 py-0.5 text-[10px] font-bold rounded capitalize border"
+                          style={{ 
+                            color: selectedTicketForModal.status?.color || '#94a3b8', 
+                            backgroundColor: `${selectedTicketForModal.status?.color || '#94a3b8'}15`, 
+                            borderColor: `${selectedTicketForModal.status?.color || '#94a3b8'}30` 
+                          }}
+                        >
+                          {selectedTicketForModal.status?.status || 'Open'}
+                        </span>
+                      </div>
+                      <h2 className="text-xl font-bold text-white">{selectedTicketForModal.name}</h2>
+                    </div>
+                    <button 
+                      onClick={() => setSelectedTicketForModal(null)}
+                      className="p-2 rounded-lg text-slate-400 hover:bg-white/5 hover:text-white transition-colors"
+                    >
+                      <XIcon className="h-5 w-5" />
+                    </button>
+                  </div>
+
+                  {/* Modal Body (Scrollable) */}
+                  <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                    {/* Description Section */}
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-400 mb-2 uppercase tracking-wider">Description</h3>
+                      <div className="bg-slate-950/50 border border-white/5 p-4 rounded-xl text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">
+                        {selectedTicketForModal.description || "No description provided."}
+                      </div>
+                    </div>
+
+                    {/* Metadata Section */}
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="bg-slate-950/30 border border-white/5 p-4 rounded-xl">
+                         <h3 className="text-xs font-semibold text-slate-500 mb-2 uppercase">Time Estimate</h3>
+                         <div className="flex items-center text-sm font-medium text-slate-300">
+                           <Clock className="h-4 w-4 mr-2 text-indigo-400" />
+                           {selectedTicketForModal.time_estimate ? `${Math.round(parseInt(selectedTicketForModal.time_estimate)/3600000)} Hours` : 'Not set'}
+                         </div>
+                      </div>
+                      <div className="bg-slate-950/30 border border-white/5 p-4 rounded-xl">
+                         <h3 className="text-xs font-semibold text-slate-500 mb-2 uppercase">Priority</h3>
+                         <div className="flex items-center text-sm font-medium text-slate-300 capitalize">
+                           <Flag className="h-4 w-4 mr-2" style={{ color: selectedTicketForModal.priority?.color || '#94a3b8' }} />
+                           {selectedTicketForModal.priority?.priority || 'None'}
+                         </div>
+                      </div>
+                    </div>
+
+                    {/* Comments Thread */}
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-400 mb-4 uppercase tracking-wider flex items-center">
+                        <MessageSquare className="h-4 w-4 mr-2" /> Comments
+                      </h3>
+                      <div className="space-y-4">
+                        {(!localMockComments[selectedTicketForModal.id] || localMockComments[selectedTicketForModal.id].length === 0) ? (
+                          <p className="text-sm text-slate-500 italic p-4 bg-slate-950/30 rounded-xl text-center border border-white/5">No comments yet. Start the conversation!</p>
+                        ) : (
+                          localMockComments[selectedTicketForModal.id].map(comment => (
+                            <div key={comment.id} className="bg-slate-950/50 border border-white/5 p-4 rounded-xl flex space-x-3">
+                              <img src={comment.user?.profilePicture} alt="User" className="w-8 h-8 rounded-full border border-slate-700 bg-slate-800" />
+                              <div>
+                                <div className="flex items-baseline space-x-2 mb-1">
+                                  <span className="font-semibold text-sm text-slate-200">{comment.user?.username}</span>
+                                  <span className="text-xs text-slate-500">{new Date(parseInt(comment.date)).toLocaleString()}</span>
+                                </div>
+                                <p className="text-sm text-slate-300">{comment.comment_text}</p>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Modal Footer / Comment Input */}
+                  <div className="p-4 border-t border-white/5 bg-slate-950">
+                    <div className="flex items-start space-x-3">
+                      <img src={user.avatar} alt="You" className="w-8 h-8 rounded-full border border-slate-700 bg-slate-800 shrink-0" />
+                      <div className="flex-1 relative">
+                        <textarea 
+                          value={commentText}
+                          onChange={(e) => setCommentText(e.target.value)}
+                          placeholder="Write a comment or status update..."
+                          className="w-full bg-slate-900 border border-slate-700/60 rounded-xl px-4 py-3 pr-12 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none h-16"
+                        />
+                        <button 
+                          onClick={handleSendComment}
+                          disabled={!commentText.trim()}
+                          className="absolute right-2 bottom-2 p-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path></svg>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {user.isMock && (
               <div className="relative z-30 bg-amber-950/30 border-b border-amber-900/50 px-4 py-3 text-amber-300 text-sm flex justify-center items-center text-center backdrop-blur-md">
@@ -1779,14 +2003,14 @@
 
                 {/* Bug Tracking Widgets */}
                 {totalBugsCount > 0 && (
-                  <div className="mb-8">
+                  <div className="mb-8 animate-in fade-in">
                     <div className="flex items-center space-x-2 mb-4">
                         <Bug className="h-5 w-5 text-rose-400" />
                         <h2 className="text-lg font-semibold text-white">Quality & Defects</h2>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 lg:gap-6">
                       <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-rose-500/10 shadow-xl flex items-start space-x-4">
-                        <div className="bg-rose-500/10 p-3 rounded-lg border border-rose-500/20">
+                        <div className="bg-rose-500/10 p-3 rounded-lg border border-rose-500/20 shrink-0">
                           <Bug className="h-6 w-6 text-rose-400" />
                         </div>
                         <div>
@@ -1794,24 +2018,38 @@
                           <p className="text-2xl font-bold text-white mt-1">{activeBugsCount}</p>
                         </div>
                       </div>
+                      
                       <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-orange-500/10 shadow-xl flex items-start space-x-4">
-                        <div className="bg-orange-500/10 p-3 rounded-lg border border-orange-500/20">
+                        <div className="bg-orange-500/10 p-3 rounded-lg border border-orange-500/20 shrink-0">
                           <ShieldAlert className="h-6 w-6 text-orange-400" />
                         </div>
                         <div>
-                          <p className="text-sm font-medium text-slate-400">High/Critical Priority</p>
+                          <p className="text-sm font-medium text-slate-400">High/Critical</p>
                           <p className="text-2xl font-bold text-white mt-1">{criticalBugsCount}</p>
                         </div>
                       </div>
+
                       <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-emerald-500/10 shadow-xl flex items-start space-x-4">
-                        <div className="bg-emerald-500/10 p-3 rounded-lg border border-emerald-500/20">
+                        <div className="bg-emerald-500/10 p-3 rounded-lg border border-emerald-500/20 shrink-0">
                           <Activity className="h-6 w-6 text-emerald-400" />
                         </div>
                         <div>
-                          <p className="text-sm font-medium text-slate-400">Bug Resolution Rate</p>
+                          <p className="text-sm font-medium text-slate-400">Resolution Rate</p>
                           <div className="flex items-end space-x-2 mt-1">
                             <p className="text-2xl font-bold text-white">{bugResolutionRate}%</p>
-                            <p className="text-xs text-slate-400 mb-1">({resolvedBugsCount}/{totalBugsCount} fixed)</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-sky-500/10 shadow-xl flex items-start space-x-4">
+                        <div className="bg-sky-500/10 p-3 rounded-lg border border-sky-500/20 shrink-0">
+                          <Zap className="h-6 w-6 text-sky-400" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium text-slate-400">Avg Fix Velocity</p>
+                          <div className="flex items-end space-x-2 mt-1">
+                            <p className="text-2xl font-bold text-white">{avgVelocityDays}</p>
+                            <p className="text-xs text-slate-400 mb-1">Days</p>
                           </div>
                         </div>
                       </div>
@@ -1819,169 +2057,223 @@
                   </div>
                 )}
 
-                <div className="space-y-6">
-                  <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl overflow-hidden">
-                    <div className="px-6 py-4 border-b border-white/5 bg-slate-900/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                      <div className="flex items-center space-x-3">
-                        <h2 className="text-lg font-semibold text-white">Active Workflows</h2>
-                        {isAutoSyncing ? (
-                          <span className="flex items-center text-xs font-medium text-indigo-400 bg-indigo-500/10 px-2.5 py-1 rounded-full border border-indigo-500/20 transition-all">
-                            <RefreshCw className="h-3 w-3 mr-1 animate-spin" /> Syncing...
-                          </span>
-                        ) : (
-                          <span className="flex items-center text-xs font-medium text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20 transition-all">
-                            <div className="h-2 w-2 rounded-full bg-emerald-400 mr-1.5 animate-pulse"></div> Auto-sync On
-                          </span>
-                        )}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+                  {/* Left Column: Active Workflows List */}
+                  <div className="lg:col-span-2 space-y-6">
+                    <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl overflow-hidden">
+                      <div className="px-6 py-4 border-b border-white/5 bg-slate-900/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div className="flex items-center space-x-3">
+                          <h2 className="text-lg font-semibold text-white">Active Workflows</h2>
+                          {isAutoSyncing ? (
+                            <span className="flex items-center text-xs font-medium text-indigo-400 bg-indigo-500/10 px-2.5 py-1 rounded-full border border-indigo-500/20 transition-all">
+                              <RefreshCw className="h-3 w-3 mr-1 animate-spin" /> Syncing...
+                            </span>
+                          ) : (
+                            <span className="flex items-center text-xs font-medium text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20 transition-all">
+                              <div className="h-2 w-2 rounded-full bg-emerald-400 mr-1.5 animate-pulse"></div> Auto-sync On
+                            </span>
+                          )}
+                        </div>
+                        <button 
+                          onClick={handleConnectClickUp}
+                          className="text-sm font-medium text-indigo-400 hover:text-white flex items-center shrink-0 transition-colors"
+                        >
+                          <Plus className="h-4 w-4 mr-1" /> Add Another
+                        </button>
                       </div>
-                      <button 
-                        onClick={handleConnectClickUp}
-                        className="text-sm font-medium text-indigo-400 hover:text-white flex items-center shrink-0 transition-colors"
-                      >
-                        <Plus className="h-4 w-4 mr-1" /> Add Another
-                      </button>
-                    </div>
-                    <ul className="divide-y divide-white/5">
-                      {mappedWorkflows.map(workflow => {
-                        const currentTab = workflowTabs[workflow.id] || 'all';
+                      <ul className="divide-y divide-white/5">
+                        {mappedWorkflows.map(workflow => {
+                          const currentTab = workflowTabs[workflow.id] || 'all';
 
-                        // Calculate unique root task statuses for the tabs (excluding flattened subtasks from root tabs)
-                        const rootTasksByTags = (workflow.tasks || []).filter(task => {
-                          if (completionFilterType === 'none') return true;
-                          if (completionFilterType === 'tags') {
-                            if (!selectedTagFilter) return true;
-                            // Search recursively down the task tree for matching tags to ensure parent shows if child matches
-                            const hasTagDeep = (t) => {
-                                if (t.tags?.some(tag => tag.name === selectedTagFilter)) return true;
-                                if (t.subtasks && t.subtasks.length > 0) return t.subtasks.some(sub => hasTagDeep(sub));
-                                return false;
-                            };
-                            return hasTagDeep(task);
-                          }
-                          return true;
-                        });
+                          const rootTasksByTags = (workflow.tasks || []).filter(task => {
+                            if (completionFilterType === 'none') return true;
+                            if (completionFilterType === 'tags') {
+                              if (!selectedTagFilter) return true;
+                              const hasTagDeep = (t) => {
+                                  if (t.tags?.some(tag => tag.name === selectedTagFilter)) return true;
+                                  if (t.subtasks && t.subtasks.length > 0) return t.subtasks.some(sub => hasTagDeep(sub));
+                                  return false;
+                              };
+                              return hasTagDeep(task);
+                            }
+                            return true;
+                          });
 
-                        const uniqueStatuses = Array.from(new Set(rootTasksByTags.map(t => t.status?.status || 'Open')));
+                          const uniqueStatuses = Array.from(new Set(rootTasksByTags.map(t => t.status?.status || 'Open')));
 
-                        const displayedTasks = rootTasksByTags.filter(task => {
-                          if (currentTab === 'all') return true;
-                          return (task.status?.status || 'Open') === currentTab;
-                        });
+                          const displayedTasks = rootTasksByTags.filter(task => {
+                            if (currentTab === 'all') return true;
+                            return (task.status?.status || 'Open') === currentTab;
+                          });
 
-                        return (
-                          <li key={workflow.id} className="p-6 hover:bg-white/5 transition-colors">
-                            <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-                              <div className="flex items-start space-x-4">
-                                <div className="bg-indigo-500/10 p-2.5 rounded-lg hidden sm:block mt-1 border border-indigo-500/20">
-                                  <SpiderNetworkIcon className="h-5 w-5 text-indigo-400" />
-                                </div>
-                                <div className="flex flex-col space-y-1.5 w-full">
-                                  <div className="flex flex-wrap items-center text-sm text-slate-300 gap-y-2">
-                                    <span className="font-semibold text-white flex items-center">
-                                      <Box className="h-4 w-4 mr-1.5 text-slate-400" /> {workflow.team} / {workflow.space}
-                                    </span>
-                                    {workflow.folder !== 'No Folder' && (
-                                      <>
-                                        <ChevronRight className="h-4 w-4 mx-2 text-slate-600 hidden sm:block" />
-                                        <span className="flex items-center text-slate-300">
-                                          <FolderOpen className="h-4 w-4 mr-1.5 text-slate-400" /> {workflow.folder}
-                                        </span>
-                                      </>
-                                    )}
-                                    <ChevronRight className="h-4 w-4 mx-2 text-slate-600 hidden sm:block" />
-                                    <span className="font-semibold text-indigo-400 flex items-center bg-indigo-500/10 px-2.5 py-1 rounded-md border border-indigo-500/20 shadow-sm">
-                                      <ListTodo className="h-4 w-4 mr-1.5" /> {workflow.list}
-                                    </span>
+                          return (
+                            <li key={workflow.id} className="p-6 hover:bg-white/5 transition-colors">
+                              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+                                <div className="flex items-start space-x-4">
+                                  <div className="bg-indigo-500/10 p-2.5 rounded-lg hidden sm:block mt-1 border border-indigo-500/20">
+                                    <SpiderNetworkIcon className="h-5 w-5 text-indigo-400" />
                                   </div>
-                                  <div className="flex items-center text-xs text-slate-500">
-                                    <Clock className="h-3 w-3 mr-1" />
-                                    Last synced: {new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: 'numeric', second: 'numeric' }).format(new Date(workflow.lastSynced))}
+                                  <div className="flex flex-col space-y-1.5 w-full">
+                                    <div className="flex flex-wrap items-center text-sm text-slate-300 gap-y-2">
+                                      <span className="font-semibold text-white flex items-center">
+                                        <Box className="h-4 w-4 mr-1.5 text-slate-400" /> {workflow.team} / {workflow.space}
+                                      </span>
+                                      {workflow.folder !== 'No Folder' && (
+                                        <>
+                                          <ChevronRight className="h-4 w-4 mx-2 text-slate-600 hidden sm:block" />
+                                          <span className="flex items-center text-slate-300">
+                                            <FolderOpen className="h-4 w-4 mr-1.5 text-slate-400" /> {workflow.folder}
+                                          </span>
+                                        </>
+                                      )}
+                                      <ChevronRight className="h-4 w-4 mx-2 text-slate-600 hidden sm:block" />
+                                      <span className="font-semibold text-indigo-400 flex items-center bg-indigo-500/10 px-2.5 py-1 rounded-md border border-indigo-500/20 shadow-sm">
+                                        <ListTodo className="h-4 w-4 mr-1.5" /> {workflow.list}
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center text-xs text-slate-500">
+                                      <Clock className="h-3 w-3 mr-1" />
+                                      Last synced: {new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: 'numeric', second: 'numeric' }).format(new Date(workflow.lastSynced))}
+                                    </div>
                                   </div>
                                 </div>
-                              </div>
-                              <button 
-                                onClick={() => removeMapping(workflow.id)}
-                                className="text-slate-400 hover:text-red-400 transition-colors p-2 rounded-md hover:bg-red-950/20 shrink-0 self-end sm:self-start"
-                                title="Remove Mapping"
-                              >
-                                <Trash2 className="h-5 w-5" />
-                              </button>
-                            </div>
-
-                            <div className="mt-5 pt-4 border-t border-white/5 sm:ml-12 pl-1 sm:pl-0">
-                              
-                              <div className="flex flex-wrap gap-2 mb-4 border-b border-white/5 pb-3">
-                                <button
-                                  onClick={() => setWorkflowTabs(prev => ({ ...prev, [workflow.id]: 'all' }))}
-                                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                                    currentTab === 'all'
-                                      ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/30'
-                                      : 'bg-slate-900/60 text-slate-400 border border-transparent hover:text-slate-200'
-                                  }`}
+                                <button 
+                                  onClick={() => removeMapping(workflow.id)}
+                                  className="text-slate-400 hover:text-red-400 transition-colors p-2 rounded-md hover:bg-red-950/20 shrink-0 self-end sm:self-start"
+                                  title="Remove Mapping"
                                 >
-                                  All ({rootTasksByTags.length})
+                                  <Trash2 className="h-5 w-5" />
                                 </button>
-                                {uniqueStatuses.map(status => {
-                                  const count = rootTasksByTags.filter(t => (t.status?.status || 'Open') === status).length;
-                                  const statusColor = rootTasksByTags.find(t => (t.status?.status || 'Open') === status)?.status?.color || '#94a3b8';
-                                  const isSelected = currentTab === status;
-                                  
-                                  return (
-                                    <button
-                                      key={status}
-                                      onClick={() => setWorkflowTabs(prev => ({ ...prev, [workflow.id]: status }))}
-                                      className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5 capitalize border ${
-                                        isSelected
-                                          ? 'bg-slate-900 text-white'
-                                          : 'bg-slate-900/40 text-slate-400 border-transparent hover:text-slate-200'
-                                      }`}
-                                      style={isSelected ? { borderColor: `${statusColor}40`, boxShadow: `0 0 8px ${statusColor}15` } : {}}
-                                    >
-                                      <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: statusColor, boxShadow: `0 0 6px ${statusColor}` }} />
-                                      {status} ({count})
-                                    </button>
-                                  );
-                                })}
                               </div>
 
-                              <div className="flex items-center justify-between mb-3">
-                                <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Top-Level Tasks</h4>
-                                <span className="text-xs bg-slate-900/60 text-slate-400 border border-white/5 px-2.5 py-0.5 rounded-full font-medium">
-                                  {currentTab !== 'all'
-                                    ? `Showing ${displayedTasks.length} of ${rootTasksByTags.length} tasks`
-                                    : `${rootTasksByTags.length} tasks`}
-                                </span>
-                              </div>
-                              
-                              {displayedTasks && displayedTasks.length > 0 ? (
-                                <div className="space-y-3">
-                                  {displayedTasks.map(task => (
-                                    <TaskItem 
-                                      key={task.id} 
-                                      task={task} 
-                                      expandedTasks={expandedTasks} 
-                                      toggleTaskExpand={toggleTaskExpand} 
-                                    />
-                                  ))}
+                              <div className="mt-5 pt-4 border-t border-white/5 sm:ml-12 pl-1 sm:pl-0">
+                                <div className="flex flex-wrap gap-2 mb-4 border-b border-white/5 pb-3">
+                                  <button
+                                    onClick={() => setWorkflowTabs(prev => ({ ...prev, [workflow.id]: 'all' }))}
+                                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                                      currentTab === 'all'
+                                        ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/30'
+                                        : 'bg-slate-900/60 text-slate-400 border border-transparent hover:text-slate-200'
+                                    }`}
+                                  >
+                                    All ({rootTasksByTags.length})
+                                  </button>
+                                  {uniqueStatuses.map(status => {
+                                    const count = rootTasksByTags.filter(t => (t.status?.status || 'Open') === status).length;
+                                    const statusColor = rootTasksByTags.find(t => (t.status?.status || 'Open') === status)?.status?.color || '#94a3b8';
+                                    const isSelected = currentTab === status;
+                                    
+                                    return (
+                                      <button
+                                        key={status}
+                                        onClick={() => setWorkflowTabs(prev => ({ ...prev, [workflow.id]: status }))}
+                                        className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5 capitalize border ${
+                                          isSelected
+                                            ? 'bg-slate-900 text-white'
+                                            : 'bg-slate-900/40 text-slate-400 border-transparent hover:text-slate-200'
+                                        }`}
+                                        style={isSelected ? { borderColor: `${statusColor}40`, boxShadow: `0 0 8px ${statusColor}15` } : {}}
+                                      >
+                                        <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: statusColor, boxShadow: `0 0 6px ${statusColor}` }} />
+                                        {status} ({count})
+                                      </button>
+                                    );
+                                  })}
                                 </div>
-                              ) : (
-                                <div className="text-sm text-slate-400 italic p-4 bg-slate-950/20 rounded-lg text-center border border-white/5">
-                                  No tasks match this status tab filter.
-                               </div>
-                              )}
-                            </div>
-                          </li>
-                        );
-                      })}
-                    </ul>
+
+                                <div className="flex items-center justify-between mb-3">
+                                  <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Top-Level Tasks</h4>
+                                  <span className="text-xs bg-slate-900/60 text-slate-400 border border-white/5 px-2.5 py-0.5 rounded-full font-medium">
+                                    {currentTab !== 'all'
+                                      ? `Showing ${displayedTasks.length} of ${rootTasksByTags.length} tasks`
+                                      : `${rootTasksByTags.length} tasks`}
+                                  </span>
+                                </div>
+                                
+                                {displayedTasks && displayedTasks.length > 0 ? (
+                                  <div className="space-y-3">
+                                    {displayedTasks.map(task => (
+                                      <TaskItem 
+                                        key={task.id} 
+                                        task={task} 
+                                        expandedTasks={expandedTasks} 
+                                        toggleTaskExpand={toggleTaskExpand} 
+                                      />
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div className="text-sm text-slate-400 italic p-4 bg-slate-950/20 rounded-lg text-center border border-white/5">
+                                    No tasks match this status tab filter.
+                                 </div>
+                                )}
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
                   </div>
 
-                  {integrationStep !== 'idle' && (
-                    <div className="mt-8 animate-in fade-in slide-in-from-top-4">
-                      <h3 className="text-lg font-semibold text-white mb-4">Map Another Workflow</h3>
-                      {integrationUI}
+                  {/* Right Column: Top Stalled Tasks */}
+                  <div className="lg:col-span-1 space-y-6">
+                    <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl overflow-hidden animate-in slide-in-from-right-4">
+                      <div className="px-5 py-4 border-b border-white/5 bg-amber-500/5 flex items-center justify-between">
+                        <div className="flex items-center space-x-2">
+                          <ClockAlert className="h-5 w-5 text-amber-400" />
+                          <h2 className="text-lg font-semibold text-white">Needs Attention</h2>
+                        </div>
+                        <span className="text-xs font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 uppercase tracking-wider">Stalled</span>
+                      </div>
+                      
+                      {stalledTasks.length > 0 ? (
+                        <ul className="divide-y divide-white/5">
+                          {stalledTasks.map(task => {
+                            const themeColor = task.status?.color || '#94a3b8';
+                            const createdDate = task.date_created ? parseInt(task.date_created) : Date.now();
+                            const daysOld = Math.floor((Date.now() - createdDate) / 86400000);
+                            
+                            return (
+                              <li 
+                                key={task.id} 
+                                onClick={() => setSelectedTicketForModal(task)}
+                                className="p-4 hover:bg-slate-800/50 cursor-pointer transition-colors group flex items-start justify-between gap-3"
+                              >
+                                <div className="min-w-0">
+                                  <div className="flex items-center space-x-2 mb-1">
+                                    <div 
+                                      className="w-2 h-2 rounded-full shrink-0" 
+                                      style={{ backgroundColor: themeColor }} 
+                                    />
+                                    <span className="text-sm font-semibold text-slate-200 truncate group-hover:text-white transition-colors">{task.name}</span>
+                                  </div>
+                                  <div className="flex items-center text-xs text-slate-500 ml-4">
+                                    Open for {daysOld} {daysOld === 1 ? 'day' : 'days'}
+                                  </div>
+                                </div>
+                                
+                                {task.assignees && task.assignees.length > 0 ? (
+                                  <img 
+                                    src={task.assignees[0].profilePicture || `https://ui-avatars.com/api/?name=${encodeURIComponent(task.assignees[0].username)}&background=random`} 
+                                    alt={task.assignees[0].username} 
+                                    className="w-6 h-6 rounded-full border border-slate-700 bg-slate-800 object-cover shrink-0 mt-0.5" 
+                                    title={`Assigned to ${task.assignees[0].username}`} 
+                                  />
+                                ) : (
+                                  <div className="flex items-center justify-center w-6 h-6 rounded-full border border-white/5 bg-slate-900 text-slate-500 shrink-0 mt-0.5" title="Unassigned">
+                                    <Users className="h-3 w-3" />
+                                  </div>
+                                )}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      ) : (
+                        <div className="p-8 text-center text-sm text-slate-500 italic">
+                           All tasks are running on schedule.
+                        </div>
+                      )}
                     </div>
-                  )}
+                  </div>
                 </div>
               </main>
             )}
