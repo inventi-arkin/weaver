@@ -90,6 +90,36 @@
       </svg>
     );
 
+    const Bug = ({ className }) => (
+      <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="m8 2 1.88 1.88"/>
+        <path d="M14.12 3.88 16 2"/>
+        <path d="M9 7.13v-1a3.003 3.003 0 1 1 6 0v1"/>
+        <path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6"/>
+        <path d="M12 20v-9"/>
+        <path d="M6.53 9C4.6 8.8 3 7.1 3 5"/>
+        <path d="M17.47 9c1.93-.2 3.53-1.9 3.53-3.9"/>
+        <path d="M6.53 15H3"/>
+        <path d="M21 15h-3.47"/>
+        <path d="M8.67 18c-1.7.5-3.3 1.6-4.3 3.2"/>
+        <path d="M15.33 18c1.7.5 3.3 1.6 4.3 3.2"/>
+      </svg>
+    );
+
+    const ShieldAlert = ({ className }) => (
+      <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+        <path d="M12 8v4" />
+        <path d="M12 16h.01" />
+      </svg>
+    );
+
+    const Activity = ({ className }) => (
+      <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+      </svg>
+    );
+
     const CheckCircle2 = ({ className }) => (
       <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z" />
@@ -264,19 +294,15 @@
       const taskMap = {};
       const roots = [];
 
-      // Initialize all tasks with an empty subtasks array
       flatTasks.forEach(task => {
         taskMap[task.id] = { ...task, subtasks: [] };
       });
 
-      // Link children to their parents
       flatTasks.forEach(task => {
         const parentId = task.parent;
-        // If task has a valid parent that exists in the map
         if (parentId && taskMap[parentId]) {
           taskMap[parentId].subtasks.push(taskMap[task.id]);
         } else {
-          // Top level tasks
           roots.push(taskMap[task.id]);
         }
       });
@@ -295,7 +321,33 @@
       }, []);
     };
 
-    // HTML5 Canvas Web Nest background with spinning/weaving spiders & nodes
+    // Helper to specifically extract QA and Bug tasks from the tree
+    const extractBugs = (tasks, inBugContext = false) => {
+      let bugs = [];
+      tasks.forEach(t => {
+          const taskNameLower = t.name.toLowerCase();
+          // Flag as a bug container if it mentions QA Bugs or UI Bugs
+          const isBugContainer = taskNameLower.includes('qa bugs') || taskNameLower.includes('ui bugs');
+          const isContext = inBugContext || isBugContainer;
+          
+          const hasBugTag = t.tags?.some(tag => ['bug', 'defect'].includes(tag.name.toLowerCase()));
+          
+          // Add task if it's inside a bug container (but isn't the container itself) or has a bug tag
+          if ((isContext && !isBugContainer) || hasBugTag) {
+              if (!bugs.find(b => b.id === t.id)) {
+                  bugs.push(t);
+              }
+          }
+          
+          if (t.subtasks && t.subtasks.length > 0) {
+              // Pass the bug context state downward
+              bugs.push(...extractBugs(t.subtasks, isContext));
+          }
+      });
+      return bugs;
+    };
+
+    // HTML5 Canvas Web Nest background
     const WebNestBackground = ({ opacity }) => {
       const canvasRef = useRef(null);
 
@@ -608,7 +660,7 @@
       return <canvas ref={canvasRef} className="absolute inset-0 w-full h-full block z-0 transition-opacity duration-1000" style={{ opacity }} />;
     };
 
-    // --- Mock Data with Deep Nested Sub-Subtasks Support & Progress Values ---
+    // --- Mock Data with Deep Nested Sub-Subtasks Support & Time Estimations in ms ---
     const MOCK_CLICKUP_DATA = {
       teams: [{ id: 'mock_team_1', name: 'Acme Corp Workspace' }],
       spaces: {
@@ -637,29 +689,30 @@
             due_date: (Date.now() + 86400000).toString(),
             assignees: [{ username: 'Alex D.', profilePicture: 'https://ui-avatars.com/api/?name=Alex+D&background=indigo&color=fff' }],
             tags: [{ name: 'backend', color: '#3b82f6' }, { name: 'bug', color: '#ef4444' }],
-            progress: 65,
+            time_estimate: 28800000, // 8 hours
+            time_spent: 14400000,    // 4 hours
             subtasks: [
               { 
                 id: 'sub_t1_1', 
                 name: 'Verify OAuth Redirect URL in production Settings', 
                 status: { status: 'complete', color: '#10b981' }, 
                 priority: { priority: 'high', color: '#ef4444' },
-                progress: 100,
+                time_estimate: 7200000, time_spent: 7200000, // 2h / 2h
                 subtasks: [
-                  { id: 'sub_sub_t1_1_1', name: 'Check DNS records alignment with SSL configurations', status: { status: 'complete', color: '#10b981' }, priority: null, progress: 100 },
+                  { id: 'sub_sub_t1_1_1', name: 'Check DNS records alignment with SSL configurations', status: { status: 'complete', color: '#10b981' }, priority: null, time_estimate: 3600000, time_spent: 3600000 },
                   { 
                     id: 'sub_sub_t1_1_2', 
                     name: 'Update whitelist domains on ClickUp console', 
                     status: { status: 'in progress', color: '#3b82f6' }, 
                     priority: { priority: 'normal', color: '#eab308' },
-                    progress: 30,
+                    time_estimate: 7200000, time_spent: 3600000, // 1h / 2h
                     subtasks: [
-                      { id: 'sub_deep_t1_1_2_1', name: 'Request security team audit signature', status: { status: 'open', color: '#94a3b8' }, priority: null, progress: 0 }
+                      { id: 'sub_deep_t1_1_2_1', name: 'Request security team audit signature', status: { status: 'open', color: '#94a3b8' }, priority: null, time_estimate: 3600000, time_spent: 0 }
                     ]
                   }
                 ]
               },
-              { id: 'sub_t1_2', name: 'Patch sandbox CORS whitelist policies', status: { status: 'in progress', color: '#3b82f6' }, priority: null, progress: 50, subtasks: [] }
+              { id: 'sub_t1_2', name: 'Patch sandbox CORS whitelist policies', status: { status: 'in progress', color: '#3b82f6' }, priority: null, time_estimate: 10800000, time_spent: 3600000, subtasks: [] }
             ]
           },
           {
@@ -669,10 +722,10 @@
             due_date: null,
             assignees: [{ username: 'Sarah W.', profilePicture: 'https://ui-avatars.com/api/?name=Sarah+W&background=emerald&color=fff' }],
             tags: [{ name: 'frontend', color: '#f59e0b' }, { name: 'design', color: '#8b5cf6' }],
-            progress: 100,
+            time_estimate: 43200000, time_spent: 43200000, // 12h / 12h
             subtasks: [
-              { id: 'sub_t2_1', name: 'Draw core mockup wireframes', status: { status: 'closed', color: '#10b981' }, priority: null, progress: 100, subtasks: [] },
-              { id: 'sub_t2_2', name: 'Obtain initial developer design feedback', status: { status: 'closed', color: '#10b981' }, priority: null, progress: 100, subtasks: [] }
+              { id: 'sub_t2_1', name: 'Draw core mockup wireframes', status: { status: 'closed', color: '#10b981' }, priority: null, time_estimate: 14400000, time_spent: 14400000, subtasks: [] },
+              { id: 'sub_t2_2', name: 'Obtain initial developer design feedback', status: { status: 'closed', color: '#10b981' }, priority: null, time_estimate: 7200000, time_spent: 7200000, subtasks: [] }
             ]
           }
         ],
@@ -684,16 +737,16 @@
             due_date: null,
             assignees: [],
             tags: [{ name: 'backend', color: '#3b82f6' }, { name: 'docs', color: '#64748b' }],
-            progress: 80,
+            time_estimate: 18000000, time_spent: 14400000, // 4h / 5h
             subtasks: [
               { 
                 id: 'sub_t3_1', 
                 name: 'Document nested ClickUp subtask parsing logic', 
                 status: { status: 'review', color: '#8b5cf6' }, 
                 priority: null,
-                progress: 80,
+                time_estimate: 7200000, time_spent: 7200000,
                 subtasks: [
-                  { id: 'sub_sub_t3_1_1', name: 'Draft recursive React rendering specs', status: { status: 'complete', color: '#10b981' }, priority: null, progress: 100 }
+                  { id: 'sub_sub_t3_1_1', name: 'Draft recursive React rendering specs', status: { status: 'complete', color: '#10b981' }, priority: null, time_estimate: 3600000, time_spent: 3600000 }
                 ]
               }
             ]
@@ -708,12 +761,15 @@
       const isExpanded = !!expandedTasks[task.id];
       const isParent = depth === 0;
 
-      // Status color matching for recursive borders/accents
       const themeColor = task.status?.color || '#38bdf8';
       const isDoneStatus = ['closed', 'complete', 'done', 'resolved'].includes(task.status?.status?.toLowerCase());
       
-      // Determine Progress Visuals (If API has progress tracking, use it, else binary 100 vs 0 based on status)
-      const taskProgress = task.progress !== undefined ? task.progress : (isDoneStatus ? 100 : 0);
+      // Handle tracked time
+      const estimateMs = task.time_estimate ? parseInt(task.time_estimate) : 0;
+      const spentMs = task.time_spent ? parseInt(task.time_spent) : (isDoneStatus ? estimateMs : 0);
+      const hasTimeData = estimateMs > 0 || spentMs > 0;
+      const displayHours = hasTimeData ? `${Math.round(spentMs / 3600000)}h / ${Math.round(estimateMs / 3600000)}h` : null;
+      const taskProgress = estimateMs > 0 ? Math.min(100, Math.round((spentMs / estimateMs) * 100)) : (isDoneStatus ? 100 : 0);
 
       return (
         <div className={`transition-all overflow-hidden ${
@@ -747,20 +803,11 @@
                 </button>
               )}
 
-              {/* Progress Bar Display */}
-              {(task.progress !== undefined || isDoneStatus) && (
-                <div className="flex items-center space-x-1.5 shrink-0 hidden md:flex w-20" title={`Progress: ${taskProgress}%`}>
-                  <div className="w-full bg-slate-900/50 rounded-full h-1.5 overflow-hidden border border-white/5">
-                    <div 
-                      className="h-1.5 rounded-full transition-all duration-500" 
-                      style={{ 
-                        width: `${taskProgress}%`,
-                        backgroundColor: themeColor,
-                        boxShadow: `0 0 6px ${themeColor}80`
-                      }}
-                    ></div>
-                  </div>
-                  <span className="text-[9px] font-bold text-slate-400 w-5 text-right shrink-0">{taskProgress}%</span>
+              {/* Display Tracked Time & Progress */}
+              {hasTimeData && (
+                <div className="flex items-center text-xs text-slate-400 whitespace-nowrap shrink-0" title="Tracked Time">
+                  <Clock className="h-3.5 w-3.5 mr-1.5 text-slate-500" />
+                  {displayHours}
                 </div>
               )}
 
@@ -776,7 +823,7 @@
                 {task.status?.status || 'Open'}
               </span>
 
-              {/* Render Tags (Only shown fully for parent tasks to save horizontal space) */}
+              {/* Render Tags */}
               {isParent && task.tags && task.tags.length > 0 && (
                 <div className="flex items-center space-x-1 mr-2 hidden sm:flex shrink-0">
                   <Tag className="h-3 w-3 text-slate-500 mr-1" />
@@ -811,7 +858,7 @@
                 </div>
               )}
 
-              {/* Assignees (Only on depth-0 parents to keep child cards cleanly nested) */}
+              {/* Assignees */}
               {isParent && (
                 task.assignees && task.assignees.length > 0 ? (
                   <div className="flex -space-x-1.5 shrink-0">
@@ -870,10 +917,7 @@
       const [completionFilterType, setCompletionFilterType] = useState('none');
       const [selectedTagFilter, setSelectedTagFilter] = useState('');
 
-      // State to track expanded subtask drawers for individual parent tasks
       const [expandedTasks, setExpandedTasks] = useState({});
-
-      // Per-workflow Task Status Tab State
       const [workflowTabs, setWorkflowTabs] = useState({});
 
       const mappedWorkflowsRef = useRef(mappedWorkflows);
@@ -952,12 +996,10 @@
                   setClickUpToken(savedToken);
                   return;
                 }
-                // Try fetching teams to verify the token is still active and valid
                 const data = await fetchClickUp('team', savedToken);
                 setTeams(data.teams || []);
                 setClickUpToken(savedToken);
               } catch (err) {
-                // Catch function: If API fails, token is revoked, or CORS entirely blocks it, clear it out.
                 console.warn('Saved ClickUp token is invalid or expired. Clearing...');
                 localStorage.removeItem('weaver_clickup_token');
                 setClickUpToken('');
@@ -1050,7 +1092,7 @@
           const data = await fetchClickUp('team', tempToken);
           setTeams(data.teams || []);
           setClickUpToken(tempToken);
-          localStorage.setItem('weaver_clickup_token', tempToken); // Persist valid token
+          localStorage.setItem('weaver_clickup_token', tempToken);
           setIntegrationStep('selecting');
         } catch (err) {
           setClickUpError(err.message);
@@ -1185,7 +1227,6 @@
           setUser(null);
         }
         
-        // Clean up session and storage
         localStorage.removeItem('weaver_clickup_token');
         setClickUpToken('');
         setTeams([]);
@@ -1213,30 +1254,85 @@
           filteredTasks = allTasksFlattened.filter(t => t.tags?.some(tag => tag.name === selectedTagFilter));
         }
 
-        // Global Completion Widget Math (Averages all actual task progress values instead of simple binary counting)
         const totalFilteredCount = filteredTasks.length;
-        const totalProgressValue = filteredTasks.reduce((sum, t) => {
-          const isDone = ['closed', 'complete', 'done', 'resolved'].includes(t.status?.status?.toLowerCase());
-          if (t.progress !== undefined) return sum + t.progress;
-          return sum + (isDone ? 100 : 0);
-        }, 0);
-        
-        const completionPercentage = totalFilteredCount === 0 ? 0 : Math.round(totalProgressValue / totalFilteredCount);
-        const completedTasksCount = filteredTasks.filter(t => ['closed', 'complete', 'done', 'resolved'].includes(t.status?.status?.toLowerCase())).length;
 
-        // Dynamic Burndown Chart Math (Calculates a realistic visual curve based strictly on actual progress completion)
-        const pY = completionPercentage; // 0 to 100 on Y-Axis
+        // Global Completion Widget Math (Uses Time Tracking)
+        let totalEstimateMs = 0;
+        let totalRemainingMs = 0;
+        
+        let minDate = Infinity;
+        let maxDate = 0;
+
+        filteredTasks.forEach(t => {
+          const isDone = ['closed', 'complete', 'done', 'resolved'].includes(t.status?.status?.toLowerCase());
+          
+          if (t.start_date) minDate = Math.min(minDate, parseInt(t.start_date));
+          if (t.due_date) maxDate = Math.max(maxDate, parseInt(t.due_date));
+          
+          // Fallback to 0 if task has no estimate tracking
+          const estimate = t.time_estimate ? parseInt(t.time_estimate) : 0; 
+          
+          let spent = 0;
+          if (t.time_spent) {
+            spent = parseInt(t.time_spent);
+          } else if (t.progress !== undefined) {
+            spent = estimate * (t.progress / 100);
+          } else if (isDone) {
+            spent = estimate;
+          }
+
+          const remaining = isDone ? 0 : Math.max(0, estimate - spent);
+
+          totalEstimateMs += estimate;
+          totalRemainingMs += remaining;
+        });
+        
+        // Bug & Defect Tracking Math
+        const allBugs = extractBugs(mappedWorkflows.flatMap(wf => wf.tasks || []));
+        const totalBugsCount = allBugs.length;
+        const resolvedBugsCount = allBugs.filter(t => ['closed', 'complete', 'done', 'resolved'].includes(t.status?.status?.toLowerCase())).length;
+        const activeBugsCount = totalBugsCount - resolvedBugsCount;
+        const criticalBugsCount = allBugs.filter(t => ['high', 'urgent', 'critical'].includes(t.priority?.priority?.toLowerCase())).length;
+        const bugResolutionRate = totalBugsCount === 0 ? 0 : Math.round((resolvedBugsCount / totalBugsCount) * 100);
+
+        // Timeline processing for Burndown
+        const now = Date.now();
+        if (minDate === Infinity) minDate = now - (7 * 86400000);
+        if (maxDate === 0) maxDate = now + (7 * 86400000);
+        if (maxDate <= minDate) maxDate = minDate + (14 * 86400000);
+
+        const totalDurationMs = maxDate - minDate;
+        const elapsedMs = Math.max(0, now - minDate);
+        let currentX = (elapsedMs / totalDurationMs) * 100;
+        currentX = Math.max(0, Math.min(100, currentX));
+        
+        const formatDate = (ms) => new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+        const dayLabels = [
+            formatDate(minDate),
+            formatDate(minDate + totalDurationMs * 0.33),
+            formatDate(minDate + totalDurationMs * 0.66),
+            formatDate(maxDate)
+        ];
+
+        // Use minimum 1 hour scale if 0 tasks are mapped with estimates to prevent division by zero visually
+        const totalEstHours = Math.round(totalEstimateMs / 3600000) || 1;
+        const totalRemHours = Math.round(totalRemainingMs / 3600000);
+        
+        const totalSpentHours = totalEstHours - totalRemHours;
+        const completionPercentage = Math.round((totalSpentHours / totalEstHours) * 100);
+        
+        // Realistic dynamic chart projection: Line drops from Max Effort to Current Remaining Effort
+        const currentY = 100 - ((totalRemHours / totalEstHours) * 100);
+        
         const burndownPointsData = [
           [0, 0],
-          [15, Math.min(pY * 0.15, 100)],
-          [30, Math.min(pY * 0.35, 100)],
-          [45, Math.min(pY * 0.45, 100)],
-          [60, Math.min(pY * 0.65, 100)],
-          [80, Math.min(pY * 0.85, 100)],
-          [100, pY]
+          [currentX * 0.33, currentY * 0.25],
+          [currentX * 0.66, currentY * 0.60],
+          [currentX, currentY]
         ];
+        
         const linePointsString = burndownPointsData.map(p => `${p[0]},${p[1]}`).join(' ');
-        const polygonPointsString = `0,100 ${linePointsString} 100,100`;
+        const polygonPointsString = `0,100 ${linePointsString} ${currentX},100 0,100`;
 
         const integrationUI = (
           <div className="animate-in fade-in duration-500 w-full">
@@ -1530,7 +1626,7 @@
                     </div>
                     <div>
                       <p className="text-sm font-medium text-slate-400">Resolved Today</p>
-                      <p className="text-2xl font-bold text-white mt-1">{completedTasksCount}</p>
+                      <p className="text-2xl font-bold text-white mt-1">{filteredTasks.length - activeTasksCount}</p>
                     </div>
                   </div>
                 </div>
@@ -1583,7 +1679,7 @@
                         </div>
                         <div className="text-right">
                           <p className="text-sm font-medium text-white">{totalFilteredCount} Items</p>
-                          <p className="text-xs text-slate-400 uppercase tracking-wider">Tracking Effort</p>
+                          <p className="text-xs text-slate-400 uppercase tracking-wider">Tracked Progress</p>
                         </div>
                       </div>
                       
@@ -1609,7 +1705,7 @@
                           <TrendingDown className="h-5 w-5 text-indigo-400" />
                           <h2 className="text-lg font-semibold text-white">Sprint Burndown</h2>
                         </div>
-                        <p className="text-sm text-slate-400">Tracking accurate progress vs ideal sprint timeline.</p>
+                        <p className="text-sm text-slate-400">Tracking actual time remaining over scheduled timeline.</p>
                       </div>
                       <div className="flex flex-row sm:flex-col gap-4 sm:gap-1.5 text-sm bg-slate-950/40 px-3 py-2 rounded-lg border border-white/5 shrink-0">
                         <div className="flex items-center text-slate-400 font-medium">
@@ -1618,25 +1714,25 @@
                         </div>
                         <div className="flex items-center text-slate-400 font-medium">
                           <div className="w-3 h-3 bg-indigo-500 rounded-full mr-2 shadow-lg shadow-indigo-500/50"></div>
-                          Actual Progress
+                          Remaining Time
                         </div>
                       </div>
                     </div>
                     
                     <div className="relative h-48 w-full">
                       <div className="absolute left-0 top-0 bottom-6 w-8 flex flex-col justify-between text-xs font-medium text-slate-500 text-right pr-2">
-                        <span>100%</span>
-                        <span>75%</span>
-                        <span>50%</span>
-                        <span>25%</span>
-                        <span>0%</span>
+                        <span>{totalEstHours}h</span>
+                        <span>{Math.round(totalEstHours * 0.75)}h</span>
+                        <span>{Math.round(totalEstHours * 0.5)}h</span>
+                        <span>{Math.round(totalEstHours * 0.25)}h</span>
+                        <span>0h</span>
                       </div>
                       
                       <div className="absolute left-10 right-2 top-2 bottom-6">
                         <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="w-full h-full overflow-visible">
                           <defs>
                             <linearGradient id="burndownGradient" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="0%" stopColor="#6366f1" stopOpacity="0.15" />
+                              <stop offset="0%" stopColor="#6366f1" stopOpacity="0.25" />
                               <stop offset="100%" stopColor="#6366f1" stopOpacity="0" />
                             </linearGradient>
                           </defs>
@@ -1651,7 +1747,7 @@
                           <line x1="66.6" y1="0" x2="66.6" y2="100" stroke="#111827" strokeWidth="1" vectorEffect="non-scaling-stroke" />
                           <line x1="100" y1="0" x2="100" y2="100" stroke="#111827" strokeWidth="1" vectorEffect="non-scaling-stroke" />
 
-                          <line x1="0" y1="100" x2="100" y2="0" stroke="#475569" strokeWidth="2" strokeDasharray="6 6" vectorEffect="non-scaling-stroke" />
+                          <line x1="0" y1="0" x2="100" y2="100" stroke="#475569" strokeWidth="2" strokeDasharray="6 6" vectorEffect="non-scaling-stroke" />
 
                           <polygon
                             points={polygonPointsString}
@@ -1666,19 +1762,62 @@
                             strokeLinecap="round"
                             strokeLinejoin="round"
                             vectorEffect="non-scaling-stroke"
+                            className="drop-shadow-lg shadow-indigo-500/50"
                           />
                         </svg>
                       </div>
 
                       <div className="absolute left-10 right-2 bottom-0 h-6 flex justify-between text-xs font-medium text-slate-500">
-                        <span className="-ml-3">Day 1</span>
-                        <span>Day 5</span>
-                        <span>Day 10</span>
-                        <span className="-mr-4">Day 14</span>
+                        <span className="-ml-3">{dayLabels[0]}</span>
+                        <span>{dayLabels[1]}</span>
+                        <span>{dayLabels[2]}</span>
+                        <span className="-mr-4">{dayLabels[3]}</span>
                       </div>
                     </div>
                   </div>
                 </div>
+
+                {/* Bug Tracking Widgets */}
+                {totalBugsCount > 0 && (
+                  <div className="mb-8">
+                    <div className="flex items-center space-x-2 mb-4">
+                        <Bug className="h-5 w-5 text-rose-400" />
+                        <h2 className="text-lg font-semibold text-white">Quality & Defects</h2>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                      <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-rose-500/10 shadow-xl flex items-start space-x-4">
+                        <div className="bg-rose-500/10 p-3 rounded-lg border border-rose-500/20">
+                          <Bug className="h-6 w-6 text-rose-400" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium text-slate-400">Active Defects</p>
+                          <p className="text-2xl font-bold text-white mt-1">{activeBugsCount}</p>
+                        </div>
+                      </div>
+                      <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-orange-500/10 shadow-xl flex items-start space-x-4">
+                        <div className="bg-orange-500/10 p-3 rounded-lg border border-orange-500/20">
+                          <ShieldAlert className="h-6 w-6 text-orange-400" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium text-slate-400">High/Critical Priority</p>
+                          <p className="text-2xl font-bold text-white mt-1">{criticalBugsCount}</p>
+                        </div>
+                      </div>
+                      <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-emerald-500/10 shadow-xl flex items-start space-x-4">
+                        <div className="bg-emerald-500/10 p-3 rounded-lg border border-emerald-500/20">
+                          <Activity className="h-6 w-6 text-emerald-400" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium text-slate-400">Bug Resolution Rate</p>
+                          <div className="flex items-end space-x-2 mt-1">
+                            <p className="text-2xl font-bold text-white">{bugResolutionRate}%</p>
+                            <p className="text-xs text-slate-400 mb-1">({resolvedBugsCount}/{totalBugsCount} fixed)</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <div className="space-y-6">
                   <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl overflow-hidden">
