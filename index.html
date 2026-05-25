@@ -1354,6 +1354,7 @@
         }
 
         const totalFilteredCount = filteredTasks.length;
+        const completedFilteredTasksCount = filteredTasks.filter(t => ['closed', 'complete', 'done', 'resolved'].includes(t.status?.status?.toLowerCase())).length;
 
         // Global Completion Widget Math
         let totalEstimateMs = 0;
@@ -1935,12 +1936,18 @@
                       </div>
                       
                       <div className="flex items-end justify-between mb-4">
-                        <div>
-                          <span className="text-5xl font-extrabold text-white">{completionPercentage}%</span>
+                        <div className="flex flex-col">
+                          <span className="text-5xl font-extrabold text-white leading-none">{completionPercentage}%</span>
                         </div>
-                        <div className="text-right">
-                          <p className="text-sm font-medium text-white">{totalFilteredCount} Items</p>
-                          <p className="text-xs text-slate-400 uppercase tracking-wider">Tracked Progress</p>
+                        <div className="flex flex-col items-end space-y-1.5">
+                          <div className="flex items-center text-xs text-slate-400 bg-slate-950/50 px-2.5 py-1 rounded-md border border-white/5" title="Completed vs Total Items">
+                            <CheckCircle2 className="h-3.5 w-3.5 mr-1.5 text-emerald-400" />
+                            <span className="text-white font-medium mr-1">{completedFilteredTasksCount}</span> / {totalFilteredCount} Items
+                          </div>
+                          <div className="flex items-center text-xs text-slate-400 bg-slate-950/50 px-2.5 py-1 rounded-md border border-white/5" title="Logged vs Estimated Hours">
+                            <Clock className="h-3.5 w-3.5 mr-1.5 text-indigo-400" />
+                            <span className="text-white font-medium mr-1">{totalSpentHours}h</span> / {totalEstHours}h Logged
+                          </div>
                         </div>
                       </div>
                       
