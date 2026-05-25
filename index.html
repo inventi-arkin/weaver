@@ -681,7 +681,7 @@
         };
       }, []);
 
-      return <canvas ref={canvasRef} className="absolute inset-0 w-full h-full block z-0 transition-opacity duration-1000" style={{ opacity }} />;
+      return <canvas ref={canvasRef} className="fixed inset-0 w-full h-full block z-0 transition-opacity duration-1000" style={{ opacity }} />;
     };
 
     // --- Mock Data with Deep Nested Sub-Subtasks Support & Time Estimations in ms ---
@@ -772,7 +772,7 @@
             due_date: (Date.now() + 2 * 86400000).toString(),
             assignees: [{ username: 'Sarah W.', profilePicture: 'https://ui-avatars.com/api/?name=Sarah+W&background=emerald&color=fff' }],
             tags: [{ name: 'frontend', color: '#f59e0b' }, { name: 'design', color: '#8b5cf6' }],
-            time_estimate: 43200000, time_spent: 43200000,
+            time_estimate: 43200000, time_spent: 43200000, // 12h / 12h
             description: "Create high-fidelity wireframes for the new glassmorphic dashboard.",
             subtasks: [
               { id: 'sub_t2_1', name: 'Draw core mockup wireframes', status: { status: 'closed', color: '#10b981' }, date_created: (Date.now() - 14 * 86400000).toString(), date_closed: (Date.now() - 4 * 86400000).toString(), priority: null, time_estimate: 14400000, time_spent: 14400000, subtasks: [] },
@@ -1153,6 +1153,7 @@
         fetchSpaceData();
       }, [selectedSpace, clickUpToken]);
 
+      // Fetch Lists when Folder changes
       useEffect(() => {
         if (!selectedFolder || !clickUpToken) return;
         if (clickUpToken === 'mock_token') {
@@ -2093,9 +2094,9 @@
                   </div>
                 )}
 
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-                  {/* Left Column: Active Workflows List */}
-                  <div className="lg:col-span-2 space-y-6">
+                <div className="flex flex-col space-y-8 mb-8">
+                  {/* Top Section: Active Workflows List */}
+                  <div className="w-full space-y-6">
                     <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl overflow-hidden">
                       <div className="px-6 py-4 border-b border-white/5 bg-slate-900/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                         <div className="flex items-center space-x-3">
@@ -2117,7 +2118,7 @@
                           <Plus className="h-4 w-4 mr-1" /> Add Another
                         </button>
                       </div>
-                      <ul className="divide-y divide-white/5">
+                      <ul className="divide-y divide-white/5 max-h-[600px] overflow-y-auto">
                         {mappedWorkflows.map(workflow => {
                           const currentTab = workflowTabs[workflow.id] || 'all';
 
@@ -2250,9 +2251,9 @@
                     </div>
                   </div>
 
-                  {/* Right Column: Top Stalled Tasks */}
-                  <div className="lg:col-span-1 space-y-6">
-                    <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl overflow-hidden animate-in slide-in-from-right-4">
+                  {/* Bottom Section: Top Stalled Tasks */}
+                  <div className="w-full space-y-6">
+                    <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl overflow-hidden animate-in slide-in-from-bottom-4">
                       <div className="px-5 py-4 border-b border-white/5 bg-amber-500/5 flex items-center justify-between">
                         <div className="flex items-center space-x-2">
                           <ClockAlert className="h-5 w-5 text-amber-400" />
