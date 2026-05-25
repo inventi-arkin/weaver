@@ -1394,11 +1394,11 @@
       if (user) {
         // Flatten all nested subtasks for accurate, deep global math metrics
         const allTasksFlattened = flattenTasks(mappedWorkflows.flatMap(wf => wf.tasks || []));
-        const activeTasksCount = allTasksFlattened.filter(t => !['closed', 'complete', 'done', 'resolved'].includes(t.status?.status?.toLowerCase())).length;
         
         const uniqueTags = Array.from(new Set(allTasksFlattened.flatMap(t => t.tags?.map(tag => tag.name) || [])));
         const uniqueAssignees = Array.from(new Set(allTasksFlattened.flatMap(t => t.assignees?.map(a => a.username) || [])));
 
+        // Apply Global Filter to the core task list
         let filteredTasks = allTasksFlattened;
         if (completionFilterType === 'tags' && selectedTagFilter) {
           filteredTasks = allTasksFlattened.filter(t => t.tags?.some(tag => tag.name === selectedTagFilter));
@@ -1406,6 +1406,7 @@
           filteredTasks = allTasksFlattened.filter(t => t.assignees?.some(a => a.username === selectedAssigneeFilter));
         }
 
+        const activeTasksCount = filteredTasks.filter(t => !['closed', 'complete', 'done', 'resolved'].includes(t.status?.status?.toLowerCase())).length;
         const totalFilteredCount = filteredTasks.length;
         const completedFilteredTasksCount = filteredTasks.filter(t => ['closed', 'complete', 'done', 'resolved'].includes(t.status?.status?.toLowerCase())).length;
 
@@ -1440,7 +1441,15 @@
         });
         
         // Bug & Defect Velocity & KPI Math
-        const allBugs = extractBugs(mappedWorkflows.flatMap(wf => wf.tasks || []));
+        let allBugs = extractBugs(mappedWorkflows.flatMap(wf => wf.tasks || []));
+        
+        // Apply Global Filter to Extracted Bugs
+        if (completionFilterType === 'tags' && selectedTagFilter) {
+          allBugs = allBugs.filter(t => t.tags?.some(tag => tag.name === selectedTagFilter));
+        } else if (completionFilterType === 'assignees' && selectedAssigneeFilter) {
+          allBugs = allBugs.filter(t => t.assignees?.some(a => a.username === selectedAssigneeFilter));
+        }
+
         const totalBugsCount = allBugs.length;
         const resolvedBugsCount = allBugs.filter(t => ['closed', 'complete', 'done', 'resolved'].includes(t.status?.status?.toLowerCase())).length;
         const activeBugsCount = totalBugsCount - resolvedBugsCount;
@@ -1459,7 +1468,7 @@
         const avgVelocityDays = fixVelocityCount > 0 ? (fixVelocitySumMs / fixVelocityCount / 86400000).toFixed(1) : "0";
 
         // Top 5 Stalled Tasks Math (Active tasks sorted by age descending, filtered by estimated time vs duration)
-        const stalledTasksCandidates = allTasksFlattened
+        const stalledTasksCandidates = filteredTasks
           .filter(t => {
             const nameLower = t.name.toLowerCase();
             const statusLower = t.status?.status?.toLowerCase() || '';
@@ -1542,9 +1551,14 @@
 
         // Team Workload Math
         const assigneeStats = {};
-        allTasksFlattened.forEach(task => {
+        filteredTasks.forEach(task => {
           if (task.assignees && task.assignees.length > 0) {
             task.assignees.forEach(assignee => {
+              // If filter is active for a specific assignee, skip others in the same task
+              if (completionFilterType === 'assignees' && selectedAssigneeFilter && assignee.username !== selectedAssigneeFilter) {
+                return;
+              }
+
               const key = assignee.username;
               if (!assigneeStats[key]) {
                 assigneeStats[key] = {
@@ -1977,9 +1991,74 @@
               </main>
             ) : (
               <main className="relative z-25 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 animate-in fade-in duration-500">
-                <div className="mb-8">
-                  <h1 className="text-2xl font-bold text-white">Your Workspace</h1>
-                  <p className="text-slate-400 mt-1">Here is your woven workflow for today.</p>
+                
+                {/* Dashboard Command Center Header */}
+                <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-8 bg-slate-900/40 p-6 rounded-2xl border border-white/5 backdrop-blur-md shadow-xl relative z-20">
+                  <div>
+                    <h1 className="text-2xl font-bold text-white flex items-center gap-3">
+                      Your Workspace
+                      {isAutoSyncing ? (
+                        <span className="flex items-center text-xs font-medium text-indigo-400 bg-indigo-500/10 px-2.5 py-1 rounded-full border border-indigo-500/20 transition-all">
+                          <RefreshCw className="h-3 w-3 mr-1 animate-spin" /> Live Syncing
+                        </span>
+                      ) : (
+                        <span className="flex items-center text-xs font-medium text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20 transition-all">
+                          <div className="h-2 w-2 rounded-full bg-emerald-400 mr-1.5 animate-pulse"></div> Real-time Updates On
+                        </span>
+                      )}
+                    </h1>
+                    <p className="text-slate-400 mt-1 text-sm">Dashboard metrics are dynamically synced and globally filtered.</p>
+                  </div>
+                  
+                  <div className="flex items-center space-x-3 bg-slate-950/50 p-2 rounded-xl border border-white/5">
+                    <span className="text-sm text-slate-400 font-medium pl-2 flex items-center">
+                      <svg className="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"></path></svg>
+                      Global Filter:
+                    </span>
+                    <select
+                      value={completionFilterType}
+                      onChange={(e) => {
+                        setCompletionFilterType(e.target.value);
+                        if (e.target.value === 'tags' && uniqueTags.length > 0) {
+                          setSelectedTagFilter(uniqueTags[0]);
+                        }
+                        if (e.target.value === 'assignees' && uniqueAssignees.length > 0) {
+                          setSelectedAssigneeFilter(uniqueAssignees[0]);
+                        }
+                      }}
+                      className="border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-900 shadow-sm"
+                    >
+                      <option value="none">All Data</option>
+                      <option value="tags">By Tag</option>
+                      <option value="assignees">By Assignee</option>
+                    </select>
+
+                    {completionFilterType === 'tags' && (
+                      <select
+                        value={selectedTagFilter}
+                        onChange={(e) => setSelectedTagFilter(e.target.value)}
+                        className="border border-indigo-500/30 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-indigo-950/30 shadow-sm min-w-[120px]"
+                      >
+                        {uniqueTags.length === 0 && <option value="">No tags found</option>}
+                        {uniqueTags.map(tag => (
+                          <option key={tag} value={tag}>{tag}</option>
+                        ))}
+                      </select>
+                    )}
+                    
+                    {completionFilterType === 'assignees' && (
+                      <select
+                        value={selectedAssigneeFilter}
+                        onChange={(e) => setSelectedAssigneeFilter(e.target.value)}
+                        className="border border-indigo-500/30 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-indigo-950/30 shadow-sm min-w-[120px]"
+                      >
+                        {uniqueAssignees.length === 0 && <option value="">No assignees found</option>}
+                        {uniqueAssignees.map(a => (
+                          <option key={a} value={a}>{a}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
                 </div>
 
                 {/* 1. Metrics */}
@@ -2044,52 +2123,6 @@
                             </h2>
                           </div>
                           <p className="text-sm text-slate-400">Aggregated progress across all active mapped items.</p>
-                        </div>
-                        <div className="flex items-center space-x-2 shrink-0">
-                          <span className="text-sm text-slate-400 font-medium">Filter:</span>
-                          <select
-                            value={completionFilterType}
-                            onChange={(e) => {
-                              setCompletionFilterType(e.target.value);
-                              if (e.target.value === 'tags' && uniqueTags.length > 0) {
-                                setSelectedTagFilter(uniqueTags[0]);
-                              }
-                              if (e.target.value === 'assignees' && uniqueAssignees.length > 0) {
-                                setSelectedAssigneeFilter(uniqueAssignees[0]);
-                              }
-                            }}
-                            className="border border-white/10 rounded-lg px-2 py-1 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-900"
-                          >
-                            <option value="none">None</option>
-                            <option value="tags">Tags</option>
-                            <option value="assignees">Assignees</option>
-                          </select>
-
-                          {completionFilterType === 'tags' && (
-                            <select
-                              value={selectedTagFilter}
-                              onChange={(e) => setSelectedTagFilter(e.target.value)}
-                              className="border border-white/10 rounded-lg px-2 py-1 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-900 min-w-[100px] max-w-[150px]"
-                            >
-                              {uniqueTags.length === 0 && <option value="">No tags</option>}
-                              {uniqueTags.map(tag => (
-                                <option key={tag} value={tag}>{tag}</option>
-                              ))}
-                            </select>
-                          )}
-                          
-                          {completionFilterType === 'assignees' && (
-                            <select
-                              value={selectedAssigneeFilter}
-                              onChange={(e) => setSelectedAssigneeFilter(e.target.value)}
-                              className="border border-white/10 rounded-lg px-2 py-1 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-900 min-w-[100px] max-w-[150px]"
-                            >
-                              {uniqueAssignees.length === 0 && <option value="">No assignees</option>}
-                              {uniqueAssignees.map(a => (
-                                <option key={a} value={a}>{a}</option>
-                              ))}
-                            </select>
-                          )}
                         </div>
                       </div>
                       
@@ -2423,15 +2456,6 @@
                       <div className="px-6 py-4 border-b border-white/5 bg-slate-900/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-t-2xl">
                         <div className="flex items-center space-x-3">
                           <h2 className="text-lg font-semibold text-white">Active Workflows</h2>
-                          {isAutoSyncing ? (
-                            <span className="flex items-center text-xs font-medium text-indigo-400 bg-indigo-500/10 px-2.5 py-1 rounded-full border border-indigo-500/20 transition-all">
-                              <RefreshCw className="h-3 w-3 mr-1 animate-spin" /> Syncing...
-                            </span>
-                          ) : (
-                            <span className="flex items-center text-xs font-medium text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20 transition-all">
-                              <div className="h-2 w-2 rounded-full bg-emerald-400 mr-1.5 animate-pulse"></div> Auto-sync On
-                            </span>
-                          )}
                         </div>
                         <button 
                           onClick={() => {
