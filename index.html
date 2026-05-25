@@ -1010,6 +1010,7 @@
       
       const [completionFilterType, setCompletionFilterType] = useState('none');
       const [selectedTagFilter, setSelectedTagFilter] = useState('');
+      const [selectedAssigneeFilter, setSelectedAssigneeFilter] = useState('');
 
       const [expandedTasks, setExpandedTasks] = useState({});
       const [workflowTabs, setWorkflowTabs] = useState({});
@@ -1387,10 +1388,13 @@
         const activeTasksCount = allTasksFlattened.filter(t => !['closed', 'complete', 'done', 'resolved'].includes(t.status?.status?.toLowerCase())).length;
         
         const uniqueTags = Array.from(new Set(allTasksFlattened.flatMap(t => t.tags?.map(tag => tag.name) || [])));
+        const uniqueAssignees = Array.from(new Set(allTasksFlattened.flatMap(t => t.assignees?.map(a => a.username) || [])));
 
         let filteredTasks = allTasksFlattened;
         if (completionFilterType === 'tags' && selectedTagFilter) {
           filteredTasks = allTasksFlattened.filter(t => t.tags?.some(tag => tag.name === selectedTagFilter));
+        } else if (completionFilterType === 'assignees' && selectedAssigneeFilter) {
+          filteredTasks = allTasksFlattened.filter(t => t.assignees?.some(a => a.username === selectedAssigneeFilter));
         }
 
         const totalFilteredCount = filteredTasks.length;
@@ -2014,11 +2018,15 @@
                               if (e.target.value === 'tags' && uniqueTags.length > 0) {
                                 setSelectedTagFilter(uniqueTags[0]);
                               }
+                              if (e.target.value === 'assignees' && uniqueAssignees.length > 0) {
+                                setSelectedAssigneeFilter(uniqueAssignees[0]);
+                              }
                             }}
                             className="border border-white/10 rounded-lg px-2 py-1 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-900"
                           >
                             <option value="none">None</option>
                             <option value="tags">Tags</option>
+                            <option value="assignees">Assignees</option>
                           </select>
 
                           {completionFilterType === 'tags' && (
@@ -2030,6 +2038,19 @@
                               {uniqueTags.length === 0 && <option value="">No tags</option>}
                               {uniqueTags.map(tag => (
                                 <option key={tag} value={tag}>{tag}</option>
+                              ))}
+                            </select>
+                          )}
+                          
+                          {completionFilterType === 'assignees' && (
+                            <select
+                              value={selectedAssigneeFilter}
+                              onChange={(e) => setSelectedAssigneeFilter(e.target.value)}
+                              className="border border-white/10 rounded-lg px-2 py-1 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-900 min-w-[100px] max-w-[150px]"
+                            >
+                              {uniqueAssignees.length === 0 && <option value="">No assignees</option>}
+                              {uniqueAssignees.map(a => (
+                                <option key={a} value={a}>{a}</option>
                               ))}
                             </select>
                           )}
@@ -2063,6 +2084,12 @@
                       <div className="mt-4 p-3 bg-amber-950/20 rounded-lg border border-amber-900/40 flex items-start text-sm text-amber-300">
                         <AlertTriangle className="h-4 w-4 mr-2 shrink-0 mt-0.5 text-amber-500" />
                         <span>No tags were found in the tasks you mapped.</span>
+                      </div>
+                    )}
+                    {completionFilterType === 'assignees' && uniqueAssignees.length === 0 && (
+                      <div className="mt-4 p-3 bg-amber-950/20 rounded-lg border border-amber-900/40 flex items-start text-sm text-amber-300">
+                        <AlertTriangle className="h-4 w-4 mr-2 shrink-0 mt-0.5 text-amber-500" />
+                        <span>No assignees were found in the tasks you mapped.</span>
                       </div>
                     )}
                   </div>
@@ -2318,16 +2345,18 @@
                           if (isDone) return false;
 
                           if (completionFilterType === 'none') return true;
-                          if (completionFilterType === 'tags') {
-                            if (!selectedTagFilter) return true;
-                            const hasTagDeep = (t) => {
-                                if (t.tags?.some(tag => tag.name === selectedTagFilter)) return true;
-                                if (t.subtasks && t.subtasks.length > 0) return t.subtasks.some(sub => hasTagDeep(sub));
-                                return false;
-                            };
-                            return hasTagDeep(task);
-                          }
-                          return true;
+                          
+                          const hasMatchDeep = (t) => {
+                              if (completionFilterType === 'tags' && selectedTagFilter) {
+                                  if (t.tags?.some(tag => tag.name === selectedTagFilter)) return true;
+                              } else if (completionFilterType === 'assignees' && selectedAssigneeFilter) {
+                                  if (t.assignees?.some(a => a.username === selectedAssigneeFilter)) return true;
+                              }
+                              if (t.subtasks && t.subtasks.length > 0) return t.subtasks.some(sub => hasMatchDeep(sub));
+                              return false;
+                          };
+                          
+                          return hasMatchDeep(task);
                         });
 
                         const uniqueStatuses = Array.from(new Set(rootTasksByTags.map(t => t.status?.status || 'Open')));
