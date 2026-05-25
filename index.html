@@ -850,9 +850,12 @@
     };
 
     // --- Recursive Task & Subtask Item Component ---
-    const TaskItem = ({ task, depth = 0, expandedTasks, toggleTaskExpand }) => {
-      const activeSubtasks = (task.subtasks || []).filter(sub => !['closed', 'complete', 'done', 'resolved'].includes(sub.status?.status?.toLowerCase()));
-      const hasSubtasks = activeSubtasks.length > 0;
+    const TaskItem = ({ task, depth = 0, expandedTasks, toggleTaskExpand, isDoneMode = false }) => {
+      const relevantSubtasks = (task.subtasks || []).filter(sub => {
+        const isDone = ['closed', 'complete', 'done', 'resolved'].includes(sub.status?.status?.toLowerCase());
+        return isDoneMode ? isDone : !isDone;
+      });
+      const hasSubtasks = relevantSubtasks.length > 0;
       const isExpanded = !!expandedTasks[task.id];
       const isParent = depth === 0;
 
@@ -863,8 +866,7 @@
       const spentMs = task.time_spent ? parseInt(task.time_spent) : (isDoneStatus ? estimateMs : 0);
       const hasTimeData = estimateMs > 0 || spentMs > 0;
       const displayHours = hasTimeData ? `${Math.round(spentMs / 3600000)}h / ${Math.round(estimateMs / 3600000)}h` : null;
-      const taskProgress = estimateMs > 0 ? Math.min(100, Math.round((spentMs / estimateMs) * 100)) : (isDoneStatus ? 100 : 0);
-
+      
       return (
         <div className={`transition-all overflow-hidden ${
           isParent 
@@ -892,7 +894,7 @@
                   onClick={() => toggleTaskExpand(task.id)}
                   className="flex items-center space-x-1.5 px-2 py-0.5 rounded bg-indigo-500/10 hover:bg-indigo-500/20 text-[10px] text-indigo-300 font-bold border border-indigo-500/20 transition-colors shrink-0"
                 >
-                  <span>Subtasks ({activeSubtasks.length})</span>
+                  <span>Subtasks ({relevantSubtasks.length})</span>
                   <ChevronRight className={`h-3 w-3 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
                 </button>
               )}
@@ -978,13 +980,14 @@
           {/* Recursive Nested Subtasks Container */}
           {isExpanded && hasSubtasks && (
             <div className="bg-slate-950/40 border-t border-white/5 p-3 space-y-2 animate-in slide-in-from-top-2 duration-200 ml-4 pl-3 border-l border-dashed border-white/10">
-              {activeSubtasks.map(sub => (
+              {relevantSubtasks.map(sub => (
                 <TaskItem 
                   key={sub.id} 
                   task={sub} 
                   depth={depth + 1} 
                   expandedTasks={expandedTasks} 
                   toggleTaskExpand={toggleTaskExpand} 
+                  isDoneMode={isDoneMode}
                 />
               ))}
             </div>
@@ -1019,6 +1022,9 @@
       const [selectedTicketForModal, setSelectedTicketForModal] = useState(null);
       const [commentText, setCommentText] = useState('');
       const [localMockComments, setLocalMockComments] = useState({}); // Stores comments offline
+
+      // Modals
+      const [isSwitchModalOpen, setIsSwitchModalOpen] = useState(false);
 
       const mappedWorkflowsRef = useRef(mappedWorkflows);
       useEffect(() => {
@@ -1262,7 +1268,8 @@
           }
         }
 
-        setMappedWorkflows([...mappedWorkflows, {
+        // Replaces the existing workflow to switch the connection
+        setMappedWorkflows([{
           id: Date.now().toString(),
           team: teamName,
           space: spaceName,
@@ -1278,6 +1285,7 @@
         setSelectedFolder('');
         setSelectedList('');
         setIntegrationStep('idle');
+        setIsSwitchModalOpen(false);
       };
 
       const removeMapping = (id) => {
@@ -1372,6 +1380,7 @@
         setTeams([]);
         setMappedWorkflows([]);
         setIntegrationStep('idle');
+        setIsSwitchModalOpen(false);
       };
 
       if (!authInitialized) {
@@ -1581,7 +1590,10 @@
                   <p className="text-slate-400 mt-1 max-w-xl">To start weaving, connect Weaver to ClickUp. This allows us to automatically sync your support tickets with your development tasks.</p>
                 </div>
                 <button 
-                  onClick={handleConnectClickUp}
+                  onClick={() => {
+                    setIsSwitchModalOpen(true);
+                    handleConnectClickUp();
+                  }}
                   className="flex items-center px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 shadow-lg shrink-0"
                 >
                   <Settings className="h-4 w-4 mr-2 animate-spin-slow" />
@@ -1631,7 +1643,12 @@
                   )}
                   <div className="flex justify-end space-x-3 pt-2">
                     <button 
-                      onClick={() => { setIntegrationStep('idle'); setTempToken(''); setClickUpError(null); }}
+                      onClick={() => { 
+                        setIntegrationStep('idle'); 
+                        setTempToken(''); 
+                        setClickUpError(null); 
+                        setIsSwitchModalOpen(false);
+                      }}
                       className="px-4 py-2 text-sm font-medium text-slate-400 hover:text-white transition-colors focus:outline-none rounded-lg"
                     >
                       Cancel
@@ -1749,7 +1766,7 @@
                         ))}
                       </select>
                       {availableLists.length === 0 && (
-                         <p className="text-xs text-amber-600 mt-2">No lists found in this location.</p>
+                         <p className="text-xs text-amber-500 mt-2">No lists found in this location.</p>
                       )}
                     </div>
                   )}
@@ -1762,6 +1779,7 @@
                         setSelectedSpace('');
                         setSelectedFolder('');
                         setSelectedList('');
+                        setIsSwitchModalOpen(false);
                       }}
                       className="px-4 py-2 text-sm font-medium text-slate-400 hover:text-white transition-colors focus:outline-none rounded-lg"
                     >
@@ -1773,7 +1791,7 @@
                       className="flex items-center px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed shadow-md"
                     >
                       <CheckCircle2 className="h-4 w-4 mr-2" />
-                      Add to Weaver
+                      Connect to Weaver
                     </button>
                   </div>
                 </div>
@@ -1785,6 +1803,22 @@
         return (
           <div className="min-h-screen bg-slate-950 font-sans text-slate-100 relative">
             <WebNestBackground opacity={0.35} />
+
+            {/* Switch Connection Modal Overlay */}
+            {isSwitchModalOpen && mappedWorkflows.length > 0 && (
+              <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+                 <div className="w-full max-w-2xl relative">
+                    <button 
+                      onClick={() => setIsSwitchModalOpen(false)} 
+                      className="absolute -top-12 right-0 text-slate-400 hover:text-red-400 transition-colors p-2"
+                      title="Close"
+                    >
+                      <XIcon className="w-8 h-8" />
+                    </button>
+                    {integrationUI}
+                 </div>
+              </div>
+            )}
 
             {/* Modal for Ticket Details & Comments */}
             {selectedTicketForModal && (
@@ -1948,6 +1982,7 @@
                   <p className="text-slate-400 mt-1">Here is your woven workflow for today.</p>
                 </div>
 
+                {/* 1. Metrics */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
                   <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl flex items-start space-x-4 relative z-10 hover:z-50">
                     <div className="bg-blue-500/10 p-3 rounded-lg border border-blue-500/20">
@@ -1993,6 +2028,7 @@
                   </div>
                 </div>
 
+                {/* 2. Progress / Burndown */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
                   <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl flex flex-col justify-between relative z-10 hover:z-50">
                     <div>
@@ -2148,7 +2184,7 @@
                           <line x1="66.6" y1="0" x2="66.6" y2="100" stroke="#111827" strokeWidth="1" vectorEffect="non-scaling-stroke" />
                           <line x1="100" y1="0" x2="100" y2="100" stroke="#111827" strokeWidth="1" vectorEffect="non-scaling-stroke" />
 
-                          <line x1="0" y1="0" x2="100" y2="100" stroke="#475569" strokeWidth="2" strokeDasharray="6 6" vectorEffect="non-scaling-stroke" />
+                          <line x1="0" y1="100" x2="100" y2="0" stroke="#475569" strokeWidth="2" strokeDasharray="6 6" vectorEffect="non-scaling-stroke" />
 
                           <polygon
                             points={polygonPointsString}
@@ -2178,7 +2214,65 @@
                   </div>
                 </div>
 
-                {/* Bug Tracking Widgets */}
+                {/* 3. Team Workload Section */}
+                {assigneesList.length > 0 && (
+                  <div className="mb-8 animate-in fade-in">
+                    <div className="flex items-center space-x-2 mb-4">
+                        <Users className="h-5 w-5 text-indigo-400" />
+                        <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                          Team Workload
+                          <MetricTooltip align="left" text="Aggregated task status counts and tracked time limits per user." formula="Recursively checks all mapped workflows, tallies hours per active assignee, and groups tasks by status strings.">
+                            <InfoIcon className="h-4 w-4 text-slate-500 cursor-help" />
+                          </MetricTooltip>
+                        </h2>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                      {assigneesList.map(assignee => {
+                        const estHours = Math.round(assignee.totalEstMs / 3600000);
+                        const spentHours = Math.round(assignee.totalSpentMs / 3600000);
+                        const progressPct = estHours > 0 ? Math.min(100, Math.round((spentHours / estHours) * 100)) : (spentHours > 0 ? 100 : 0);
+                        const totalTasksAssigned = Object.values(assignee.statusCounts).reduce((sum, s) => sum + s.count, 0);
+
+                        return (
+                          <div key={assignee.username} className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl relative z-10 hover:z-50 flex flex-col justify-between">
+                            <div>
+                              <div className="flex items-center space-x-4 mb-4">
+                                <img src={assignee.profilePicture} alt={assignee.username} className="w-12 h-12 rounded-full border-2 border-indigo-500/30 object-cover bg-slate-800" />
+                                <div>
+                                  <h3 className="text-lg font-semibold text-white">{assignee.username}</h3>
+                                  <p className="text-xs text-slate-400">{totalTasksAssigned} Assigned Item{totalTasksAssigned !== 1 ? 's' : ''}</p>
+                                </div>
+                              </div>
+                              
+                              <div className="flex flex-wrap gap-2 mb-6">
+                                {Object.entries(assignee.statusCounts).map(([status, {count, color}]) => (
+                                  <span key={status} className="px-2 py-0.5 text-[10px] font-bold rounded capitalize border flex items-center" style={{ color: color, backgroundColor: `${color}15`, borderColor: `${color}30` }}>
+                                    {status} <span className="ml-1 opacity-75 bg-slate-900/40 px-1.5 py-[1px] rounded-sm">{count}</span>
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+
+                            <div>
+                              <div className="flex justify-between text-xs mb-1.5 font-medium">
+                                <span className="text-slate-400 flex items-center"><Clock className="h-3 w-3 mr-1" /> Logged Time</span>
+                                <span className="text-white">{spentHours}h <span className="text-slate-500 font-normal">/ {estHours}h</span></span>
+                              </div>
+                              <div className="w-full bg-slate-950 border border-white/5 rounded-full h-2 overflow-hidden shadow-inner">
+                                <div 
+                                  className="bg-gradient-to-r from-indigo-500 to-violet-500 h-full rounded-full transition-all duration-1000" 
+                                  style={{ width: `${progressPct}%`, boxShadow: `0 0 8px rgba(99,102,241,0.5)` }}
+                                ></div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* 4. Bug Tracking Widgets */}
                 {totalBugsCount > 0 && (
                   <div className="mb-8 animate-in fade-in">
                     <div className="flex items-center space-x-2 mb-4">
@@ -2254,66 +2348,76 @@
                   </div>
                 )}
 
-                {/* Team Workload Section */}
-                {assigneesList.length > 0 && (
-                  <div className="mb-8 animate-in fade-in">
-                    <div className="flex items-center space-x-2 mb-4">
-                        <Users className="h-5 w-5 text-indigo-400" />
+                {/* 5. Stalled Tasks Section (Exceptions) */}
+                <div className="w-full space-y-6 mb-8">
+                  <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl animate-in slide-in-from-bottom-4 relative z-10 hover:z-50">
+                    <div className="px-5 py-4 border-b border-white/5 bg-amber-500/5 flex items-center justify-between rounded-t-2xl">
+                      <div className="flex items-center space-x-2">
+                        <ClockAlert className="h-5 w-5 text-amber-400" />
                         <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-                          Team Workload
-                          <MetricTooltip align="left" text="Aggregated task status counts and tracked time limits per user." formula="Recursively checks all mapped workflows, tallies hours per active assignee, and groups tasks by status strings.">
-                            <InfoIcon className="h-4 w-4 text-slate-500 cursor-help" />
+                          Needs Attention
+                          <MetricTooltip align="left" text="Active items where logged/elapsed time exceeds originally estimated time." formula="Elapsed Time (Date Now - Date Created) > Estimated Hours OR Logged Hours > Estimated Hours">
+                            <InfoIcon className="h-4 w-4 text-amber-500 cursor-help" />
                           </MetricTooltip>
                         </h2>
+                      </div>
+                      <span className="text-xs font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 uppercase tracking-wider">Stalled</span>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                      {assigneesList.map(assignee => {
-                        const estHours = Math.round(assignee.totalEstMs / 3600000);
-                        const spentHours = Math.round(assignee.totalSpentMs / 3600000);
-                        const progressPct = estHours > 0 ? Math.min(100, Math.round((spentHours / estHours) * 100)) : (spentHours > 0 ? 100 : 0);
-                        const totalTasksAssigned = Object.values(assignee.statusCounts).reduce((sum, s) => sum + s.count, 0);
-
-                        return (
-                          <div key={assignee.username} className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl relative z-10 hover:z-50 flex flex-col justify-between">
-                            <div>
-                              <div className="flex items-center space-x-4 mb-4">
-                                <img src={assignee.profilePicture} alt={assignee.username} className="w-12 h-12 rounded-full border-2 border-indigo-500/30 object-cover bg-slate-800" />
-                                <div>
-                                  <h3 className="text-lg font-semibold text-white">{assignee.username}</h3>
-                                  <p className="text-xs text-slate-400">{totalTasksAssigned} Assigned Item{totalTasksAssigned !== 1 ? 's' : ''}</p>
+                    
+                    {stalledTasks.length > 0 ? (
+                      <ul className="divide-y divide-white/5 rounded-b-2xl">
+                        {stalledTasks.map(task => {
+                          const themeColor = task.status?.color || '#94a3b8';
+                          const createdDate = task.date_created ? parseInt(task.date_created) : Date.now();
+                          const daysOld = Math.floor((Date.now() - createdDate) / 86400000);
+                          const estimatedHours = Math.round((parseInt(task.time_estimate) || 0) / 3600000);
+                          
+                          return (
+                            <li 
+                              key={task.id} 
+                              onClick={() => setSelectedTicketForModal(task)}
+                              className="p-4 hover:bg-slate-800/50 cursor-pointer transition-colors group flex items-start justify-between gap-3"
+                            >
+                              <div className="min-w-0">
+                                <div className="flex items-center space-x-2 mb-1">
+                                  <div 
+                                    className="w-2 h-2 rounded-full shrink-0" 
+                                    style={{ backgroundColor: themeColor }} 
+                                  />
+                                  <span className="text-sm font-semibold text-slate-200 truncate group-hover:text-white transition-colors">{task.name}</span>
+                                </div>
+                                <div className="flex items-center text-xs text-slate-500 ml-4">
+                                  <ClockAlert className="h-3 w-3 mr-1 text-amber-500/70" />
+                                  Elapsed: {daysOld}d / Est: {estimatedHours}h
                                 </div>
                               </div>
                               
-                              <div className="flex flex-wrap gap-2 mb-6">
-                                {Object.entries(assignee.statusCounts).map(([status, {count, color}]) => (
-                                  <span key={status} className="px-2 py-0.5 text-[10px] font-bold rounded capitalize border flex items-center" style={{ color: color, backgroundColor: `${color}15`, borderColor: `${color}30` }}>
-                                    {status} <span className="ml-1 opacity-75 bg-slate-900/40 px-1.5 py-[1px] rounded-sm">{count}</span>
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-
-                            <div>
-                              <div className="flex justify-between text-xs mb-1.5 font-medium">
-                                <span className="text-slate-400 flex items-center"><Clock className="h-3 w-3 mr-1" /> Logged Time</span>
-                                <span className="text-white">{spentHours}h <span className="text-slate-500 font-normal">/ {estHours}h</span></span>
-                              </div>
-                              <div className="w-full bg-slate-950 border border-white/5 rounded-full h-2 overflow-hidden shadow-inner">
-                                <div 
-                                  className="bg-gradient-to-r from-indigo-500 to-violet-500 h-full rounded-full transition-all duration-1000" 
-                                  style={{ width: `${progressPct}%`, boxShadow: `0 0 8px rgba(99,102,241,0.5)` }}
-                                ></div>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
+                              {task.assignees && task.assignees.length > 0 ? (
+                                <img 
+                                  src={task.assignees[0].profilePicture || `https://ui-avatars.com/api/?name=${encodeURIComponent(task.assignees[0].username)}&background=random`} 
+                                  alt={task.assignees[0].username} 
+                                  className="w-6 h-6 rounded-full border border-slate-700 bg-slate-800 object-cover shrink-0 mt-0.5" 
+                                  title={`Assigned to ${task.assignees[0].username}`} 
+                                />
+                              ) : (
+                                <div className="flex items-center justify-center w-6 h-6 rounded-full border border-white/5 bg-slate-900 text-slate-500 shrink-0 mt-0.5" title="Unassigned">
+                                  <Users className="h-3 w-3" />
+                                </div>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    ) : (
+                      <div className="p-8 text-center text-sm text-slate-500 italic rounded-b-2xl">
+                          All tasks are running on schedule.
+                      </div>
+                    )}
                   </div>
-                )}
+                </div>
 
                 <div className="flex flex-col space-y-8 mb-8">
-                  {/* Top Section: Active Workflows List */}
+                  {/* 6. Active Workflows List */}
                   <div className="w-full space-y-6">
                     <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl relative z-10 hover:z-50">
                       <div className="px-6 py-4 border-b border-white/5 bg-slate-900/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-t-2xl">
@@ -2330,11 +2434,14 @@
                           )}
                         </div>
                         <button 
-                          onClick={handleConnectClickUp}
+                          onClick={() => {
+                            setIsSwitchModalOpen(true);
+                            handleConnectClickUp();
+                          }}
                           className="text-sm font-medium text-indigo-400 hover:text-white flex items-center shrink-0 transition-colors"
                         >
-                          <Plus className="h-4 w-4 mr-1" /> Add Another
-                      </button>
+                          <FolderOpen className="h-4 w-4 mr-1" /> Switch Connection
+                        </button>
                     </div>
                     <ul className="divide-y divide-white/5 max-h-[600px] overflow-y-auto rounded-b-2xl">
                       {mappedWorkflows.map(workflow => {
@@ -2474,71 +2581,112 @@
                     </div>
                   </div>
 
-                  {/* Bottom Section: Top Stalled Tasks */}
+                  {/* 7. Completed Workflows Section */}
                   <div className="w-full space-y-6">
-                    <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl animate-in slide-in-from-bottom-4 relative z-10 hover:z-50">
-                      <div className="px-5 py-4 border-b border-white/5 bg-amber-500/5 flex items-center justify-between rounded-t-2xl">
-                        <div className="flex items-center space-x-2">
-                          <ClockAlert className="h-5 w-5 text-amber-400" />
-                          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-                            Needs Attention
-                            <MetricTooltip align="left" text="Active items where logged/elapsed time exceeds originally estimated time." formula="Elapsed Time (Date Now - Date Created) > Estimated Hours OR Logged Hours > Estimated Hours">
-                              <InfoIcon className="h-4 w-4 text-amber-500 cursor-help" />
-                            </MetricTooltip>
-                          </h2>
+                    <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl relative z-10 hover:z-50">
+                      <div className="px-6 py-4 border-b border-white/5 bg-slate-900/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-t-2xl">
+                        <div className="flex items-center space-x-3">
+                          <h2 className="text-lg font-semibold text-white">Completed Tasks</h2>
+                          <span className="flex items-center text-xs font-medium text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20 transition-all">
+                            <CheckCircle2 className="h-3 w-3 mr-1" /> {completedFilteredTasksCount} Resolved
+                          </span>
                         </div>
-                        <span className="text-xs font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 uppercase tracking-wider">Stalled</span>
                       </div>
-                      
-                      {stalledTasks.length > 0 ? (
-                        <ul className="divide-y divide-white/5 rounded-b-2xl">
-                          {stalledTasks.map(task => {
-                            const themeColor = task.status?.color || '#94a3b8';
-                            const createdDate = task.date_created ? parseInt(task.date_created) : Date.now();
-                            const daysOld = Math.floor((Date.now() - createdDate) / 86400000);
-                            const estimatedHours = Math.round((parseInt(task.time_estimate) || 0) / 3600000);
+                      <ul className="divide-y divide-white/5 max-h-[400px] overflow-y-auto rounded-b-2xl">
+                        {mappedWorkflows.map(workflow => {
+                          const rootTasksByTags = (workflow.tasks || []).filter(task => {
+                            const isDone = ['closed', 'complete', 'done', 'resolved'].includes(task.status?.status?.toLowerCase());
+                            if (!isDone) return false; // ONLY SHOW DONE
+
+                            if (completionFilterType === 'none') return true;
                             
-                            return (
-                              <li 
-                                key={task.id} 
-                                onClick={() => setSelectedTicketForModal(task)}
-                                className="p-4 hover:bg-slate-800/50 cursor-pointer transition-colors group flex items-start justify-between gap-3"
-                              >
-                                <div className="min-w-0">
-                                  <div className="flex items-center space-x-2 mb-1">
-                                    <div 
-                                      className="w-2 h-2 rounded-full shrink-0" 
-                                      style={{ backgroundColor: themeColor }} 
-                                    />
-                                    <span className="text-sm font-semibold text-slate-200 truncate group-hover:text-white transition-colors">{task.name}</span>
+                            const hasMatchDeep = (t) => {
+                                if (completionFilterType === 'tags' && selectedTagFilter) {
+                                    if (t.tags?.some(tag => tag.name === selectedTagFilter)) return true;
+                                } else if (completionFilterType === 'assignees' && selectedAssigneeFilter) {
+                                    if (t.assignees?.some(a => a.username === selectedAssigneeFilter)) return true;
+                                }
+                                if (t.subtasks && t.subtasks.length > 0) return t.subtasks.some(sub => hasMatchDeep(sub));
+                                return false;
+                            };
+                            
+                            return hasMatchDeep(task);
+                          });
+
+                          if (rootTasksByTags.length === 0) return null;
+
+                          return (
+                            <li key={`completed-${workflow.id}`} className="p-6 hover:bg-white/5 transition-colors">
+                              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+                                <div className="flex items-start space-x-4">
+                                  <div className="bg-emerald-500/10 p-2.5 rounded-lg hidden sm:block mt-1 border border-emerald-500/20">
+                                    <CheckCircle2 className="h-5 w-5 text-emerald-400" />
                                   </div>
-                                  <div className="flex items-center text-xs text-slate-500 ml-4">
-                                    <ClockAlert className="h-3 w-3 mr-1 text-amber-500/70" />
-                                    Elapsed: {daysOld}d / Est: {estimatedHours}h
+                                  <div className="flex flex-col space-y-1.5 w-full">
+                                    <div className="flex flex-wrap items-center text-sm text-slate-300 gap-y-2">
+                                      <span className="font-semibold text-white flex items-center">
+                                        <Box className="h-4 w-4 mr-1.5 text-slate-400" /> {workflow.team} / {workflow.space}
+                                      </span>
+                                      {workflow.folder !== 'No Folder' && (
+                                        <>
+                                          <ChevronRight className="h-4 w-4 mx-2 text-slate-600 hidden sm:block" />
+                                          <span className="flex items-center text-slate-300">
+                                            <FolderOpen className="h-4 w-4 mr-1.5 text-slate-400" /> {workflow.folder}
+                                          </span>
+                                        </>
+                                      )}
+                                      <ChevronRight className="h-4 w-4 mx-2 text-slate-600 hidden sm:block" />
+                                      <span className="font-semibold text-emerald-400 flex items-center bg-emerald-500/10 px-2.5 py-1 rounded-md border border-emerald-500/20 shadow-sm">
+                                        <ListTodo className="h-4 w-4 mr-1.5" /> {workflow.list}
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center text-xs text-slate-500">
+                                      <Clock className="h-3 w-3 mr-1" />
+                                      Last synced: {new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: 'numeric', second: 'numeric' }).format(new Date(workflow.lastSynced))}
+                                    </div>
                                   </div>
                                 </div>
-                                
-                                {task.assignees && task.assignees.length > 0 ? (
-                                  <img 
-                                    src={task.assignees[0].profilePicture || `https://ui-avatars.com/api/?name=${encodeURIComponent(task.assignees[0].username)}&background=random`} 
-                                    alt={task.assignees[0].username} 
-                                    className="w-6 h-6 rounded-full border border-slate-700 bg-slate-800 object-cover shrink-0 mt-0.5" 
-                                    title={`Assigned to ${task.assignees[0].username}`} 
-                                  />
-                                ) : (
-                                  <div className="flex items-center justify-center w-6 h-6 rounded-full border border-white/5 bg-slate-900 text-slate-500 shrink-0 mt-0.5" title="Unassigned">
-                                    <Users className="h-3 w-3" />
-                                  </div>
-                                )}
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      ) : (
-                        <div className="p-8 text-center text-sm text-slate-500 italic rounded-b-2xl">
-                           All tasks are running on schedule.
-                        </div>
-                      )}
+                              </div>
+
+                              <div className="mt-5 pt-4 border-t border-white/5 sm:ml-12 pl-1 sm:pl-0">
+                                <div className="space-y-3">
+                                  {rootTasksByTags.map(task => (
+                                    <TaskItem 
+                                      key={task.id} 
+                                      task={task} 
+                                      expandedTasks={expandedTasks} 
+                                      toggleTaskExpand={toggleTaskExpand}
+                                      isDoneMode={true}
+                                    />
+                                  ))}
+                                </div>
+                              </div>
+                            </li>
+                          );
+                        })}
+                        {mappedWorkflows.every(workflow => {
+                          const rootTasksByTags = (workflow.tasks || []).filter(task => {
+                            const isDone = ['closed', 'complete', 'done', 'resolved'].includes(task.status?.status?.toLowerCase());
+                            if (!isDone) return false;
+                            if (completionFilterType === 'none') return true;
+                            const hasMatchDeep = (t) => {
+                                if (completionFilterType === 'tags' && selectedTagFilter) {
+                                    if (t.tags?.some(tag => tag.name === selectedTagFilter)) return true;
+                                } else if (completionFilterType === 'assignees' && selectedAssigneeFilter) {
+                                    if (t.assignees?.some(a => a.username === selectedAssigneeFilter)) return true;
+                                }
+                                if (t.subtasks && t.subtasks.length > 0) return t.subtasks.some(sub => hasMatchDeep(sub));
+                                return false;
+                            };
+                            return hasMatchDeep(task);
+                          });
+                          return rootTasksByTags.length === 0;
+                        }) && (
+                          <div className="p-8 text-center text-sm text-slate-500 italic rounded-b-2xl">
+                            No completed tasks match your filters yet.
+                          </div>
+                        )}
+                      </ul>
                     </div>
                   </div>
                 </div>
