@@ -63,11 +63,20 @@
       measurementId: "G-ZY3SWFL8WV"
     };
 
+    // Initialize compat version
     firebase.initializeApp(firebaseConfig);
     const auth = firebase.auth();
     const googleProvider = new firebase.auth.GoogleAuthProvider();
 
     // --- Inline Custom SVG Icons representing Lucide Specs ---
+    const InfoIcon = ({ className }) => (
+      <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="10"></circle>
+        <line x1="12" y1="16" x2="12" y2="12"></line>
+        <line x1="12" y1="8" x2="12.01" y2="8"></line>
+      </svg>
+    );
+
     const SpiderNetworkIcon = ({ className }) => (
       <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 3 L19 7 L21 14 L17 20 L12 21 L7 20 L3 14 L5 7 Z" strokeWidth="1" strokeDasharray="2 2" opacity="0.3" />
@@ -313,6 +322,36 @@
         <line x1="7" x2="7.01" y1="7" y2="7" strokeWidth="2" strokeLinecap="round" />
       </svg>
     );
+
+    // --- Metric Tooltip Component ---
+    const MetricTooltip = ({ text, formula, align = 'center', children }) => {
+      const alignClasses = {
+        center: "left-1/2 -translate-x-1/2",
+        left: "left-0",
+        right: "right-0"
+      };
+      const pointerClasses = {
+        center: "left-1/2 -translate-x-1/2",
+        left: "left-4",
+        right: "right-4"
+      };
+      
+      return (
+        <div className="group relative flex items-center">
+          {children}
+          <div className={`pointer-events-none absolute bottom-full mb-2 w-64 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-lg shadow-2xl p-3 z-[100] ${alignClasses[align]}`}>
+            <p className="font-medium text-slate-200">{text}</p>
+            {formula && (
+              <div className="mt-2 pt-2 border-t border-slate-700/50">
+                <span className="text-indigo-400 font-semibold text-[10px] uppercase tracking-wider block mb-1">Formula / Logic</span>
+                <p className="font-mono text-[10px] text-slate-400 leading-relaxed break-words">{formula}</p>
+              </div>
+            )}
+            <div className={`absolute top-full border-4 border-transparent border-t-slate-800 ${pointerClasses[align]}`}></div>
+          </div>
+        </div>
+      );
+    };
 
     // --- Helper to parse flat ClickUp API arrays into a nested tree ---
     const buildTaskTree = (flatTasks) => {
@@ -812,7 +851,8 @@
 
     // --- Recursive Task & Subtask Item Component ---
     const TaskItem = ({ task, depth = 0, expandedTasks, toggleTaskExpand }) => {
-      const hasSubtasks = task.subtasks && task.subtasks.length > 0;
+      const activeSubtasks = (task.subtasks || []).filter(sub => !['closed', 'complete', 'done', 'resolved'].includes(sub.status?.status?.toLowerCase()));
+      const hasSubtasks = activeSubtasks.length > 0;
       const isExpanded = !!expandedTasks[task.id];
       const isParent = depth === 0;
 
@@ -852,7 +892,7 @@
                   onClick={() => toggleTaskExpand(task.id)}
                   className="flex items-center space-x-1.5 px-2 py-0.5 rounded bg-indigo-500/10 hover:bg-indigo-500/20 text-[10px] text-indigo-300 font-bold border border-indigo-500/20 transition-colors shrink-0"
                 >
-                  <span>Subtasks ({task.subtasks.length})</span>
+                  <span>Subtasks ({activeSubtasks.length})</span>
                   <ChevronRight className={`h-3 w-3 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
                 </button>
               )}
@@ -938,7 +978,7 @@
           {/* Recursive Nested Subtasks Container */}
           {isExpanded && hasSubtasks && (
             <div className="bg-slate-950/40 border-t border-white/5 p-3 space-y-2 animate-in slide-in-from-top-2 duration-200 ml-4 pl-3 border-l border-dashed border-white/10">
-              {task.subtasks.map(sub => (
+              {activeSubtasks.map(sub => (
                 <TaskItem 
                   key={sub.id} 
                   task={sub} 
@@ -1864,43 +1904,63 @@
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                  <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl flex items-start space-x-4">
+                  <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl flex items-start space-x-4 relative z-10 hover:z-50">
                     <div className="bg-blue-500/10 p-3 rounded-lg border border-blue-500/20">
                       <Ticket className="h-6 w-6 text-blue-400" />
                     </div>
                     <div>
-                      <p className="text-sm font-medium text-slate-400">Open Tickets</p>
+                      <p className="text-sm font-medium text-slate-400 flex items-center gap-1.5">
+                        Open Tickets
+                        <MetricTooltip align="left" text="Unassigned or inbound support tickets pending triage." formula="Count of incoming items from connected support endpoints (e.g. Zendesk)">
+                          <InfoIcon className="h-3.5 w-3.5 text-slate-500 cursor-help" />
+                        </MetricTooltip>
+                      </p>
                       <p className="text-2xl font-bold text-white mt-1">14</p>
                     </div>
                   </div>
-                  <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl flex items-start space-x-4">
+                  <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl flex items-start space-x-4 relative z-10 hover:z-50">
                     <div className="bg-indigo-500/10 p-3 rounded-lg border border-indigo-500/20">
                       <CheckSquare className="h-6 w-6 text-indigo-400" />
                     </div>
                     <div>
-                      <p className="text-sm font-medium text-slate-400">Active Tasks</p>
+                      <p className="text-sm font-medium text-slate-400 flex items-center gap-1.5">
+                        Active Tasks
+                        <MetricTooltip align="center" text="Count of tracked tasks currently being worked on." formula="Total Flattened Tasks - Tasks with status 'Closed', 'Complete', 'Done', or 'Resolved'">
+                          <InfoIcon className="h-3.5 w-3.5 text-slate-500 cursor-help" />
+                        </MetricTooltip>
+                      </p>
                       <p className="text-2xl font-bold text-white mt-1">{activeTasksCount}</p>
                     </div>
                   </div>
-                  <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl flex items-start space-x-4">
+                  <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl flex items-start space-x-4 relative z-10 hover:z-50">
                     <div className="bg-emerald-500/10 p-3 rounded-lg border border-emerald-500/20">
                       <CheckCircle2 className="h-6 w-6 text-emerald-400" />
                     </div>
                     <div>
-                      <p className="text-sm font-medium text-slate-400">Resolved Today</p>
-                      <p className="text-2xl font-bold text-white mt-1">{filteredTasks.length - activeTasksCount}</p>
+                      <p className="text-sm font-medium text-slate-400 flex items-center gap-1.5">
+                        Total Resolved
+                        <MetricTooltip align="right" text="Tasks completed across all mapped workflows." formula="Count of tasks with status 'Closed', 'Complete', 'Done', or 'Resolved'">
+                          <InfoIcon className="h-3.5 w-3.5 text-slate-500 cursor-help" />
+                        </MetricTooltip>
+                      </p>
+                      <p className="text-2xl font-bold text-white mt-1">{completedFilteredTasksCount}</p>
                     </div>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-                  <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl flex flex-col justify-between">
+                  <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl flex flex-col justify-between relative z-10 hover:z-50">
                     <div>
                       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start mb-6 gap-4">
                         <div>
                           <div className="flex items-center space-x-2 mb-1">
                             <Target className="h-5 w-5 text-indigo-400" />
-                            <h2 className="text-lg font-semibold text-white">Overall Progress</h2>
+                            <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                              Overall Progress
+                              <MetricTooltip align="left" text="Weighted completion percentage based on tracked time estimates." formula="((Total Estimated Hours - Total Remaining Hours) / Total Estimated Hours) × 100">
+                                <InfoIcon className="h-4 w-4 text-slate-500 cursor-help" />
+                              </MetricTooltip>
+                            </h2>
                           </div>
                           <p className="text-sm text-slate-400">Aggregated progress across all active mapped items.</p>
                         </div>
@@ -1966,12 +2026,17 @@
                     )}
                   </div>
 
-                  <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl">
+                  <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl relative z-10 hover:z-50">
                     <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start mb-6 gap-4">
                       <div>
                         <div className="flex items-center space-x-2 mb-1">
                           <TrendingDown className="h-5 w-5 text-indigo-400" />
-                          <h2 className="text-lg font-semibold text-white">Sprint Burndown</h2>
+                          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                            Sprint Burndown
+                            <MetricTooltip align="right" text="Tracks remaining task effort versus your ideal timeline." formula="Y-Axis: Remaining tracked hours. X-Axis: Elapsed time between earliest Start Date and latest Due Date.">
+                              <InfoIcon className="h-4 w-4 text-slate-500 cursor-help" />
+                            </MetricTooltip>
+                          </h2>
                         </div>
                         <p className="text-sm text-slate-400">Tracking actual time remaining over scheduled timeline.</p>
                       </div>
@@ -2053,44 +2118,64 @@
                         <h2 className="text-lg font-semibold text-white">Quality & Defects</h2>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4 lg:gap-6">
-                      <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-rose-500/10 shadow-xl flex items-start space-x-4">
+                      <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-rose-500/10 shadow-xl flex items-start space-x-4 relative z-10 hover:z-50">
                         <div className="bg-rose-500/10 p-3 rounded-lg border border-rose-500/20 shrink-0">
                           <Bug className="h-6 w-6 text-rose-400" />
                         </div>
                         <div>
-                          <p className="text-sm font-medium text-slate-400">Active Defects</p>
+                          <p className="text-sm font-medium text-slate-400 flex items-center gap-1.5">
+                            Active Defects
+                            <MetricTooltip align="left" text="Unresolved bugs or defects." formula="Total identified bugs (in QA/UI Bug lists or tagged 'bug') minus resolved bugs.">
+                              <InfoIcon className="h-3.5 w-3.5 text-slate-500 cursor-help" />
+                            </MetricTooltip>
+                          </p>
                           <p className="text-2xl font-bold text-white mt-1">{activeBugsCount}</p>
                         </div>
                       </div>
                       
-                      <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-orange-500/10 shadow-xl flex items-start space-x-4">
+                      <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-orange-500/10 shadow-xl flex items-start space-x-4 relative z-10 hover:z-50">
                         <div className="bg-orange-500/10 p-3 rounded-lg border border-orange-500/20 shrink-0">
                           <ShieldAlert className="h-6 w-6 text-orange-400" />
                         </div>
                         <div>
-                          <p className="text-sm font-medium text-slate-400">High/Critical</p>
+                          <p className="text-sm font-medium text-slate-400 flex items-center gap-1.5">
+                            High/Critical
+                            <MetricTooltip align="center" text="Urgent defects requiring immediate attention." formula="Active defects with priority set to 'High', 'Urgent', or 'Critical'.">
+                              <InfoIcon className="h-3.5 w-3.5 text-slate-500 cursor-help" />
+                            </MetricTooltip>
+                          </p>
                           <p className="text-2xl font-bold text-white mt-1">{criticalBugsCount}</p>
                         </div>
                       </div>
 
-                      <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-emerald-500/10 shadow-xl flex items-start space-x-4">
+                      <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-emerald-500/10 shadow-xl flex items-start space-x-4 relative z-10 hover:z-50">
                         <div className="bg-emerald-500/10 p-3 rounded-lg border border-emerald-500/20 shrink-0">
                           <Activity className="h-6 w-6 text-emerald-400" />
                         </div>
                         <div>
-                          <p className="text-sm font-medium text-slate-400">Resolution Rate</p>
+                          <p className="text-sm font-medium text-slate-400 flex items-center gap-1.5">
+                            Resolution Rate
+                            <MetricTooltip align="center" text="Percentage of total identified bugs that have been fixed." formula="(Resolved Bugs / Total Identified Bugs) × 100">
+                              <InfoIcon className="h-3.5 w-3.5 text-slate-500 cursor-help" />
+                            </MetricTooltip>
+                          </p>
                           <div className="flex items-end space-x-2 mt-1">
                             <p className="text-2xl font-bold text-white">{bugResolutionRate}%</p>
                           </div>
                         </div>
                       </div>
 
-                      <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-sky-500/10 shadow-xl flex items-start space-x-4">
+                      <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-sky-500/10 shadow-xl flex items-start space-x-4 relative z-10 hover:z-50">
                         <div className="bg-sky-500/10 p-3 rounded-lg border border-sky-500/20 shrink-0">
                           <Zap className="h-6 w-6 text-sky-400" />
                         </div>
                         <div>
-                          <p className="text-sm font-medium text-slate-400">Avg Fix Velocity</p>
+                          <p className="text-sm font-medium text-slate-400 flex items-center gap-1.5">
+                            Avg Fix Velocity
+                            <MetricTooltip align="right" text="Average turnaround time to resolve a defect." formula="Sum of (Date Closed - Date Created) for all resolved bugs / Total number of resolved bugs.">
+                              <InfoIcon className="h-3.5 w-3.5 text-slate-500 cursor-help" />
+                            </MetricTooltip>
+                          </p>
                           <div className="flex items-end space-x-2 mt-1">
                             <p className="text-2xl font-bold text-white">{avgVelocityDays}</p>
                             <p className="text-xs text-slate-400 mb-1">Days</p>
@@ -2104,8 +2189,8 @@
                 <div className="flex flex-col space-y-8 mb-8">
                   {/* Top Section: Active Workflows List */}
                   <div className="w-full space-y-6">
-                    <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl overflow-hidden">
-                      <div className="px-6 py-4 border-b border-white/5 bg-slate-900/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl relative z-10 hover:z-50">
+                      <div className="px-6 py-4 border-b border-white/5 bg-slate-900/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-t-2xl">
                         <div className="flex items-center space-x-3">
                           <h2 className="text-lg font-semibold text-white">Active Workflows</h2>
                           {isAutoSyncing ? (
@@ -2123,27 +2208,30 @@
                           className="text-sm font-medium text-indigo-400 hover:text-white flex items-center shrink-0 transition-colors"
                         >
                           <Plus className="h-4 w-4 mr-1" /> Add Another
-                        </button>
-                      </div>
-                      <ul className="divide-y divide-white/5 max-h-[600px] overflow-y-auto">
-                        {mappedWorkflows.map(workflow => {
-                          const currentTab = workflowTabs[workflow.id] || 'all';
+                      </button>
+                    </div>
+                    <ul className="divide-y divide-white/5 max-h-[600px] overflow-y-auto rounded-b-2xl">
+                      {mappedWorkflows.map(workflow => {
+                        const currentTab = workflowTabs[workflow.id] || 'all';
 
-                          const rootTasksByTags = (workflow.tasks || []).filter(task => {
-                            if (completionFilterType === 'none') return true;
-                            if (completionFilterType === 'tags') {
-                              if (!selectedTagFilter) return true;
-                              const hasTagDeep = (t) => {
-                                  if (t.tags?.some(tag => tag.name === selectedTagFilter)) return true;
-                                  if (t.subtasks && t.subtasks.length > 0) return t.subtasks.some(sub => hasTagDeep(sub));
-                                  return false;
-                              };
-                              return hasTagDeep(task);
-                            }
-                            return true;
-                          });
+                        const rootTasksByTags = (workflow.tasks || []).filter(task => {
+                          const isDone = ['closed', 'complete', 'done', 'resolved'].includes(task.status?.status?.toLowerCase());
+                          if (isDone) return false;
 
-                          const uniqueStatuses = Array.from(new Set(rootTasksByTags.map(t => t.status?.status || 'Open')));
+                          if (completionFilterType === 'none') return true;
+                          if (completionFilterType === 'tags') {
+                            if (!selectedTagFilter) return true;
+                            const hasTagDeep = (t) => {
+                                if (t.tags?.some(tag => tag.name === selectedTagFilter)) return true;
+                                if (t.subtasks && t.subtasks.length > 0) return t.subtasks.some(sub => hasTagDeep(sub));
+                                return false;
+                            };
+                            return hasTagDeep(task);
+                          }
+                          return true;
+                        });
+
+                        const uniqueStatuses = Array.from(new Set(rootTasksByTags.map(t => t.status?.status || 'Open')));
 
                           const displayedTasks = rootTasksByTags.filter(task => {
                             if (currentTab === 'all') return true;
@@ -2260,17 +2348,22 @@
 
                   {/* Bottom Section: Top Stalled Tasks */}
                   <div className="w-full space-y-6">
-                    <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl overflow-hidden animate-in slide-in-from-bottom-4">
-                      <div className="px-5 py-4 border-b border-white/5 bg-amber-500/5 flex items-center justify-between">
+                    <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl animate-in slide-in-from-bottom-4 relative z-10 hover:z-50">
+                      <div className="px-5 py-4 border-b border-white/5 bg-amber-500/5 flex items-center justify-between rounded-t-2xl">
                         <div className="flex items-center space-x-2">
                           <ClockAlert className="h-5 w-5 text-amber-400" />
-                          <h2 className="text-lg font-semibold text-white">Needs Attention</h2>
+                          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                            Needs Attention
+                            <MetricTooltip align="left" text="Active items where logged/elapsed time exceeds originally estimated time." formula="Elapsed Time (Date Now - Date Created) > Estimated Hours OR Logged Hours > Estimated Hours">
+                              <InfoIcon className="h-4 w-4 text-amber-500 cursor-help" />
+                            </MetricTooltip>
+                          </h2>
                         </div>
                         <span className="text-xs font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 uppercase tracking-wider">Stalled</span>
                       </div>
                       
                       {stalledTasks.length > 0 ? (
-                        <ul className="divide-y divide-white/5">
+                        <ul className="divide-y divide-white/5 rounded-b-2xl">
                           {stalledTasks.map(task => {
                             const themeColor = task.status?.color || '#94a3b8';
                             const createdDate = task.date_created ? parseInt(task.date_created) : Date.now();
@@ -2314,7 +2407,7 @@
                           })}
                         </ul>
                       ) : (
-                        <div className="p-8 text-center text-sm text-slate-500 italic">
+                        <div className="p-8 text-center text-sm text-slate-500 italic rounded-b-2xl">
                            All tasks are running on schedule.
                         </div>
                       )}
