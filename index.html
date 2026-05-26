@@ -737,7 +737,15 @@
         'mock_space_2': []
       },
       lists: {
-        'mock_folder_1': [{ id: 'mock_list_1', name: 'Current Sprint' }, { id: 'mock_list_2', name: 'Backlog' }]
+        'mock_folder_1': [
+          { 
+            id: 'mock_list_1', 
+            name: 'Current Sprint',
+            start_date: (Date.now() - 5 * 86400000).toString(),
+            due_date: (Date.now() + 9 * 86400000).toString()
+          }, 
+          { id: 'mock_list_2', name: 'Backlog' }
+        ]
       },
       folderlessLists: {
         'mock_space_1': [{ id: 'mock_list_3', name: 'General Engineering Tasks' }],
@@ -1254,7 +1262,10 @@
         const teamName = teams.find(t => t.id === selectedTeam)?.name || 'Workspace';
         const spaceName = spaces.find(s => s.id === selectedSpace)?.name || 'Space';
         const folderName = selectedFolder ? (folders.find(f => f.id === selectedFolder)?.name || 'Folder') : 'No Folder';
-        const listName = availableLists.find(l => l.id === selectedList)?.name || 'Task List';
+        const selectedListObj = availableLists.find(l => l.id === selectedList);
+        const listName = selectedListObj?.name || 'Task List';
+        const listStartDate = selectedListObj?.start_date || null;
+        const listDueDate = selectedListObj?.due_date || null;
 
         let initialTasks = [];
         if (clickUpToken === 'mock_token') {
@@ -1276,6 +1287,8 @@
           folder: folderName,
           list: listName,
           listId: selectedList,
+          listStartDate: listStartDate,
+          listDueDate: listDueDate,
           tasks: initialTasks,
           lastSynced: Date.now()
         }]);
@@ -1414,14 +1427,14 @@
         let totalEstimateMs = 0;
         let totalRemainingMs = 0;
         
-        let minDate = Infinity;
-        let maxDate = 0;
+        let taskMinDate = Infinity;
+        let taskMaxDate = 0;
 
         filteredTasks.forEach(t => {
           const isDone = ['closed', 'complete', 'done', 'resolved'].includes(t.status?.status?.toLowerCase());
           
-          if (t.start_date) minDate = Math.min(minDate, parseInt(t.start_date));
-          if (t.due_date) maxDate = Math.max(maxDate, parseInt(t.due_date));
+          if (t.start_date) taskMinDate = Math.min(taskMinDate, parseInt(t.start_date));
+          if (t.due_date) taskMaxDate = Math.max(taskMaxDate, parseInt(t.due_date));
           
           const estimate = t.time_estimate ? parseInt(t.time_estimate) : 0; 
           
@@ -1514,6 +1527,20 @@
           .slice(0, 5);
 
         // Timeline processing for Burndown
+        let minDate = Infinity;
+        let maxDate = 0;
+
+        // 1. Prioritize List boundaries if defined
+        mappedWorkflows.forEach(wf => {
+          if (wf.listStartDate) minDate = Math.min(minDate, parseInt(wf.listStartDate));
+          if (wf.listDueDate) maxDate = Math.max(maxDate, parseInt(wf.listDueDate));
+        });
+
+        // 2. Fallback to task-level bounds
+        if (minDate === Infinity) minDate = taskMinDate;
+        if (maxDate === 0) maxDate = taskMaxDate;
+
+        // 3. Fallback to dynamic window if absolutely no dates exist
         const now = Date.now();
         if (minDate === Infinity) minDate = now - (7 * 86400000);
         if (maxDate === 0) maxDate = now + (7 * 86400000);
