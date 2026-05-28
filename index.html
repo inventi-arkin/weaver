@@ -1287,7 +1287,8 @@
           initialTasks = MOCK_CLICKUP_DATA.tasks[selectedList] || [];
         } else {
           try {
-            const data = await fetchClickUp(`list/${selectedList}/task?subtasks=true`, clickUpToken);
+            // Include closed tasks and nested subtasks from the API
+            const data = await fetchClickUp(`list/${selectedList}/task?subtasks=true&include_closed=true`, clickUpToken);
             initialTasks = buildTaskTree(data.tasks || []);
           } catch (err) {
             console.error("Error fetching tasks for list", err);
@@ -1335,7 +1336,8 @@
               updatedTasks = MOCK_CLICKUP_DATA.tasks[workflow.listId] || [];
             } else {
               try {
-                const data = await fetchClickUp(`list/${workflow.listId}/task?subtasks=true`, clickUpToken);
+                // Ensure the background sync ALSO pulls closed tasks
+                const data = await fetchClickUp(`list/${workflow.listId}/task?subtasks=true&include_closed=true`, clickUpToken);
                 updatedTasks = buildTaskTree(data.tasks || []);
               } catch (err) {
                 console.error(`Error syncing tasks for list ${workflow.listId}`, err);
@@ -1535,17 +1537,19 @@
                             actualRunningMs += durationMs;
                         }
                     });
-                } else if (t.date_closed && t.start_date) {
-                    // Fallback to explicit start/close dates if time_in_status history isn't returned by API
-                    actualRunningMs = Math.max(0, parseInt(t.date_closed) - parseInt(t.start_date));
-                } else if (t.date_closed && t.date_created) {
-                    // Worst case fallback if there's no tracking data at all
-                    const fallbackDuration = Math.max(0, parseInt(t.date_closed) - parseInt(t.date_created));
-                    if (!timeInStatusStats[statusName]) {
-                        timeInStatusStats[statusName] = { sum: 0, count: 0 };
+                } else {
+                    // Robust fallback if API didn't return time_in_status history or a strict date_closed
+                    const end_date = t.date_closed ? parseInt(t.date_closed) : Date.now();
+                    const start_date = t.start_date ? parseInt(t.start_date) : (t.date_created ? parseInt(t.date_created) : end_date);
+                    const fallbackDuration = Math.max(0, end_date - start_date);
+                    
+                    if (statusName) {
+                        if (!timeInStatusStats[statusName]) {
+                            timeInStatusStats[statusName] = { sum: 0, count: 0 };
+                        }
+                        timeInStatusStats[statusName].sum += fallbackDuration;
+                        timeInStatusStats[statusName].count++;
                     }
-                    timeInStatusStats[statusName].sum += fallbackDuration;
-                    timeInStatusStats[statusName].count++;
                     
                     actualRunningMs = fallbackDuration;
                 }
