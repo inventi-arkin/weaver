@@ -1617,18 +1617,19 @@
                         }
                     });
                 } else {
-                    // 4. Robust fallback if API didn't return logs or time_in_status history
-                    const end_date = t.date_closed ? parseDateMs(t.date_closed) : Date.now();
+                    // 4. Robust fallback using ClickUp's core timestamp fields (date_created, date_updated, date_closed)
+                    const end_date = t.date_closed ? parseDateMs(t.date_closed) : (t.date_updated ? parseDateMs(t.date_updated) : Date.now());
                     const start_date = t.start_date ? parseDateMs(t.start_date) : (t.date_created ? parseDateMs(t.date_created) : end_date);
                     const fallbackDuration = Math.max(0, end_date - start_date);
                     
-                    if (statusName && !excludedStatusesForAccuracy.includes(statusName)) {
-                        if (!timeInStatusStats[statusName]) {
-                            timeInStatusStats[statusName] = { sum: 0, count: 0 };
-                        }
-                        timeInStatusStats[statusName].sum += fallbackDuration;
-                        timeInStatusStats[statusName].count++;
+                    // Since the task is closed, its literal statusName is "closed" (which is hidden by our filter).
+                    // We bucket this overall duration into a visible generic status to ensure it renders accurately.
+                    const bucketName = 'active resolution (total)';
+                    if (!timeInStatusStats[bucketName]) {
+                        timeInStatusStats[bucketName] = { sum: 0, count: 0 };
                     }
+                    timeInStatusStats[bucketName].sum += fallbackDuration;
+                    timeInStatusStats[bucketName].count++;
                     
                     actualRunningMs = fallbackDuration;
                 }
