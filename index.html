@@ -894,10 +894,9 @@
 
     // --- Recursive Task & Subtask Item Component ---
     const TaskItem = ({ task, depth = 0, expandedTasks, toggleTaskExpand, isDoneMode = false }) => {
-      const relevantSubtasks = (task.subtasks || []).filter(sub => {
-        const isDone = ['closed', 'complete', 'done', 'resolved'].includes(sub.status?.status?.toLowerCase());
-        return isDoneMode ? isDone : !isDone;
-      });
+      // The tree is now strictly pre-filtered before it reaches the component,
+      // so we can blindly trust and render whatever task.subtasks contains!
+      const relevantSubtasks = task.subtasks || [];
       const hasSubtasks = relevantSubtasks.length > 0;
       const isExpanded = !!expandedTasks[task.id];
       const isParent = depth === 0;
@@ -1803,6 +1802,44 @@
         
         const linePointsString = burndownPointsData.map(p => `${p[0]},${p[1]}`).join(' ');
         const polygonPointsString = `0,100 ${linePointsString} ${currentX},100 0,100`;
+
+        // --- Recursive Tree Filtering Engine ---
+        // This securely trims the nested tree without flattening it, preserving parent context.
+        const checkGlobalFilter = (t) => {
+            if (completionFilterType === 'none') return true;
+            if (completionFilterType === 'tags' && selectedTagFilter) {
+                return t.tags?.some(tag => tag.name === selectedTagFilter);
+            }
+            if (completionFilterType === 'assignees' && selectedAssigneeFilter) {
+                return t.assignees?.some(a => a.username === selectedAssigneeFilter);
+            }
+            return true;
+        };
+
+        const buildFilteredTree = (tasks, isDoneMode) => {
+            let result = [];
+            tasks.forEach(task => {
+                const isDone = ['closed', 'complete', 'done', 'resolved'].includes(task.status?.status?.toLowerCase());
+                // Determine if this exact task matches our target state (Active vs Completed)
+                const matchesMode = isDoneMode ? isDone : !isDone;
+                const matchesFilter = checkGlobalFilter(task);
+                
+                // Recursively dig into subtasks
+                let filteredSubtasks = [];
+                if (task.subtasks && task.subtasks.length > 0) {
+                    filteredSubtasks = buildFilteredTree(task.subtasks, isDoneMode);
+                }
+
+                // Keep this task IF it matches directly OR if it acts as a mother/container for a matching subtask!
+                if ((matchesMode && matchesFilter) || filteredSubtasks.length > 0) {
+                    result.push({
+                        ...task,
+                        subtasks: filteredSubtasks
+                    });
+                }
+            });
+            return result;
+        };
 
         // Team Workload Math
         const assigneeStats = {};
@@ -2765,24 +2802,8 @@
                         {mappedWorkflows.map(workflow => {
                           const currentTab = workflowTabs[workflow.id] || 'all';
 
-                          const rootTasksByTags = (workflow.tasks || []).filter(task => {
-                            const isDone = ['closed', 'complete', 'done', 'resolved'].includes(task.status?.status?.toLowerCase());
-                            if (isDone) return false;
-
-                            if (completionFilterType === 'none') return true;
-                            
-                            const hasMatchDeep = (t) => {
-                                if (completionFilterType === 'tags' && selectedTagFilter) {
-                                    if (t.tags?.some(tag => tag.name === selectedTagFilter)) return true;
-                                } else if (completionFilterType === 'assignees' && selectedAssigneeFilter) {
-                                    if (t.assignees?.some(a => a.username === selectedAssigneeFilter)) return true;
-                                }
-                                if (t.subtasks && t.subtasks.length > 0) return t.subtasks.some(sub => hasMatchDeep(sub));
-                                return false;
-                            };
-                            
-                            return hasMatchDeep(task);
-                          });
+                          // Utilize the recursive engine to build a pristine active-only tree
+                          const rootTasksByTags = buildFilteredTree(workflow.tasks || [], false);
 
                           const uniqueStatuses = Array.from(new Set(rootTasksByTags.map(t => t.status?.status || 'Open')));
 
@@ -2912,22 +2933,10 @@
                       </div>
                       <ul className="divide-y divide-white/5 max-h-[400px] overflow-y-auto rounded-b-2xl">
                         {mappedWorkflows.map(workflow => {
-                          const flatCompletedTasks = flattenTasks(workflow.tasks || []).filter(task => {
-                            const isDone = ['closed', 'complete', 'done', 'resolved'].includes(task.status?.status?.toLowerCase());
-                            if (!isDone) return false; // ONLY SHOW DONE
+                          // Utilize the recursive engine to build a pristine completed-only tree
+                          const completedTasksTree = buildFilteredTree(workflow.tasks || [], true);
 
-                            if (completionFilterType === 'none') return true;
-                            
-                            if (completionFilterType === 'tags' && selectedTagFilter) {
-                                return task.tags?.some(tag => tag.name === selectedTagFilter);
-                            } else if (completionFilterType === 'assignees' && selectedAssigneeFilter) {
-                                return task.assignees?.some(a => a.username === selectedAssigneeFilter);
-                            }
-                            
-                            return true;
-                          });
-
-                          if (flatCompletedTasks.length === 0) return null;
+                          if (completedTasksTree.length === 0) return null;
 
                           return (
                             <li key={`completed-${workflow.id}`} className="p-6 hover:bg-white/5 transition-colors">
@@ -2964,10 +2973,10 @@
 
                               <div className="mt-5 pt-4 border-t border-white/5 sm:ml-12 pl-1 sm:pl-0">
                                 <div className="space-y-3">
-                                  {flatCompletedTasks.map(task => (
+                                  {completedTasksTree.map(task => (
                                     <TaskItem 
                                       key={task.id} 
-                                      task={{...task, subtasks: []}} // Strip subtasks to prevent double-rendering in a flattened list
+                                      task={task}
                                       expandedTasks={expandedTasks} 
                                       toggleTaskExpand={toggleTaskExpand}
                                       isDoneMode={true}
@@ -2979,18 +2988,8 @@
                           );
                         })}
                         {mappedWorkflows.every(workflow => {
-                          const flatCompletedTasks = flattenTasks(workflow.tasks || []).filter(task => {
-                            const isDone = ['closed', 'complete', 'done', 'resolved'].includes(task.status?.status?.toLowerCase());
-                            if (!isDone) return false;
-                            if (completionFilterType === 'none') return true;
-                            if (completionFilterType === 'tags' && selectedTagFilter) {
-                                return task.tags?.some(tag => tag.name === selectedTagFilter);
-                            } else if (completionFilterType === 'assignees' && selectedAssigneeFilter) {
-                                return task.assignees?.some(a => a.username === selectedAssigneeFilter);
-                            }
-                            return true;
-                          });
-                          return flatCompletedTasks.length === 0;
+                          const completedTasksTree = buildFilteredTree(workflow.tasks || [], true);
+                          return completedTasksTree.length === 0;
                         }) && (
                           <div className="p-8 text-center text-sm text-slate-500 italic rounded-b-2xl">
                             No completed tasks match your filters yet.
