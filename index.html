@@ -194,7 +194,7 @@
     const Settings = ({ className }) => (
       <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="12" r="3" />
-        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
       </svg>
     );
 
@@ -1550,11 +1550,27 @@
             const statusName = t.status?.status?.toLowerCase() || 'open';
             const isDone = ['closed', 'complete', 'done', 'resolved'].includes(statusName);
             
+            // 1. If it's an ACTIVE task, we can measure how long it has been in its current status!
+            // This guarantees we get specific active status durations even if ClickUp doesn't return history!
+            if (!isDone && !excludedStatusesForAccuracy.includes(statusName)) {
+                const lastUpdated = t.date_updated ? parseDateMs(t.date_updated) : (t.date_created ? parseDateMs(t.date_created) : Date.now());
+                const timeInCurrent = Math.max(0, Date.now() - lastUpdated);
+                
+                if (timeInCurrent > 0) {
+                    if (!timeInStatusStats[statusName]) {
+                        timeInStatusStats[statusName] = { sum: 0, count: 0 };
+                    }
+                    timeInStatusStats[statusName].sum += timeInCurrent;
+                    timeInStatusStats[statusName].count++;
+                }
+            }
+
+            // 2. If it's DONE, we process its history for accuracy and past status tracking
             if (isDone) {
                 let actualRunningMs = 0;
                 let parsedTimeInStatus = {};
 
-                // 1. Process from Activity Logs (Most accurate movement history)
+                // A. Process from Activity Logs (Most accurate movement history if available)
                 if (t.activity_logs && Array.isArray(t.activity_logs) && t.activity_logs.length > 0) {
                     const statusLogs = t.activity_logs
                         .filter(log => log.field === 'status')
@@ -1584,7 +1600,7 @@
                         }
                     }
                 } 
-                // 2. Fallback to API's pre-calculated time_in_status if no logs available
+                // B. Fallback to API's pre-calculated time_in_status if no logs available
                 if (Object.keys(parsedTimeInStatus).length === 0 && t.time_in_status) {
                     if (Array.isArray(t.time_in_status)) {
                         t.time_in_status.forEach(item => {
@@ -1599,7 +1615,7 @@
                     }
                 }
 
-                // 3. Populate Stats
+                // C. Populate Historical Stats
                 if (Object.keys(parsedTimeInStatus).length > 0) {
                     Object.entries(parsedTimeInStatus).forEach(([statusStr, durationMs]) => {
                         const cleanStatus = statusStr.toLowerCase();
@@ -1617,20 +1633,13 @@
                         }
                     });
                 } else {
-                    // 4. Robust fallback using ClickUp's core timestamp fields (date_created, date_updated, date_closed)
+                    // D. Robust fallback using ClickUp's core timestamp fields if history isn't provided
                     const end_date = t.date_closed ? parseDateMs(t.date_closed) : (t.date_updated ? parseDateMs(t.date_updated) : Date.now());
                     const start_date = t.start_date ? parseDateMs(t.start_date) : (t.date_created ? parseDateMs(t.date_created) : end_date);
                     const fallbackDuration = Math.max(0, end_date - start_date);
                     
-                    // Since the task is closed, its literal statusName is "closed" (which is hidden by our filter).
-                    // We bucket this overall duration into a visible generic status to ensure it renders accurately.
-                    const bucketName = 'active resolution (total)';
-                    if (!timeInStatusStats[bucketName]) {
-                        timeInStatusStats[bucketName] = { sum: 0, count: 0 };
-                    }
-                    timeInStatusStats[bucketName].sum += fallbackDuration;
-                    timeInStatusStats[bucketName].count++;
-                    
+                    // We purposefully do NOT bucket this generic time into a "Total Resolution" label anymore.
+                    // This prevents generic/fake labels from cluttering the specific status timeframe list.
                     actualRunningMs = fallbackDuration;
                 }
 
@@ -2496,7 +2505,7 @@
                         </div>
                       ) : (
                         <div className="text-sm text-slate-500 italic p-6 bg-slate-950/20 rounded-xl border border-white/5 text-center">
-                          No status timing data is available for completed tasks yet.
+                          No status timing data is available for tasks. (Ensure active tasks exist or history is fetched).
                         </div>
                       )}
                     </div>
