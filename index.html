@@ -1530,14 +1530,24 @@
           }
         }
 
+        // Utility for robust date parsing (handles Unix MS strings and ISO strings seamlessly)
+        const parseDateMs = (d) => {
+            if (!d) return 0;
+            const n = Number(d);
+            if (!isNaN(n)) return n;
+            return new Date(d).getTime() || 0;
+        };
+
         // Estimation Accuracy Math
         let totalEstForAccuracyMs = 0;
         let totalActualForAccuracyMs = 0;
         const timeInStatusStats = {};
-        const excludedStatusesForAccuracy = ['open', 'backlog', 'sprint backlog', 'todo', 'to do'];
+        
+        // Exclude both initial holding states AND final completed states from active running time metrics
+        const excludedStatusesForAccuracy = ['open', 'backlog', 'sprint backlog', 'todo', 'to do', 'closed', 'complete', 'done', 'resolved'];
 
         filteredTasks.forEach(t => {
-            const statusName = t.status?.status?.toLowerCase();
+            const statusName = t.status?.status?.toLowerCase() || 'open';
             const isDone = ['closed', 'complete', 'done', 'resolved'].includes(statusName);
             
             if (isDone) {
@@ -1545,57 +1555,74 @@
                 let parsedTimeInStatus = {};
 
                 // 1. Process from Activity Logs (Most accurate movement history)
-                if (t.activity_logs && t.activity_logs.length > 0) {
+                if (t.activity_logs && Array.isArray(t.activity_logs) && t.activity_logs.length > 0) {
                     const statusLogs = t.activity_logs
                         .filter(log => log.field === 'status')
-                        .sort((a, b) => parseInt(a.date) - parseInt(b.date));
+                        .sort((a, b) => parseDateMs(a.date) - parseDateMs(b.date));
                     
-                    let lastDate = parseInt(t.date_created) || parseInt(statusLogs[0]?.date) || 0;
-                    let currentStatus = statusLogs[0]?.before?.toLowerCase() || 'open';
+                    if (statusLogs.length > 0) {
+                        let lastDate = parseDateMs(t.start_date) || parseDateMs(t.date_created) || parseDateMs(statusLogs[0]?.date) || 0;
+                        let currentStatus = (statusLogs[0]?.before?.status || statusLogs[0]?.before || 'open').toString().toLowerCase();
 
-                    statusLogs.forEach(log => {
-                        const changeDate = parseInt(log.date);
-                        if (lastDate > 0) {
-                            const duration = Math.max(0, changeDate - lastDate);
-                            parsedTimeInStatus[currentStatus] = (parsedTimeInStatus[currentStatus] || 0) + duration;
+                        statusLogs.forEach(log => {
+                            const changeDate = parseDateMs(log.date);
+                            if (lastDate > 0 && changeDate >= lastDate) {
+                                const duration = changeDate - lastDate;
+                                parsedTimeInStatus[currentStatus] = (parsedTimeInStatus[currentStatus] || 0) + duration;
+                            }
+                            currentStatus = (log.after?.status || log.after || currentStatus).toString().toLowerCase();
+                            lastDate = changeDate;
+                        });
+
+                        // Add final duration until closed
+                        if (t.date_closed && lastDate > 0) {
+                            const closedDate = parseDateMs(t.date_closed);
+                            if (closedDate >= lastDate) {
+                                const finalDuration = closedDate - lastDate;
+                                parsedTimeInStatus[currentStatus] = (parsedTimeInStatus[currentStatus] || 0) + finalDuration;
+                            }
                         }
-                        currentStatus = log.after?.toLowerCase() || currentStatus;
-                        lastDate = changeDate;
-                    });
-
-                    // Add final duration until closed
-                    if (t.date_closed && lastDate > 0) {
-                        const finalDuration = Math.max(0, parseInt(t.date_closed) - lastDate);
-                        parsedTimeInStatus[currentStatus] = (parsedTimeInStatus[currentStatus] || 0) + finalDuration;
                     }
                 } 
                 // 2. Fallback to API's pre-calculated time_in_status if no logs available
-                else if (t.time_in_status) {
-                    parsedTimeInStatus = t.time_in_status;
+                if (Object.keys(parsedTimeInStatus).length === 0 && t.time_in_status) {
+                    if (Array.isArray(t.time_in_status)) {
+                        t.time_in_status.forEach(item => {
+                            const statusStr = (item.status?.status || item.status || 'open').toString().toLowerCase();
+                            const durationMs = parseDateMs(item.time || item.duration || item.total_time || 0);
+                            parsedTimeInStatus[statusStr] = (parsedTimeInStatus[statusStr] || 0) + durationMs;
+                        });
+                    } else if (typeof t.time_in_status === 'object') {
+                        Object.entries(t.time_in_status).forEach(([statusStr, durationMs]) => {
+                            parsedTimeInStatus[statusStr.toLowerCase()] = (parsedTimeInStatus[statusStr.toLowerCase()] || 0) + parseDateMs(durationMs);
+                        });
+                    }
                 }
 
                 // 3. Populate Stats
                 if (Object.keys(parsedTimeInStatus).length > 0) {
                     Object.entries(parsedTimeInStatus).forEach(([statusStr, durationMs]) => {
                         const cleanStatus = statusStr.toLowerCase();
-                        if (!timeInStatusStats[cleanStatus]) {
-                            timeInStatusStats[cleanStatus] = { sum: 0, count: 0 };
-                        }
-                        timeInStatusStats[cleanStatus].sum += durationMs;
-                        timeInStatusStats[cleanStatus].count++;
-
-                        // Sum active statuses for the actual running time
+                        
+                        // Always exclude done/completed and initial open states from the visual breakdown list
                         if (!excludedStatusesForAccuracy.includes(cleanStatus)) {
+                            if (!timeInStatusStats[cleanStatus]) {
+                                timeInStatusStats[cleanStatus] = { sum: 0, count: 0 };
+                            }
+                            timeInStatusStats[cleanStatus].sum += durationMs;
+                            timeInStatusStats[cleanStatus].count++;
+                            
+                            // Sum active statuses for the actual running time (excluding done/holding statuses)
                             actualRunningMs += durationMs;
                         }
                     });
                 } else {
                     // 4. Robust fallback if API didn't return logs or time_in_status history
-                    const end_date = t.date_closed ? parseInt(t.date_closed) : Date.now();
-                    const start_date = t.start_date ? parseInt(t.start_date) : (t.date_created ? parseInt(t.date_created) : end_date);
+                    const end_date = t.date_closed ? parseDateMs(t.date_closed) : Date.now();
+                    const start_date = t.start_date ? parseDateMs(t.start_date) : (t.date_created ? parseDateMs(t.date_created) : end_date);
                     const fallbackDuration = Math.max(0, end_date - start_date);
                     
-                    if (statusName) {
+                    if (statusName && !excludedStatusesForAccuracy.includes(statusName)) {
                         if (!timeInStatusStats[statusName]) {
                             timeInStatusStats[statusName] = { sum: 0, count: 0 };
                         }
@@ -1607,8 +1634,9 @@
                 }
 
                 // Only measure overall accuracy for tasks that are complete, have an estimate, and recorded active time
-                if (actualRunningMs > 0 && t.time_estimate && parseInt(t.time_estimate) > 0) {
-                    totalEstForAccuracyMs += parseInt(t.time_estimate);
+                const estimateMs = t.time_estimate ? parseDateMs(t.time_estimate) : 0;
+                if (actualRunningMs > 0 && estimateMs > 0) {
+                    totalEstForAccuracyMs += estimateMs;
                     totalActualForAccuracyMs += actualRunningMs;
                 }
             }
@@ -1623,7 +1651,6 @@
         }
 
         const avgTimeInStatusList = Object.entries(timeInStatusStats)
-          .filter(([status]) => !excludedStatusesForAccuracy.includes(status.toLowerCase()))
           .map(([status, data]) => {
             const avgMs = data.sum / data.count;
             const days = Math.floor(avgMs / 86400000);
