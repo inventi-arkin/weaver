@@ -813,7 +813,7 @@
                     date_created: (Date.now() - 9 * 86400000).toString(),
                     date_closed: (Date.now() - 7 * 86400000).toString(),
                     time_estimate: 3600000, time_spent: 3600000,
-                    time_in_status: { 'open': 1800000, 'in progress': 7200000, 'qa testing': 5400000 },
+                    time_in_status: { 'open': 1800000, 'in progress': 1800000, 'qa testing': 1800000 },
                     description: "It says 'Weaver creates a seemless bridge' instead of 'seamless'.",
                     assignees: []
                   }
@@ -832,11 +832,11 @@
             assignees: [{ username: 'Sarah W.', profilePicture: 'https://ui-avatars.com/api/?name=Sarah+W&background=emerald&color=fff' }],
             tags: [{ name: 'frontend', color: '#f59e0b' }, { name: 'design', color: '#8b5cf6' }],
             time_estimate: 43200000, time_spent: 43200000,
-            time_in_status: { 'open': 86400000, 'designing': 172800000, 'review': 43200000 },
+            time_in_status: { 'open': 86400000, 'designing': 36000000, 'review': 7200000 },
             description: "Create high-fidelity wireframes for the new glassmorphic dashboard.",
             subtasks: [
-              { id: 'sub_t2_1', name: 'Draw core mockup wireframes', status: { status: 'closed', color: '#10b981' }, date_created: (Date.now() - 14 * 86400000).toString(), date_closed: (Date.now() - 4 * 86400000).toString(), priority: null, time_estimate: 14400000, time_spent: 14400000, time_in_status: { 'open': 7200000, 'wireframing': 28800000 }, subtasks: [] },
-              { id: 'sub_t2_2', name: 'Obtain initial developer design feedback', status: { status: 'closed', color: '#10b981' }, date_created: (Date.now() - 4 * 86400000).toString(), date_closed: (Date.now() - 1 * 86400000).toString(), priority: null, time_estimate: 7200000, time_spent: 7200000, time_in_status: { 'open': 3600000, 'feedback loop': 14400000 }, subtasks: [] }
+              { id: 'sub_t2_1', name: 'Draw core mockup wireframes', status: { status: 'closed', color: '#10b981' }, date_created: (Date.now() - 14 * 86400000).toString(), date_closed: (Date.now() - 4 * 86400000).toString(), priority: null, time_estimate: 14400000, time_spent: 14400000, time_in_status: { 'open': 7200000, 'wireframing': 14400000 }, subtasks: [] },
+              { id: 'sub_t2_2', name: 'Obtain initial developer design feedback', status: { status: 'closed', color: '#10b981' }, date_created: (Date.now() - 4 * 86400000).toString(), date_closed: (Date.now() - 1 * 86400000).toString(), priority: null, time_estimate: 7200000, time_spent: 7200000, time_in_status: { 'open': 3600000, 'feedback loop': 10800000 }, subtasks: [] }
             ]
           }
         ],
@@ -863,7 +863,7 @@
                 time_estimate: 7200000, time_spent: 7200000,
                 time_in_status: { 'open': 7200000, 'writing': 14400000, 'review': 3600000 },
                 subtasks: [
-                  { id: 'sub_sub_t3_1_1', name: 'Draft recursive React rendering specs', status: { status: 'complete', color: '#10b981' }, date_created: (Date.now() - 16 * 86400000).toString(), date_closed: (Date.now() - 5 * 86400000).toString(), priority: null, time_estimate: 3600000, time_spent: 3600000, time_in_status: { 'open': 3600000, 'drafting': 10800000, 'review': 3600000 } }
+                  { id: 'sub_sub_t3_1_1', name: 'Draft recursive React rendering specs', status: { status: 'complete', color: '#10b981' }, date_created: (Date.now() - 16 * 86400000).toString(), date_closed: (Date.now() - 5 * 86400000).toString(), priority: null, time_estimate: 3600000, time_spent: 3600000, time_in_status: { 'open': 3600000, 'drafting': 3600000, 'review': 1800000 } }
                 ]
               }
             ]
@@ -1512,12 +1512,15 @@
         let totalEstForAccuracyMs = 0;
         let totalActualForAccuracyMs = 0;
         const timeInStatusStats = {};
+        const excludedStatusesForAccuracy = ['open', 'backlog', 'sprint backlog', 'todo', 'to do'];
 
         filteredTasks.forEach(t => {
             const statusName = t.status?.status?.toLowerCase();
             const isDone = ['closed', 'complete', 'done', 'resolved'].includes(statusName);
             
             if (isDone) {
+                let actualRunningMs = 0;
+
                 // Tracking average time spent per internal status for completed tasks
                 if (t.time_in_status) {
                     Object.entries(t.time_in_status).forEach(([statusStr, durationMs]) => {
@@ -1526,21 +1529,31 @@
                         }
                         timeInStatusStats[statusStr].sum += durationMs;
                         timeInStatusStats[statusStr].count++;
+
+                        // Sum active statuses for the actual running time
+                        if (!excludedStatusesForAccuracy.includes(statusStr.toLowerCase())) {
+                            actualRunningMs += durationMs;
+                        }
                     });
+                } else if (t.date_closed && t.start_date) {
+                    // Fallback to explicit start/close dates if time_in_status history isn't returned by API
+                    actualRunningMs = Math.max(0, parseInt(t.date_closed) - parseInt(t.start_date));
                 } else if (t.date_closed && t.date_created) {
-                    // Fallback block if API didn't return time_in_status history but the task is Done
+                    // Worst case fallback if there's no tracking data at all
                     const fallbackDuration = Math.max(0, parseInt(t.date_closed) - parseInt(t.date_created));
                     if (!timeInStatusStats[statusName]) {
                         timeInStatusStats[statusName] = { sum: 0, count: 0 };
                     }
                     timeInStatusStats[statusName].sum += fallbackDuration;
                     timeInStatusStats[statusName].count++;
+                    
+                    actualRunningMs = fallbackDuration;
                 }
 
-                // Only measure overall accuracy for tasks that are complete, have an estimate, and have recorded start/close datetimes.
-                if (t.start_date && t.date_closed && t.time_estimate && parseInt(t.time_estimate) > 0) {
+                // Only measure overall accuracy for tasks that are complete, have an estimate, and recorded active time
+                if (actualRunningMs > 0 && t.time_estimate && parseInt(t.time_estimate) > 0) {
                     totalEstForAccuracyMs += parseInt(t.time_estimate);
-                    totalActualForAccuracyMs += Math.max(0, parseInt(t.date_closed) - parseInt(t.start_date));
+                    totalActualForAccuracyMs += actualRunningMs;
                 }
             }
         });
@@ -1553,7 +1566,6 @@
             estimationAccuracyDisplay = `${accuracy}%`;
         }
 
-        const excludedStatusesForAccuracy = ['open', 'backlog', 'sprint backlog', 'todo', 'to do'];
         const avgTimeInStatusList = Object.entries(timeInStatusStats)
           .filter(([status]) => !excludedStatusesForAccuracy.includes(status.toLowerCase()))
           .map(([status, data]) => {
@@ -2270,18 +2282,6 @@
                         ></div>
                       </div>
                     </div>
-                    {completionFilterType === 'tags' && uniqueTags.length === 0 && (
-                      <div className="mt-4 p-3 bg-amber-950/20 rounded-lg border border-amber-900/40 flex items-start text-sm text-amber-300">
-                        <AlertTriangle className="h-4 w-4 mr-2 shrink-0 mt-0.5 text-amber-500" />
-                        <span>No tags were found in the tasks you mapped.</span>
-                      </div>
-                    )}
-                    {completionFilterType === 'assignees' && uniqueAssignees.length === 0 && (
-                      <div className="mt-4 p-3 bg-amber-950/20 rounded-lg border border-amber-900/40 flex items-start text-sm text-amber-300">
-                        <AlertTriangle className="h-4 w-4 mr-2 shrink-0 mt-0.5 text-amber-500" />
-                        <span>No assignees were found in the tasks you mapped.</span>
-                      </div>
-                    )}
                   </div>
 
                   <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl relative z-10 hover:z-[60]">
