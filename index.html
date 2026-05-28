@@ -772,7 +772,9 @@
             tags: [{ name: 'qa', color: '#10b981' }],
             time_estimate: 28800000, 
             time_spent: 14400000,    
-            time_in_status: { 'open': 7200000, 'ongoing dev': 7200000 },
+            activity_logs: [
+              { field: 'status', before: 'open', after: 'ongoing dev', date: (Date.now() - 9.5 * 86400000).toString() }
+            ],
             description: "Perform final validation pass on Release Candidate 4. Ensure all unit tests are green and no regressions were introduced.",
             subtasks: [
               { 
@@ -790,7 +792,9 @@
                     priority: { priority: 'critical', color: '#dc2626' }, 
                     date_created: (Date.now() - 12 * 86400000).toString(),
                     time_estimate: 7200000, time_spent: 3600000,
-                    time_in_status: { 'open': 3600000, 'ongoing dev': 3600000 },
+                    activity_logs: [
+                      { field: 'status', before: 'open', after: 'ongoing dev', date: (Date.now() - 11.5 * 86400000).toString() }
+                    ],
                     description: "When tapping the login button on iOS 16 Safari, nothing happens. It appears the touch event listener is being swallowed by the canvas background.",
                     assignees: [{ username: 'Sarah W.', profilePicture: 'https://ui-avatars.com/api/?name=Sarah+W&background=emerald&color=fff' }]
                   },
@@ -801,7 +805,9 @@
                     priority: { priority: 'high', color: '#ef4444' }, 
                     date_created: (Date.now() - 6 * 86400000).toString(),
                     time_estimate: 14400000, time_spent: 0,
-                    time_in_status: { 'open': 86400000, 'sprint backlog': 172800000 },
+                    activity_logs: [
+                      { field: 'status', before: 'open', after: 'sprint backlog', date: (Date.now() - 5.5 * 86400000).toString() }
+                    ],
                     description: "Network timeout is too aggressive. Set it to 15s instead of 5s.",
                     assignees: []
                   },
@@ -813,7 +819,11 @@
                     date_created: (Date.now() - 9 * 86400000).toString(),
                     date_closed: (Date.now() - 7 * 86400000).toString(),
                     time_estimate: 3600000, time_spent: 3600000,
-                    time_in_status: { 'open': 1800000, 'in progress': 1800000, 'qa testing': 1800000 },
+                    activity_logs: [
+                      { field: 'status', before: 'open', after: 'in progress', date: (Date.now() - 8.8 * 86400000).toString() },
+                      { field: 'status', before: 'in progress', after: 'qa testing', date: (Date.now() - 8.1 * 86400000).toString() },
+                      { field: 'status', before: 'qa testing', after: 'resolved', date: (Date.now() - 7 * 86400000).toString() }
+                    ],
                     description: "It says 'Weaver creates a seemless bridge' instead of 'seamless'.",
                     assignees: []
                   }
@@ -832,11 +842,15 @@
             assignees: [{ username: 'Sarah W.', profilePicture: 'https://ui-avatars.com/api/?name=Sarah+W&background=emerald&color=fff' }],
             tags: [{ name: 'frontend', color: '#f59e0b' }, { name: 'design', color: '#8b5cf6' }],
             time_estimate: 43200000, time_spent: 43200000,
-            time_in_status: { 'open': 86400000, 'designing': 36000000, 'review': 7200000 },
+            activity_logs: [
+              { field: 'status', before: 'open', after: 'designing', date: (Date.now() - 14 * 86400000).toString() },
+              { field: 'status', before: 'designing', after: 'review', date: (Date.now() - 5 * 86400000).toString() },
+              { field: 'status', before: 'review', after: 'closed', date: (Date.now() - 1 * 86400000).toString() }
+            ],
             description: "Create high-fidelity wireframes for the new glassmorphic dashboard.",
             subtasks: [
-              { id: 'sub_t2_1', name: 'Draw core mockup wireframes', status: { status: 'closed', color: '#10b981' }, date_created: (Date.now() - 14 * 86400000).toString(), date_closed: (Date.now() - 4 * 86400000).toString(), priority: null, time_estimate: 14400000, time_spent: 14400000, time_in_status: { 'open': 7200000, 'wireframing': 14400000 }, subtasks: [] },
-              { id: 'sub_t2_2', name: 'Obtain initial developer design feedback', status: { status: 'closed', color: '#10b981' }, date_created: (Date.now() - 4 * 86400000).toString(), date_closed: (Date.now() - 1 * 86400000).toString(), priority: null, time_estimate: 7200000, time_spent: 7200000, time_in_status: { 'open': 3600000, 'feedback loop': 10800000 }, subtasks: [] }
+              { id: 'sub_t2_1', name: 'Draw core mockup wireframes', status: { status: 'closed', color: '#10b981' }, date_created: (Date.now() - 14 * 86400000).toString(), date_closed: (Date.now() - 4 * 86400000).toString(), priority: null, time_estimate: 14400000, time_spent: 14400000, activity_logs: [{ field: 'status', before: 'open', after: 'wireframing', date: (Date.now() - 13.5 * 86400000).toString() }, { field: 'status', before: 'wireframing', after: 'closed', date: (Date.now() - 4 * 86400000).toString() }], subtasks: [] },
+              { id: 'sub_t2_2', name: 'Obtain initial developer design feedback', status: { status: 'closed', color: '#10b981' }, date_created: (Date.now() - 4 * 86400000).toString(), date_closed: (Date.now() - 1 * 86400000).toString(), priority: null, time_estimate: 7200000, time_spent: 7200000, activity_logs: [{ field: 'status', before: 'open', after: 'feedback loop', date: (Date.now() - 3.2 * 86400000).toString() }, { field: 'status', before: 'feedback loop', after: 'closed', date: (Date.now() - 1 * 86400000).toString() }], subtasks: [] }
             ]
           }
         ],
@@ -851,7 +865,10 @@
             assignees: [],
             tags: [{ name: 'backend', color: '#3b82f6' }, { name: 'docs', color: '#64748b' }],
             time_estimate: 18000000, time_spent: 14400000,
-            time_in_status: { 'open': 86400000, 'writing': 43200000, 'review': 7200000 },
+            activity_logs: [
+              { field: 'status', before: 'open', after: 'writing', date: (Date.now() - 15 * 86400000).toString() },
+              { field: 'status', before: 'writing', after: 'review', date: (Date.now() - 2 * 86400000).toString() }
+            ],
             description: "The API payload parameters for tasks are outdated. Need to include subtasks=true in the docs.",
             subtasks: [
               { 
@@ -861,9 +878,12 @@
                 priority: null,
                 date_created: (Date.now() - 17 * 86400000).toString(),
                 time_estimate: 7200000, time_spent: 7200000,
-                time_in_status: { 'open': 7200000, 'writing': 14400000, 'review': 3600000 },
+                activity_logs: [
+                  { field: 'status', before: 'open', after: 'writing', date: (Date.now() - 16 * 86400000).toString() },
+                  { field: 'status', before: 'writing', after: 'review', date: (Date.now() - 4 * 86400000).toString() }
+                ],
                 subtasks: [
-                  { id: 'sub_sub_t3_1_1', name: 'Draft recursive React rendering specs', status: { status: 'complete', color: '#10b981' }, date_created: (Date.now() - 16 * 86400000).toString(), date_closed: (Date.now() - 5 * 86400000).toString(), priority: null, time_estimate: 3600000, time_spent: 3600000, time_in_status: { 'open': 3600000, 'drafting': 3600000, 'review': 1800000 } }
+                  { id: 'sub_sub_t3_1_1', name: 'Draft recursive React rendering specs', status: { status: 'complete', color: '#10b981' }, date_created: (Date.now() - 16 * 86400000).toString(), date_closed: (Date.now() - 5 * 86400000).toString(), priority: null, time_estimate: 3600000, time_spent: 3600000, activity_logs: [{ field: 'status', before: 'open', after: 'drafting', date: (Date.now() - 15.5 * 86400000).toString() }, { field: 'status', before: 'drafting', after: 'review', date: (Date.now() - 10 * 86400000).toString() }, { field: 'status', before: 'review', after: 'complete', date: (Date.now() - 5 * 86400000).toString() }] }
                 ]
               }
             ]
@@ -1522,23 +1542,55 @@
             
             if (isDone) {
                 let actualRunningMs = 0;
+                let parsedTimeInStatus = {};
 
-                // Tracking average time spent per internal status for completed tasks
-                if (t.time_in_status) {
-                    Object.entries(t.time_in_status).forEach(([statusStr, durationMs]) => {
-                        if (!timeInStatusStats[statusStr]) {
-                            timeInStatusStats[statusStr] = { sum: 0, count: 0 };
+                // 1. Process from Activity Logs (Most accurate movement history)
+                if (t.activity_logs && t.activity_logs.length > 0) {
+                    const statusLogs = t.activity_logs
+                        .filter(log => log.field === 'status')
+                        .sort((a, b) => parseInt(a.date) - parseInt(b.date));
+                    
+                    let lastDate = parseInt(t.date_created) || parseInt(statusLogs[0]?.date) || 0;
+                    let currentStatus = statusLogs[0]?.before?.toLowerCase() || 'open';
+
+                    statusLogs.forEach(log => {
+                        const changeDate = parseInt(log.date);
+                        if (lastDate > 0) {
+                            const duration = Math.max(0, changeDate - lastDate);
+                            parsedTimeInStatus[currentStatus] = (parsedTimeInStatus[currentStatus] || 0) + duration;
                         }
-                        timeInStatusStats[statusStr].sum += durationMs;
-                        timeInStatusStats[statusStr].count++;
+                        currentStatus = log.after?.toLowerCase() || currentStatus;
+                        lastDate = changeDate;
+                    });
+
+                    // Add final duration until closed
+                    if (t.date_closed && lastDate > 0) {
+                        const finalDuration = Math.max(0, parseInt(t.date_closed) - lastDate);
+                        parsedTimeInStatus[currentStatus] = (parsedTimeInStatus[currentStatus] || 0) + finalDuration;
+                    }
+                } 
+                // 2. Fallback to API's pre-calculated time_in_status if no logs available
+                else if (t.time_in_status) {
+                    parsedTimeInStatus = t.time_in_status;
+                }
+
+                // 3. Populate Stats
+                if (Object.keys(parsedTimeInStatus).length > 0) {
+                    Object.entries(parsedTimeInStatus).forEach(([statusStr, durationMs]) => {
+                        const cleanStatus = statusStr.toLowerCase();
+                        if (!timeInStatusStats[cleanStatus]) {
+                            timeInStatusStats[cleanStatus] = { sum: 0, count: 0 };
+                        }
+                        timeInStatusStats[cleanStatus].sum += durationMs;
+                        timeInStatusStats[cleanStatus].count++;
 
                         // Sum active statuses for the actual running time
-                        if (!excludedStatusesForAccuracy.includes(statusStr.toLowerCase())) {
+                        if (!excludedStatusesForAccuracy.includes(cleanStatus)) {
                             actualRunningMs += durationMs;
                         }
                     });
                 } else {
-                    // Robust fallback if API didn't return time_in_status history or a strict date_closed
+                    // 4. Robust fallback if API didn't return logs or time_in_status history
                     const end_date = t.date_closed ? parseInt(t.date_closed) : Date.now();
                     const start_date = t.start_date ? parseInt(t.start_date) : (t.date_created ? parseInt(t.date_created) : end_date);
                     const fallbackDuration = Math.max(0, end_date - start_date);
@@ -2400,7 +2452,7 @@
                     <div className="flex-1 border-t md:border-t-0 md:border-l border-white/10 pt-6 md:pt-0 md:pl-8 lg:pl-12">
                       <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4 flex items-center flex-wrap gap-2">
                         Average Time in Status
-                        <MetricTooltip align="center" position="top" text="Average time completed tasks spend in intermediate phases." formula="Sum of time spent in each status / Total number of tasks reaching that status.">
+                        <MetricTooltip align="center" position="top" text="Average time completed tasks spend in intermediate phases." formula="Parses the task's Activity Logs timeline, calculates duration between status changes, and averages it.">
                           <InfoIcon className="h-3.5 w-3.5 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
                         </MetricTooltip>
                       </h3>
