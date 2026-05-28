@@ -1506,13 +1506,50 @@
         const criticalBugsCount = allBugs.filter(t => ['high', 'urgent', 'critical'].includes(t.priority?.priority?.toLowerCase())).length;
         const bugResolutionRate = totalBugsCount === 0 ? 0 : Math.round((resolvedBugsCount / totalBugsCount) * 100);
 
-        // Velocity Math: Calculate average time to fix bugs
+        // Utility for robust date parsing (handles Unix MS strings and ISO strings seamlessly)
+        const parseDateMs = (d) => {
+            if (!d) return 0;
+            const n = Number(d);
+            if (!isNaN(n)) return n;
+            return new Date(d).getTime() || 0;
+        };
+
+        // Velocity Math: Calculate average time to fix bugs (From creation to closing status)
         let fixVelocitySumMs = 0;
         let fixVelocityCount = 0;
         allBugs.forEach(b => {
-          if (['closed', 'complete', 'done', 'resolved'].includes(b.status?.status?.toLowerCase()) && b.date_closed && b.date_created) {
-            fixVelocitySumMs += (parseInt(b.date_closed) - parseInt(b.date_created));
-            fixVelocityCount++;
+          const statusName = b.status?.status?.toLowerCase() || 'open';
+          const isDone = ['closed', 'complete', 'done', 'resolved'].includes(statusName);
+
+          if (isDone) {
+            let completedDate = parseDateMs(b.date_closed);
+            
+            // If date_closed is missing, find when it transitioned to done via activity logs
+            if (!completedDate && b.activity_logs && Array.isArray(b.activity_logs)) {
+               const statusLogs = b.activity_logs
+                   .filter(log => log.field === 'status')
+                   .sort((x, y) => parseDateMs(x.date) - parseDateMs(y.date));
+               
+               if (statusLogs.length > 0) {
+                   const lastLog = statusLogs[statusLogs.length - 1];
+                   const lastLogStatus = (lastLog.after?.status || lastLog.after || '').toString().toLowerCase();
+                   if (['closed', 'complete', 'done', 'resolved'].includes(lastLogStatus)) {
+                       completedDate = parseDateMs(lastLog.date);
+                   }
+               }
+            }
+            
+            // Ultimate fallback if no logs or date_closed exists
+            if (!completedDate) {
+               completedDate = parseDateMs(b.date_updated) || Date.now();
+            }
+
+            const createdDate = parseDateMs(b.date_created);
+
+            if (createdDate > 0 && completedDate >= createdDate) {
+              fixVelocitySumMs += (completedDate - createdDate);
+              fixVelocityCount++;
+            }
           }
         });
         
@@ -1529,14 +1566,6 @@
             avgVelocityUnit = "Hours";
           }
         }
-
-        // Utility for robust date parsing (handles Unix MS strings and ISO strings seamlessly)
-        const parseDateMs = (d) => {
-            if (!d) return 0;
-            const n = Number(d);
-            if (!isNaN(n)) return n;
-            return new Date(d).getTime() || 0;
-        };
 
         // Estimation Accuracy Math
         let totalEstForAccuracyMs = 0;
