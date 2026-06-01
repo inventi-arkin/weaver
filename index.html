@@ -1468,11 +1468,11 @@
         const allMotherTaskIds = new Set(mappedWorkflows.flatMap(wf => wf.tasks || []).map(t => t.id));
 
         const getBreakdown = (tasksArray) => {
-            // Drop QA/UI Bugs from this specific widget count entirely (including their container tasks)
+            // Drop container tasks named QA/UI Bugs, but INCLUDE the actual subtasks
             const validTasks = tasksArray.filter(t => {
                 const n = t.name?.toLowerCase() || '';
                 const isBugContainer = n.includes('qa bugs') || n.includes('ui bugs');
-                return !allBugIds.has(t.id) && !isBugContainer;
+                return !isBugContainer;
             });
             const mothers = validTasks.filter(t => allMotherTaskIds.has(t.id)).length;
             const subs = validTasks.filter(t => !allMotherTaskIds.has(t.id)).length;
@@ -2582,7 +2582,7 @@
                       <div className="min-w-0">
                         <div className="flex items-center flex-wrap gap-1.5 mb-1">
                           <p className="text-sm font-medium text-slate-400">Backlog</p>
-                          <MetricTooltip align="left" position="bottom" text="Feature tasks that are not yet started." formula="Count of tasks (excluding bugs) with status 'Open', 'To Do', or 'Backlog'.">
+                          <MetricTooltip align="left" position="bottom" text="Tasks that are not yet started." formula="Count of tasks and subtasks with status 'Open', 'To Do', or 'Backlog'. (Excludes bug containers)">
                             <InfoIcon className="h-3.5 w-3.5 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
                           </MetricTooltip>
                         </div>
@@ -2609,7 +2609,7 @@
                       <div className="min-w-0">
                         <div className="flex items-center flex-wrap gap-1.5 mb-1">
                           <p className="text-sm font-medium text-slate-400">Active Tasks</p>
-                          <MetricTooltip align="center" position="bottom" text="Feature tasks currently being worked on." formula="Tasks (excluding bugs) with active development statuses.">
+                          <MetricTooltip align="center" position="bottom" text="Tasks currently being worked on." formula="Tasks and subtasks with active development statuses. (Excludes bug containers)">
                             <InfoIcon className="h-3.5 w-3.5 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
                           </MetricTooltip>
                         </div>
@@ -2636,7 +2636,7 @@
                       <div className="min-w-0">
                         <div className="flex items-center flex-wrap gap-1.5 mb-1">
                           <p className="text-sm font-medium text-slate-400">Total Resolved</p>
-                          <MetricTooltip align="right" position="bottom" text="Feature tasks completed across mapped workflows." formula="Count of tasks (excluding bugs) with status 'Closed', 'Complete', 'Done', or 'Resolved'.">
+                          <MetricTooltip align="right" position="bottom" text="Tasks completed across mapped workflows." formula="Count of tasks and subtasks with status 'Closed', 'Complete', 'Done', or 'Resolved'. (Excludes bug containers)">
                             <InfoIcon className="h-3.5 w-3.5 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
                           </MetricTooltip>
                         </div>
