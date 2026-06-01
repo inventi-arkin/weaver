@@ -1468,8 +1468,12 @@
         const allMotherTaskIds = new Set(mappedWorkflows.flatMap(wf => wf.tasks || []).map(t => t.id));
 
         const getBreakdown = (tasksArray) => {
-            // Drop QA/UI Bugs from this specific widget count entirely
-            const validTasks = tasksArray.filter(t => !allBugIds.has(t.id));
+            // Drop QA/UI Bugs from this specific widget count entirely (including their container tasks)
+            const validTasks = tasksArray.filter(t => {
+                const n = t.name?.toLowerCase() || '';
+                const isBugContainer = n.includes('qa bugs') || n.includes('ui bugs');
+                return !allBugIds.has(t.id) && !isBugContainer;
+            });
             const mothers = validTasks.filter(t => allMotherTaskIds.has(t.id)).length;
             const subs = validTasks.filter(t => !allMotherTaskIds.has(t.id)).length;
             return { total: validTasks.length, mothers, subs };
