@@ -1058,6 +1058,13 @@
       const [selectedAssigneeFilter, setSelectedAssigneeFilter] = useState('');
       const [userRoles, setUserRoles] = useState({}); // Stores Developer/QA dynamic assignments
 
+      // --- Capacity Settings State ---
+      const [isBlockerModalOpen, setIsBlockerModalOpen] = useState(false);
+      const [dateBlockers, setDateBlockers] = useState([]);
+      const [newBlockerDays, setNewBlockerDays] = useState(1);
+      const [newBlockerRemark, setNewBlockerRemark] = useState('Holiday');
+      const [newBlockerAssignee, setNewBlockerAssignee] = useState('');
+
       const [expandedTasks, setExpandedTasks] = useState({});
       const [workflowTabs, setWorkflowTabs] = useState({});
       
@@ -1537,7 +1544,10 @@
         const bugResolutionRate = totalBugsCount === 0 ? 0 : Math.round((resolvedBugsCount / totalBugsCount) * 100);
 
         // Quality Rate per Mother Task Math
-        const allMotherTasksRaw = mappedWorkflows.flatMap(wf => wf.tasks || []);
+        const allMotherTasksRaw = mappedWorkflows.flatMap(wf => wf.tasks || []).filter(t => {
+            const n = t.name?.toLowerCase() || '';
+            return !n.includes('qa bugs') && !n.includes('ui bugs');
+        });
         let filteredMotherTasksForQuality = allMotherTasksRaw;
         if (completionFilterType === 'tags' && selectedTagFilter) {
           filteredMotherTasksForQuality = allMotherTasksRaw.filter(t => t.tags?.some(tag => tag.name === selectedTagFilter));
@@ -1981,10 +1991,29 @@
             current.setDate(current.getDate() + 1);
         }
         
-        const bucketDurationDays = Math.max(0, workingDaysCount - 2); 
+        // --- Dynamic Date Blocker Engine ---
+        let globalBlockerDays = 0;
+        let devLeaveDays = 0;
+        let qaLeaveDays = 0;
+
+        dateBlockers.forEach(b => {
+            if (b.remark === 'Holiday' || b.remark === 'Company Event') {
+                globalBlockerDays += b.days;
+            } else if (b.remark === 'Leave') {
+                const role = userRoles[b.assignee] || 'Developer';
+                if (role === 'Developer') devLeaveDays += b.days;
+                else if (role === 'QA') qaLeaveDays += b.days;
+            }
+        });
+
+        // Sprint Days are now working days strictly minus Global Blockers (Holidays/Events)
+        const bucketDurationDays = Math.max(0, workingDaysCount - globalBlockerDays); 
         
-        // Mother Tasks Extraction (Top-level tasks only)
-        const allMotherTasks = mappedWorkflows.flatMap(wf => wf.tasks || []);
+        // Mother Tasks Extraction (Top-level tasks only, excluding bug containers)
+        const allMotherTasks = mappedWorkflows.flatMap(wf => wf.tasks || []).filter(t => {
+            const n = t.name?.toLowerCase() || '';
+            return !n.includes('qa bugs') && !n.includes('ui bugs');
+        });
         let filteredMotherTasks = allMotherTasks;
         if (completionFilterType === 'tags' && selectedTagFilter) {
           filteredMotherTasks = allMotherTasks.filter(t => t.tags?.some(tag => tag.name === selectedTagFilter));
@@ -2027,13 +2056,14 @@
         const totalDemandHours = totalEstDays * 7;
 
         // Multiply by 7 hours to convert the denominator's "Days" capacity into "Hours" for accurate percentage
-        const devCapacityHours = devCount * bucketDurationDays * 7;
-        const qaCapacityHours = qaCount * bucketDurationDays * 7;
+        // Leaves are strictly deducted from the specific role's total sprint capacity here
+        const devCapacityHours = Math.max(0, (devCount * bucketDurationDays * 7) - (devLeaveDays * 7));
+        const qaCapacityHours = Math.max(0, (qaCount * bucketDurationDays * 7) - (qaLeaveDays * 7));
 
         const devUtilPct = devCapacityHours > 0 ? Math.round((devDemandHours / devCapacityHours) * 100) : 0;
         const qaUtilPct = qaCapacityHours > 0 ? Math.round((qaDemandHours / qaCapacityHours) * 100) : 0;
         
-        // Updated Bucket Utilization: (Total Estimates * 7 hours) / (Developer resource count * Sprint Working days * 7 hours) * 100
+        // Updated Bucket Utilization: (Total Estimates * 7 hours) / ((Devs * Sprint Days * 7h) - (Dev Leaves * 7h)) * 100
         const bucketUtilizationPct = devCapacityHours > 0 ? Math.round((totalDemandHours / devCapacityHours) * 100) : 0;
 
         const integrationUI = (
@@ -2272,6 +2302,104 @@
                     </button>
                     {integrationUI}
                  </div>
+              </div>
+            )}
+
+            {/* Capacity Settings Blocker Modal */}
+            {isBlockerModalOpen && (
+              <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+                <div className="bg-slate-900 border border-white/10 rounded-2xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden animate-in slide-in-from-bottom-4">
+                   <div className="flex items-center justify-between p-5 border-b border-white/5 bg-slate-900/50">
+                     <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                        <Calendar className="w-5 h-5 text-indigo-400" />
+                        Sprint Capacity Settings
+                     </h2>
+                     <button onClick={() => setIsBlockerModalOpen(false)} className="p-1.5 rounded-lg text-slate-400 hover:bg-white/5 hover:text-white transition-colors">
+                       <XIcon className="w-5 h-5" />
+                     </button>
+                   </div>
+                   
+                   <div className="p-5 space-y-6">
+                     <div className="space-y-3">
+                       <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider flex items-center justify-between">
+                         Active Blockers
+                         <span className="text-indigo-400">{dateBlockers.length} Items</span>
+                       </h3>
+                       {dateBlockers.length === 0 ? (
+                         <div className="text-sm text-slate-400 italic p-4 bg-slate-950/30 rounded-xl text-center border border-white/5">No blockers added.</div>
+                       ) : (
+                         <ul className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                           {dateBlockers.map(b => (
+                             <li key={b.id} className="flex items-center justify-between bg-slate-950/50 p-3 rounded-xl border border-white/5">
+                                <div className="flex flex-col">
+                                   <span className="text-sm font-semibold text-slate-200">{b.remark} <span className="text-slate-400 font-normal">({b.days} day{b.days > 1 ? 's' : ''})</span></span>
+                                   {b.remark === 'Leave' && <span className="text-xs text-indigo-400 font-medium mt-0.5">{b.assignee}</span>}
+                                </div>
+                                <button onClick={() => setDateBlockers(prev => prev.filter(x => x.id !== b.id))} className="text-slate-500 hover:text-red-400 p-1.5 rounded-md hover:bg-red-500/10 transition-colors">
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                             </li>
+                           ))}
+                         </ul>
+                       )}
+                     </div>
+
+                     <div className="bg-slate-950/40 p-4 rounded-xl border border-white/5 space-y-4">
+                        <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Add New Blocker</h3>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider font-semibold">No. of Days</label>
+                            <input 
+                              type="number" 
+                              min="1" 
+                              value={newBlockerDays} 
+                              onChange={e => setNewBlockerDays(e.target.value)} 
+                              className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-indigo-500" 
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider font-semibold">Remarks</label>
+                            <select 
+                              value={newBlockerRemark} 
+                              onChange={e => setNewBlockerRemark(e.target.value)} 
+                              className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                            >
+                              <option value="Holiday">Holiday</option>
+                              <option value="Company Event">Company Event</option>
+                              <option value="Leave">Leave</option>
+                            </select>
+                          </div>
+                        </div>
+                        {newBlockerRemark === 'Leave' && (
+                          <div className="animate-in fade-in slide-in-from-top-1">
+                            <label className="block text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider font-semibold">Team Member</label>
+                            <select 
+                              value={newBlockerAssignee || (assigneesList[0]?.username || '')} 
+                              onChange={e => setNewBlockerAssignee(e.target.value)} 
+                              className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                            >
+                              {assigneesList.map(a => <option key={a.username} value={a.username}>{a.username}</option>)}
+                            </select>
+                          </div>
+                        )}
+                        <button 
+                          onClick={() => {
+                            if (!newBlockerDays || newBlockerDays <= 0) return;
+                            setDateBlockers(prev => [...prev, {
+                              id: Date.now().toString(),
+                              days: parseInt(newBlockerDays),
+                              remark: newBlockerRemark,
+                              assignee: newBlockerRemark === 'Leave' ? (newBlockerAssignee || assigneesList[0]?.username) : null
+                            }]);
+                            setNewBlockerDays(1); // Reset day count for UX
+                          }}
+                          className="w-full flex items-center justify-center bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors shadow-sm"
+                        >
+                          <Plus className="w-4 h-4 mr-1.5" /> Add Date Blocker
+                        </button>
+                     </div>
+                   </div>
+                </div>
               </div>
             )}
 
@@ -2853,7 +2981,7 @@
                           </div>
                           <h3 className="text-lg font-semibold text-white flex items-center gap-2">
                             Bucket Utilization
-                            <MetricTooltip align="left" position="top" text="Calculated based on developer capacity vs total scope demand." formula="(Est Days × 7h) ÷ (Devs × Sprint Days × 7h) × 100">
+                            <MetricTooltip align="left" position="top" text="Calculated based on developer capacity vs total scope demand." formula="(Est Days × 7h) ÷ ((Devs × Sprint Days × 7h) - (Dev Leaves × 7h)) × 100">
                               <InfoIcon className="h-4 w-4 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
                             </MetricTooltip>
                           </h3>
@@ -2902,7 +3030,7 @@
                         <div className="space-y-4">
                           <h4 className="text-sm font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-2">
                             Capacity Limits
-                            <MetricTooltip align="center" position="top" text="Available resource limits for the sprint." formula="Resources = Unique Assignees. Duration = (Working Days between List Start and Due Date) - 2 Days.">
+                            <MetricTooltip align="center" position="top" text="Available resource limits for the sprint." formula="Resources = Unique Assignees. Duration = Working Days - (Holidays + Events). Click 'Sprint Days' to configure.">
                               <InfoIcon className="h-3.5 w-3.5 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
                             </MetricTooltip>
                           </h4>
@@ -2921,12 +3049,19 @@
                               </div>
                               <span className="text-lg font-bold text-white">{qaCount}</span>
                             </div>
-                            <div className="bg-slate-950/30 p-3.5 rounded-xl border border-white/5 flex items-center justify-between transition-colors hover:bg-slate-900/60">
-                              <div className="flex items-center text-slate-300">
-                                <Calendar className="w-4 h-4 mr-2 text-sky-400" />
-                                <span className="text-sm">Sprint Days (-2)</span>
+                            <div 
+                              onClick={() => setIsBlockerModalOpen(true)}
+                              className="bg-slate-950/30 p-3.5 rounded-xl border border-white/5 flex items-center justify-between transition-colors hover:bg-slate-900/60 cursor-pointer group"
+                              title="Configure Sprint Capacity"
+                            >
+                              <div className="flex items-center text-slate-300 group-hover:text-indigo-300 transition-colors">
+                                <Calendar className="w-4 h-4 mr-2 text-sky-400 group-hover:text-indigo-400" />
+                                <span className="text-sm">Sprint Days</span>
                               </div>
-                              <span className="text-lg font-bold text-white">{bucketDurationDays}</span>
+                              <span className="text-lg font-bold text-white flex items-center gap-2">
+                                {bucketDurationDays}
+                                <Settings className="w-3.5 h-3.5 text-slate-500 group-hover:text-indigo-400 transition-colors" />
+                              </span>
                             </div>
                           </div>
                         </div>
