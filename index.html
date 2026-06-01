@@ -1505,6 +1505,37 @@
         const criticalBugsCount = allBugs.filter(t => ['high', 'urgent', 'critical'].includes(t.priority?.priority?.toLowerCase())).length;
         const bugResolutionRate = totalBugsCount === 0 ? 0 : Math.round((resolvedBugsCount / totalBugsCount) * 100);
 
+        // Quality Rate per Mother Task Math
+        const allMotherTasksRaw = mappedWorkflows.flatMap(wf => wf.tasks || []);
+        let filteredMotherTasksForQuality = allMotherTasksRaw;
+        if (completionFilterType === 'tags' && selectedTagFilter) {
+          filteredMotherTasksForQuality = allMotherTasksRaw.filter(t => t.tags?.some(tag => tag.name === selectedTagFilter));
+        } else if (completionFilterType === 'assignees' && selectedAssigneeFilter) {
+          filteredMotherTasksForQuality = allMotherTasksRaw.filter(t => t.assignees?.some(a => a.username === selectedAssigneeFilter));
+        }
+
+        let totalQualityScore = 0;
+        let evaluatedMotherTasks = 0;
+        filteredMotherTasksForQuality.forEach(motherTask => {
+            evaluatedMotherTasks++;
+            const taskBugs = extractBugs([motherTask]);
+            if (taskBugs.length === 0) {
+                totalQualityScore += 100; // Perfect score if no bugs
+            } else {
+                let penalty = 0;
+                taskBugs.forEach(bug => {
+                    const priority = bug.priority?.priority?.toLowerCase() || 'normal';
+                    // Complexity weight deductions
+                    if (['critical', 'urgent'].includes(priority)) penalty += 20;
+                    else if (priority === 'high') penalty += 15;
+                    else if (priority === 'normal') penalty += 10;
+                    else penalty += 5; // Low priority
+                });
+                totalQualityScore += Math.max(0, 100 - penalty); // Floor at 0% per task
+            }
+        });
+        const avgQualityRate = evaluatedMotherTasks > 0 ? Math.round(totalQualityScore / evaluatedMotherTasks) : 100;
+
         // Utility for robust date parsing (handles Unix MS strings and ISO strings seamlessly)
         const parseDateMs = (d) => {
             if (!d) return 0;
@@ -2358,22 +2389,92 @@
             ) : (
               <main className="relative z-25 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 animate-in fade-in duration-500">
                 
+                {/* 0. Connection Path & Source (TOP MOST) */}
+                {mappedWorkflows.length > 0 && (
+                  <div className="mb-6 bg-slate-900/60 p-4 rounded-2xl border border-indigo-500/30 shadow-lg backdrop-blur-xl flex flex-col lg:flex-row lg:items-center justify-between gap-4 relative z-[80] animate-in slide-in-from-top-4">
+                    <div className="flex items-center gap-3 w-full min-w-0">
+                      <div className="bg-indigo-500/20 p-2 rounded-lg border border-indigo-500/30 shadow-inner hidden sm:block shrink-0">
+                        <SpiderNetworkIcon className="h-5 w-5 text-indigo-400" />
+                      </div>
+
+                      <div className="flex items-center flex-wrap text-sm text-slate-400 gap-1.5 min-w-0 flex-1">
+                        <span className="flex items-center shrink-0 max-w-[100px] sm:max-w-[200px]" title={mappedWorkflows[0].team}>
+                          <Box className="h-4 w-4 mr-1.5 text-slate-500 shrink-0" /> 
+                          <span className="truncate text-slate-300 font-medium">{mappedWorkflows[0].team}</span>
+                        </span>
+                        <ChevronRight className="h-4 w-4 text-slate-600 shrink-0" />
+                        <span className="flex items-center shrink-0 max-w-[100px] sm:max-w-[200px]" title={mappedWorkflows[0].space}>
+                          <span className="truncate text-slate-300 font-medium">{mappedWorkflows[0].space}</span>
+                        </span>
+                        {mappedWorkflows[0].folder !== 'No Folder' && (
+                          <>
+                            <ChevronRight className="h-4 w-4 text-slate-600 shrink-0" />
+                            <span className="flex items-center shrink-0 max-w-[100px] sm:max-w-[200px]" title={mappedWorkflows[0].folder}>
+                              <FolderOpen className="h-4 w-4 mr-1.5 text-slate-500 shrink-0" /> 
+                              <span className="truncate text-slate-300 font-medium">{mappedWorkflows[0].folder}</span>
+                            </span>
+                          </>
+                        )}
+                        <ChevronRight className="h-4 w-4 text-slate-600 shrink-0" />
+                        <span className="font-bold text-indigo-300 flex items-center bg-indigo-500/10 px-2.5 py-0.5 rounded-md border border-indigo-500/20 shadow-sm shrink-0 max-w-[140px] sm:max-w-[250px]" title={mappedWorkflows[0].list}>
+                          <ListTodo className="h-4 w-4 mr-1.5 shrink-0" /> 
+                          <span className="truncate">{mappedWorkflows[0].list}</span>
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                       <button
+                         onClick={() => {
+                           setIsSwitchModalOpen(true);
+                           handleConnectClickUp();
+                         }}
+                         className="flex items-center px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold rounded-lg transition-colors border border-white/10 shadow-sm"
+                       >
+                         <RefreshCw className="h-3.5 w-3.5 mr-2 text-indigo-400" />
+                         Switch Connection
+                       </button>
+                       <button 
+                         onClick={() => removeMapping(mappedWorkflows[0].id)}
+                         className="flex items-center justify-center p-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg transition-colors border border-red-500/20"
+                         title="Disconnect"
+                       >
+                         <LogOut className="h-4 w-4" />
+                       </button>
+                    </div>
+                  </div>
+                )}
+
                 {/* Dashboard Command Center Header */}
                 <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-8 bg-slate-900/40 p-6 rounded-2xl border border-white/5 backdrop-blur-md shadow-xl relative z-20">
                   <div>
-                    <h1 className="text-2xl font-bold text-white flex items-center gap-3">
-                      Your Workspace
-                      {isAutoSyncing ? (
-                        <span className="flex items-center text-xs font-medium text-indigo-400 bg-indigo-500/10 px-2.5 py-1 rounded-full border border-indigo-500/20 transition-all">
-                          <RefreshCw className="h-3 w-3 mr-1 animate-spin" /> Live Syncing
-                        </span>
-                      ) : (
-                        <span className="flex items-center text-xs font-medium text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20 transition-all">
-                          <div className="h-2 w-2 rounded-full bg-emerald-400 mr-1.5 animate-pulse"></div> Real-time Updates On
-                        </span>
-                      )}
+                    <h1 className="text-2xl font-bold text-white flex flex-wrap items-center gap-3 mb-2">
+                      {mappedWorkflows[0]?.list || 'Your Workspace'}
+                      <div className="flex flex-wrap items-center gap-2">
+                        <MetricTooltip 
+                          align="left" 
+                          position="bottom" 
+                          text={isAutoSyncing ? "Fetching latest data from ClickUp..." : "Real-time updates are active."} 
+                          formula="Dashboard automatically syncs every 15 seconds."
+                        >
+                          <div className={`flex items-center px-3 py-1.5 rounded-full border transition-all shadow-sm cursor-help ${isAutoSyncing ? 'bg-indigo-500/10 border-indigo-500/20 text-indigo-300' : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'}`}>
+                            {isAutoSyncing ? (
+                              <RefreshCw className="h-3.5 w-3.5 mr-2 animate-spin" /> 
+                            ) : (
+                              <div className="h-2 w-2 rounded-full bg-emerald-400 mr-2 animate-pulse"></div> 
+                            )}
+                            {mappedWorkflows.length > 0 && (
+                              <div className="flex items-center text-xs font-medium">
+                                <span className="tracking-wide">
+                                  {isAutoSyncing ? 'Syncing...' : `Synced: ${new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: 'numeric', second: 'numeric' }).format(new Date(mappedWorkflows[0].lastSynced))}`}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        </MetricTooltip>
+                      </div>
                     </h1>
-                    <p className="text-slate-400 mt-1 text-sm">Dashboard metrics are dynamically synced and globally filtered.</p>
+                    <p className="text-slate-400 text-sm">Dashboard metrics are dynamically synced and globally filtered.</p>
                   </div>
                   
                   <div className="flex items-center space-x-3 bg-slate-950/50 p-2 rounded-xl border border-white/5">
@@ -2826,7 +2927,22 @@
                         <Bug className="h-5 w-5 text-rose-400 shrink-0" />
                         <h2 className="text-lg font-semibold text-white">Quality & Defects</h2>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 lg:gap-6">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 lg:gap-6">
+                      <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-purple-500/10 shadow-xl flex items-start space-x-4 relative z-10 hover:z-[70]">
+                        <div className="bg-purple-500/10 p-3 rounded-lg border border-purple-500/20 shrink-0">
+                          <Target className="h-6 w-6 text-purple-400" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center flex-wrap gap-1.5 mb-1">
+                            <p className="text-sm font-medium text-slate-400">Avg Quality Rate</p>
+                            <MetricTooltip align="left" position="top" text="Average quality score across mother tasks." formula="100% minus penalty points for each bug based on complexity/priority. (Critical: -20, High: -15, Normal: -10, Low: -5).">
+                              <InfoIcon className="h-3.5 w-3.5 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
+                            </MetricTooltip>
+                          </div>
+                          <p className="text-2xl font-bold text-white mt-1">{avgQualityRate}%</p>
+                        </div>
+                      </div>
+
                       <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-rose-500/10 shadow-xl flex items-start space-x-4 relative z-10 hover:z-[70]">
                         <div className="bg-rose-500/10 p-3 rounded-lg border border-rose-500/20 shrink-0">
                           <Bug className="h-6 w-6 text-rose-400" />
@@ -2964,24 +3080,16 @@
                 </div>
 
                 <div className="flex flex-col space-y-8 mb-8">
-                  {/* 8. Active Workflows List */}
+                  {/* 8. Active Tasks Explorer */}
                   <div className="w-full space-y-6">
                     <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl relative z-10 hover:z-[70]">
-                      <div className="px-6 py-4 border-b border-white/5 bg-slate-900/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-t-2xl">
-                        <div className="flex items-center space-x-3">
-                          <h2 className="text-lg font-semibold text-white">Active Workflows</h2>
-                        </div>
-                        <button 
-                          onClick={() => {
-                            setIsSwitchModalOpen(true);
-                            handleConnectClickUp();
-                          }}
-                          className="text-sm font-medium text-indigo-400 hover:text-white flex items-center shrink-0 transition-colors"
-                        >
-                          <FolderOpen className="h-4 w-4 mr-1" /> Switch Connection
-                        </button>
+                      <div className="px-6 py-4 border-b border-white/5 bg-slate-900/30 flex items-center justify-between rounded-t-2xl">
+                        <h2 className="text-lg font-semibold text-white flex items-center">
+                           <ListTodo className="h-5 w-5 mr-2 text-indigo-400" />
+                           Active Tasks Explorer
+                        </h2>
                       </div>
-                      <ul className="divide-y divide-white/5 max-h-[600px] overflow-y-auto rounded-b-2xl">
+                      <div className="divide-y divide-white/5 max-h-[600px] overflow-y-auto rounded-b-2xl">
                         {mappedWorkflows.map(workflow => {
                           const currentTab = workflowTabs[workflow.id] || 'all';
 
@@ -2996,125 +3104,88 @@
                           });
 
                           return (
-                            <li key={workflow.id} className="p-6 hover:bg-white/5 transition-colors">
-                              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-                                <div className="flex items-start space-x-4">
-                                  <div className="bg-indigo-500/10 p-2.5 rounded-lg hidden sm:block mt-1 border border-indigo-500/20">
-                                    <SpiderNetworkIcon className="h-5 w-5 text-indigo-400" />
-                                  </div>
-                                  <div className="flex flex-col space-y-1.5 w-full">
-                                    <div className="flex flex-wrap items-center text-sm text-slate-300 gap-y-2">
-                                      <span className="font-semibold text-white flex items-center">
-                                        <Box className="h-4 w-4 mr-1.5 text-slate-400" /> {workflow.team} / {workflow.space}
-                                      </span>
-                                      {workflow.folder !== 'No Folder' && (
-                                        <>
-                                          <ChevronRight className="h-4 w-4 mx-2 text-slate-600 hidden sm:block" />
-                                          <span className="flex items-center text-slate-300">
-                                            <FolderOpen className="h-4 w-4 mr-1.5 text-slate-400" /> {workflow.folder}
-                                          </span>
-                                        </>
-                                      )}
-                                      <ChevronRight className="h-4 w-4 mx-2 text-slate-600 hidden sm:block" />
-                                      <span className="font-semibold text-indigo-400 flex items-center bg-indigo-500/10 px-2.5 py-1 rounded-md border border-indigo-500/20 shadow-sm">
-                                        <ListTodo className="h-4 w-4 mr-1.5" /> {workflow.list}
-                                      </span>
-                                    </div>
-                                    <div className="flex items-center text-xs text-slate-500">
-                                      <Clock className="h-3 w-3 mr-1" />
-                                      Last synced: {new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: 'numeric', second: 'numeric' }).format(new Date(workflow.lastSynced))}
-                                    </div>
-                                  </div>
-                                </div>
-                                <button 
-                                  onClick={() => removeMapping(workflow.id)}
-                                  className="text-slate-400 hover:text-red-400 transition-colors p-2 rounded-md hover:bg-red-950/20 shrink-0 self-end sm:self-start"
-                                  title="Remove Mapping"
+                            <div key={workflow.id} className="p-6 transition-colors">
+                              <div className="flex flex-wrap gap-2 mb-4 border-b border-white/5 pb-3">
+                                <button
+                                  onClick={() => setWorkflowTabs(prev => ({ ...prev, [workflow.id]: 'all' }))}
+                                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                                    currentTab === 'all'
+                                      ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/30'
+                                      : 'bg-slate-900/60 text-slate-400 border border-transparent hover:text-slate-200'
+                                  }`}
                                 >
-                                  <Trash2 className="h-5 w-5" />
+                                  All ({rootTasksByTags.length})
                                 </button>
+                                {uniqueStatuses.map(status => {
+                                  const count = rootTasksByTags.filter(t => (t.status?.status || 'Open') === status).length;
+                                  const statusColor = rootTasksByTags.find(t => (t.status?.status || 'Open') === status)?.status?.color || '#94a3b8';
+                                  const isSelected = currentTab === status;
+                                  
+                                  return (
+                                    <button
+                                      key={status}
+                                      onClick={() => setWorkflowTabs(prev => ({ ...prev, [workflow.id]: status }))}
+                                      className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5 capitalize border ${
+                                        isSelected
+                                          ? 'bg-slate-900 text-white'
+                                          : 'bg-slate-900/40 text-slate-400 border-transparent hover:text-slate-200'
+                                      }`}
+                                      style={isSelected ? { borderColor: `${statusColor}40`, boxShadow: `0 0 8px ${statusColor}15` } : {}}
+                                    >
+                                      <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: statusColor, boxShadow: `0 0 6px ${statusColor}` }} />
+                                      {status} ({count})
+                                    </button>
+                                  );
+                                })}
                               </div>
 
-                              <div className="mt-5 pt-4 border-t border-white/5 sm:ml-12 pl-1 sm:pl-0">
-                                <div className="flex flex-wrap gap-2 mb-4 border-b border-white/5 pb-3">
-                                  <button
-                                    onClick={() => setWorkflowTabs(prev => ({ ...prev, [workflow.id]: 'all' }))}
-                                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                                      currentTab === 'all'
-                                        ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/30'
-                                        : 'bg-slate-900/60 text-slate-400 border border-transparent hover:text-slate-200'
-                                    }`}
-                                  >
-                                    All ({rootTasksByTags.length})
-                                  </button>
-                                  {uniqueStatuses.map(status => {
-                                    const count = rootTasksByTags.filter(t => (t.status?.status || 'Open') === status).length;
-                                    const statusColor = rootTasksByTags.find(t => (t.status?.status || 'Open') === status)?.status?.color || '#94a3b8';
-                                    const isSelected = currentTab === status;
-                                    
-                                    return (
-                                      <button
-                                        key={status}
-                                        onClick={() => setWorkflowTabs(prev => ({ ...prev, [workflow.id]: status }))}
-                                        className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5 capitalize border ${
-                                          isSelected
-                                            ? 'bg-slate-900 text-white'
-                                            : 'bg-slate-900/40 text-slate-400 border-transparent hover:text-slate-200'
-                                        }`}
-                                        style={isSelected ? { borderColor: `${statusColor}40`, boxShadow: `0 0 8px ${statusColor}15` } : {}}
-                                      >
-                                        <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: statusColor, boxShadow: `0 0 6px ${statusColor}` }} />
-                                        {status} ({count})
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-
-                                <div className="flex items-center justify-between mb-3">
-                                  <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Top-Level Tasks</h4>
-                                  <span className="text-xs bg-slate-900/60 text-slate-400 border border-white/5 px-2.5 py-0.5 rounded-full font-medium">
-                                    {currentTab !== 'all'
-                                      ? `Showing ${displayedTasks.length} of ${rootTasksByTags.length} tasks`
-                                      : `${rootTasksByTags.length} tasks`}
-                                  </span>
-                                </div>
-                                
-                                {displayedTasks && displayedTasks.length > 0 ? (
-                                  <div className="space-y-3">
-                                    {displayedTasks.map(task => (
-                                      <TaskItem 
-                                        key={task.id} 
-                                        task={task} 
-                                        expandedTasks={expandedTasks} 
-                                        toggleTaskExpand={toggleTaskExpand} 
-                                      />
-                                    ))}
-                                  </div>
-                                ) : (
-                                  <div className="text-sm text-slate-400 italic p-4 bg-slate-950/20 rounded-lg text-center border border-white/5">
-                                    No tasks match this status tab filter.
-                                 </div>
-                                )}
+                              <div className="flex items-center justify-between mb-3">
+                                <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Top-Level Tasks</h4>
+                                <span className="text-xs bg-slate-900/60 text-slate-400 border border-white/5 px-2.5 py-0.5 rounded-full font-medium">
+                                  {currentTab !== 'all'
+                                    ? `Showing ${displayedTasks.length} of ${rootTasksByTags.length} tasks`
+                                    : `${rootTasksByTags.length} tasks`}
+                                </span>
                               </div>
-                            </li>
+                              
+                              {displayedTasks && displayedTasks.length > 0 ? (
+                                <div className="space-y-3">
+                                  {displayedTasks.map(task => (
+                                    <TaskItem 
+                                      key={task.id} 
+                                      task={task} 
+                                      expandedTasks={expandedTasks} 
+                                      toggleTaskExpand={toggleTaskExpand} 
+                                    />
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="text-sm text-slate-400 italic p-4 bg-slate-950/20 rounded-lg text-center border border-white/5">
+                                  No tasks match this status tab filter.
+                               </div>
+                              )}
+                            </div>
                           );
                         })}
-                      </ul>
+                      </div>
                     </div>
                   </div>
 
-                  {/* 9. Completed Workflows Section */}
+                  {/* 9. Completed Tasks Section */}
                   <div className="w-full space-y-6">
                     <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl relative z-10 hover:z-[70]">
                       <div className="px-6 py-4 border-b border-white/5 bg-slate-900/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-t-2xl">
                         <div className="flex items-center space-x-3">
-                          <h2 className="text-lg font-semibold text-white">Completed Tasks</h2>
+                          <h2 className="text-lg font-semibold text-white flex items-center">
+                             <CheckCircle2 className="h-5 w-5 mr-2 text-emerald-400" />
+                             Completed Tasks Explorer
+                          </h2>
                           <span className="flex items-center text-xs font-medium text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20 transition-all">
-                            <CheckCircle2 className="h-3 w-3 mr-1" /> {completedFilteredTasksCount} Resolved
+                            {completedFilteredTasksCount} Resolved
                           </span>
                         </div>
                       </div>
-                      <ul className="divide-y divide-white/5 max-h-[400px] overflow-y-auto rounded-b-2xl">
+                      <div className="divide-y divide-white/5 max-h-[400px] overflow-y-auto rounded-b-2xl">
                         {mappedWorkflows.map(workflow => {
                           // Utilize the recursive engine to build a pristine completed-only tree
                           const completedTasksTree = buildFilteredTree(workflow.tasks || [], true);
@@ -3122,52 +3193,19 @@
                           if (completedTasksTree.length === 0) return null;
 
                           return (
-                            <li key={`completed-${workflow.id}`} className="p-6 hover:bg-white/5 transition-colors">
-                              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-                                <div className="flex items-start space-x-4">
-                                  <div className="bg-emerald-500/10 p-2.5 rounded-lg hidden sm:block mt-1 border border-emerald-500/20">
-                                    <CheckCircle2 className="h-5 w-5 text-emerald-400" />
-                                  </div>
-                                  <div className="flex flex-col space-y-1.5 w-full">
-                                    <div className="flex flex-wrap items-center text-sm text-slate-300 gap-y-2">
-                                      <span className="font-semibold text-white flex items-center">
-                                        <Box className="h-4 w-4 mr-1.5 text-slate-400" /> {workflow.team} / {workflow.space}
-                                      </span>
-                                      {workflow.folder !== 'No Folder' && (
-                                        <>
-                                          <ChevronRight className="h-4 w-4 mx-2 text-slate-600 hidden sm:block" />
-                                          <span className="flex items-center text-slate-300">
-                                            <FolderOpen className="h-4 w-4 mr-1.5 text-slate-400" /> {workflow.folder}
-                                          </span>
-                                        </>
-                                      )}
-                                      <ChevronRight className="h-4 w-4 mx-2 text-slate-600 hidden sm:block" />
-                                      <span className="font-semibold text-emerald-400 flex items-center bg-emerald-500/10 px-2.5 py-1 rounded-md border border-emerald-500/20 shadow-sm">
-                                        <ListTodo className="h-4 w-4 mr-1.5" /> {workflow.list}
-                                      </span>
-                                    </div>
-                                    <div className="flex items-center text-xs text-slate-500">
-                                      <Clock className="h-3 w-3 mr-1" />
-                                      Last synced: {new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: 'numeric', second: 'numeric' }).format(new Date(workflow.lastSynced))}
-                                    </div>
-                                  </div>
-                                </div>
+                            <div key={`completed-${workflow.id}`} className="p-6 transition-colors">
+                              <div className="space-y-3">
+                                {completedTasksTree.map(task => (
+                                  <TaskItem 
+                                    key={task.id} 
+                                    task={task}
+                                    expandedTasks={expandedTasks} 
+                                    toggleTaskExpand={toggleTaskExpand}
+                                    isDoneMode={true}
+                                  />
+                                ))}
                               </div>
-
-                              <div className="mt-5 pt-4 border-t border-white/5 sm:ml-12 pl-1 sm:pl-0">
-                                <div className="space-y-3">
-                                  {completedTasksTree.map(task => (
-                                    <TaskItem 
-                                      key={task.id} 
-                                      task={task}
-                                      expandedTasks={expandedTasks} 
-                                      toggleTaskExpand={toggleTaskExpand}
-                                      isDoneMode={true}
-                                    />
-                                  ))}
-                                </div>
-                              </div>
-                            </li>
+                            </div>
                           );
                         })}
                         {mappedWorkflows.every(workflow => {
@@ -3178,7 +3216,7 @@
                             No completed tasks match your filters yet.
                           </div>
                         )}
-                      </ul>
+                      </div>
                     </div>
                   </div>
                 </div>
