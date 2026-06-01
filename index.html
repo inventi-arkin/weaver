@@ -1456,15 +1456,44 @@
           filteredTasks = allTasksFlattened.filter(t => t.assignees?.some(a => a.username === selectedAssigneeFilter));
         }
 
-        const activeTasksCount = filteredTasks.filter(t => !['closed', 'complete', 'done', 'resolved'].includes(t.status?.status?.toLowerCase())).length;
-        const totalFilteredCount = filteredTasks.length;
-        const completedFilteredTasksCount = filteredTasks.filter(t => ['closed', 'complete', 'done', 'resolved'].includes(t.status?.status?.toLowerCase())).length;
+        // Pre-extract Bugs and Mother Tasks for Core Metrics & Breakdowns
+        let allBugs = extractBugs(mappedWorkflows.flatMap(wf => wf.tasks || []));
+        if (completionFilterType === 'tags' && selectedTagFilter) {
+          allBugs = allBugs.filter(t => t.tags?.some(tag => tag.name === selectedTagFilter));
+        } else if (completionFilterType === 'assignees' && selectedAssigneeFilter) {
+          allBugs = allBugs.filter(t => t.assignees?.some(a => a.username === selectedAssigneeFilter));
+        }
+        
+        const allBugIds = new Set(allBugs.map(t => t.id));
+        const allMotherTaskIds = new Set(mappedWorkflows.flatMap(wf => wf.tasks || []).map(t => t.id));
+
+        const getBreakdown = (tasksArray) => {
+            // Drop QA/UI Bugs from this specific widget count entirely
+            const validTasks = tasksArray.filter(t => !allBugIds.has(t.id));
+            const mothers = validTasks.filter(t => allMotherTaskIds.has(t.id)).length;
+            const subs = validTasks.filter(t => !allMotherTaskIds.has(t.id)).length;
+            return { total: validTasks.length, mothers, subs };
+        };
 
         const backlogStatuses = ['open', 'backlog', 'sprint backlog', 'todo', 'to do', 'new', 'pending'];
-        const backlogTasksCount = filteredTasks.filter(t => {
-          const status = t.status?.status?.toLowerCase() || 'open';
-          return backlogStatuses.includes(status);
-        }).length;
+        const doneStatuses = ['closed', 'complete', 'done', 'resolved'];
+
+        const backlogTasks = filteredTasks.filter(t => backlogStatuses.includes(t.status?.status?.toLowerCase() || 'open'));
+        const backlogBreakdown = getBreakdown(backlogTasks);
+        const backlogTasksCount = backlogBreakdown.total;
+
+        const activeTasks = filteredTasks.filter(t => {
+            const s = t.status?.status?.toLowerCase() || 'open';
+            return !doneStatuses.includes(s) && !backlogStatuses.includes(s);
+        });
+        const activeBreakdown = getBreakdown(activeTasks);
+        const activeTasksCount = activeBreakdown.total;
+
+        const completedTasks = filteredTasks.filter(t => doneStatuses.includes(t.status?.status?.toLowerCase()));
+        const completedBreakdown = getBreakdown(completedTasks);
+        const completedFilteredTasksCount = completedBreakdown.total;
+
+        const totalFilteredCount = filteredTasks.length;
 
         // Global Completion Widget Math
         let totalEstimateMs = 0;
@@ -1474,7 +1503,7 @@
         let taskMaxDate = 0;
 
         filteredTasks.forEach(t => {
-          const isDone = ['closed', 'complete', 'done', 'resolved'].includes(t.status?.status?.toLowerCase());
+          const isDone = doneStatuses.includes(t.status?.status?.toLowerCase());
           
           if (t.start_date) taskMinDate = Math.min(taskMinDate, parseInt(t.start_date));
           if (t.due_date) taskMaxDate = Math.max(taskMaxDate, parseInt(t.due_date));
@@ -1497,15 +1526,6 @@
         });
         
         // Bug & Defect Velocity & KPI Math
-        let allBugs = extractBugs(mappedWorkflows.flatMap(wf => wf.tasks || []));
-        
-        // Apply Global Filter to Extracted Bugs
-        if (completionFilterType === 'tags' && selectedTagFilter) {
-          allBugs = allBugs.filter(t => t.tags?.some(tag => tag.name === selectedTagFilter));
-        } else if (completionFilterType === 'assignees' && selectedAssigneeFilter) {
-          allBugs = allBugs.filter(t => t.assignees?.some(a => a.username === selectedAssigneeFilter));
-        }
-
         const totalBugsCount = allBugs.length;
         const resolvedBugsCount = allBugs.filter(t => ['closed', 'complete', 'done', 'resolved'].includes(t.status?.status?.toLowerCase())).length;
         const activeBugsCount = totalBugsCount - resolvedBugsCount;
@@ -2550,46 +2570,84 @@
 
                 {/* 1. Metrics */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                  <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl flex items-start space-x-4 relative z-10 hover:z-[70]">
-                    <div className="bg-blue-500/10 p-3 rounded-lg border border-blue-500/20 shrink-0">
-                      <Box className="h-6 w-6 text-blue-400" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center flex-wrap gap-1.5 mb-1">
-                        <p className="text-sm font-medium text-slate-400">Backlog</p>
-                        <MetricTooltip align="left" position="bottom" text="Tasks that are not yet started or in the backlog." formula="Count of tasks with status 'Open', 'To Do', or 'Backlog'.">
-                          <InfoIcon className="h-3.5 w-3.5 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
-                        </MetricTooltip>
+                  <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl relative z-10 hover:z-[70] flex items-center justify-between gap-4">
+                    <div className="flex items-start space-x-4 min-w-0">
+                      <div className="bg-blue-500/10 p-3 rounded-lg border border-blue-500/20 shrink-0">
+                        <Box className="h-6 w-6 text-blue-400" />
                       </div>
-                      <p className="text-2xl font-bold text-white mt-1">{backlogTasksCount}</p>
+                      <div className="min-w-0">
+                        <div className="flex items-center flex-wrap gap-1.5 mb-1">
+                          <p className="text-sm font-medium text-slate-400">Backlog</p>
+                          <MetricTooltip align="left" position="bottom" text="Feature tasks that are not yet started." formula="Count of tasks (excluding bugs) with status 'Open', 'To Do', or 'Backlog'.">
+                            <InfoIcon className="h-3.5 w-3.5 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
+                          </MetricTooltip>
+                        </div>
+                        <p className="text-3xl font-extrabold text-white mt-1 tracking-tight">{backlogTasksCount}</p>
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-2 shrink-0">
+                      <div className="bg-slate-950/40 border border-white/5 rounded-lg px-3 py-1.5 flex items-center justify-between min-w-[80px]" title="Main Tasks">
+                        <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mr-3">Main</span>
+                        <span className="text-sm font-bold text-slate-300">{backlogBreakdown.mothers}</span>
+                      </div>
+                      <div className="bg-slate-950/40 border border-white/5 rounded-lg px-3 py-1.5 flex items-center justify-between min-w-[80px]" title="Subtasks">
+                        <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mr-3">Sub</span>
+                        <span className="text-sm font-bold text-slate-300">{backlogBreakdown.subs}</span>
+                      </div>
                     </div>
                   </div>
-                  <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl flex items-start space-x-4 relative z-10 hover:z-[70]">
-                    <div className="bg-indigo-500/10 p-3 rounded-lg border border-indigo-500/20 shrink-0">
-                      <CheckSquare className="h-6 w-6 text-indigo-400" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center flex-wrap gap-1.5 mb-1">
-                        <p className="text-sm font-medium text-slate-400">Active Tasks</p>
-                        <MetricTooltip align="center" position="bottom" text="Count of tracked tasks currently being worked on." formula="Total Flattened Tasks - Tasks with status 'Closed', 'Complete', 'Done', or 'Resolved'">
-                          <InfoIcon className="h-3.5 w-3.5 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
-                        </MetricTooltip>
+
+                  <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl relative z-10 hover:z-[70] flex items-center justify-between gap-4">
+                    <div className="flex items-start space-x-4 min-w-0">
+                      <div className="bg-indigo-500/10 p-3 rounded-lg border border-indigo-500/20 shrink-0">
+                        <CheckSquare className="h-6 w-6 text-indigo-400" />
                       </div>
-                      <p className="text-2xl font-bold text-white mt-1">{activeTasksCount}</p>
+                      <div className="min-w-0">
+                        <div className="flex items-center flex-wrap gap-1.5 mb-1">
+                          <p className="text-sm font-medium text-slate-400">Active Tasks</p>
+                          <MetricTooltip align="center" position="bottom" text="Feature tasks currently being worked on." formula="Tasks (excluding bugs) with active development statuses.">
+                            <InfoIcon className="h-3.5 w-3.5 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
+                          </MetricTooltip>
+                        </div>
+                        <p className="text-3xl font-extrabold text-white mt-1 tracking-tight">{activeTasksCount}</p>
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-2 shrink-0">
+                      <div className="bg-slate-950/40 border border-white/5 rounded-lg px-3 py-1.5 flex items-center justify-between min-w-[80px]" title="Main Tasks">
+                        <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mr-3">Main</span>
+                        <span className="text-sm font-bold text-slate-300">{activeBreakdown.mothers}</span>
+                      </div>
+                      <div className="bg-slate-950/40 border border-white/5 rounded-lg px-3 py-1.5 flex items-center justify-between min-w-[80px]" title="Subtasks">
+                        <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mr-3">Sub</span>
+                        <span className="text-sm font-bold text-slate-300">{activeBreakdown.subs}</span>
+                      </div>
                     </div>
                   </div>
-                  <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl flex items-start space-x-4 relative z-10 hover:z-[70]">
-                    <div className="bg-emerald-500/10 p-3 rounded-lg border border-emerald-500/20 shrink-0">
-                      <CheckCircle2 className="h-6 w-6 text-emerald-400" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center flex-wrap gap-1.5 mb-1">
-                        <p className="text-sm font-medium text-slate-400">Total Resolved</p>
-                        <MetricTooltip align="right" position="bottom" text="Tasks completed across all mapped workflows." formula="Count of tasks with status 'Closed', 'Complete', 'Done', or 'Resolved'">
-                          <InfoIcon className="h-3.5 w-3.5 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
-                        </MetricTooltip>
+
+                  <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl relative z-10 hover:z-[70] flex items-center justify-between gap-4">
+                    <div className="flex items-start space-x-4 min-w-0">
+                      <div className="bg-emerald-500/10 p-3 rounded-lg border border-emerald-500/20 shrink-0">
+                        <CheckCircle2 className="h-6 w-6 text-emerald-400" />
                       </div>
-                      <p className="text-2xl font-bold text-white mt-1">{completedFilteredTasksCount}</p>
+                      <div className="min-w-0">
+                        <div className="flex items-center flex-wrap gap-1.5 mb-1">
+                          <p className="text-sm font-medium text-slate-400">Total Resolved</p>
+                          <MetricTooltip align="right" position="bottom" text="Feature tasks completed across mapped workflows." formula="Count of tasks (excluding bugs) with status 'Closed', 'Complete', 'Done', or 'Resolved'.">
+                            <InfoIcon className="h-3.5 w-3.5 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
+                          </MetricTooltip>
+                        </div>
+                        <p className="text-3xl font-extrabold text-white mt-1 tracking-tight">{completedFilteredTasksCount}</p>
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-2 shrink-0">
+                      <div className="bg-slate-950/40 border border-white/5 rounded-lg px-3 py-1.5 flex items-center justify-between min-w-[80px]" title="Main Tasks">
+                        <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mr-3">Main</span>
+                        <span className="text-sm font-bold text-slate-300">{completedBreakdown.mothers}</span>
+                      </div>
+                      <div className="bg-slate-950/40 border border-white/5 rounded-lg px-3 py-1.5 flex items-center justify-between min-w-[80px]" title="Subtasks">
+                        <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mr-3">Sub</span>
+                        <span className="text-sm font-bold text-slate-300">{completedBreakdown.subs}</span>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2722,7 +2780,58 @@
                   </div>
                 </div>
 
-                {/* 3. Utilization Section */}
+                {/* 3. Estimation Accuracy Section */}
+                <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl mb-8 relative z-10 hover:z-[70]">
+                  <div className="p-6 md:p-8 flex flex-col md:flex-row md:items-center gap-8 lg:gap-12">
+                    {/* Left side: Emphasis */}
+                    <div className="flex-shrink-0 md:w-1/3">
+                      <div className="flex items-center flex-wrap space-x-3 mb-3">
+                        <div className="bg-purple-500/10 p-2.5 rounded-lg border border-purple-500/20 shrink-0">
+                          <Target className="h-6 w-6 text-purple-400" />
+                        </div>
+                        <h2 className="text-lg font-semibold text-white flex items-center flex-wrap gap-2">
+                          Est. Accuracy
+                          <MetricTooltip align="left" position="top" text="Measures the accuracy of time estimates against actual time spent." formula="100 - (|Actual Duration - Estimated Time| / Estimated Time * 100) for completed tasks.">
+                            <InfoIcon className="h-4 w-4 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
+                          </MetricTooltip>
+                        </h2>
+                      </div>
+                      <p className="text-sm text-slate-400 mb-5 leading-relaxed">
+                        Measures how closely the initial time estimates match the actual duration it takes to complete tasks.
+                      </p>
+                      <div className="flex items-end">
+                        <span className="text-6xl font-extrabold text-white tracking-tight leading-none">{estimationAccuracyDisplay}</span>
+                      </div>
+                    </div>
+
+                    {/* Right side: Detailed Breakdown */}
+                    <div className="flex-1 border-t md:border-t-0 md:border-l border-white/10 pt-6 md:pt-0 md:pl-8 lg:pl-12">
+                      <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4 flex items-center flex-wrap gap-2">
+                        Average Time in Status
+                        <MetricTooltip align="center" position="top" text="Average time completed tasks spend in intermediate phases." formula="Parses the task's Activity Logs timeline, calculates duration between status changes, and averages it.">
+                          <InfoIcon className="h-3.5 w-3.5 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
+                        </MetricTooltip>
+                      </h3>
+                      
+                      {avgTimeInStatusList.length > 0 ? (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3">
+                          {avgTimeInStatusList.map(stat => (
+                            <div key={stat.status} className="flex justify-between items-center text-sm p-3 bg-slate-950/30 rounded-xl border border-white/5 transition-colors hover:bg-slate-900/60">
+                              <span className="text-slate-300 capitalize truncate pr-4">{stat.status}</span>
+                              <span className="text-indigo-300 font-mono font-medium shrink-0 bg-indigo-500/10 px-2 py-1 rounded-md border border-indigo-500/20">{stat.timeDisplay}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-sm text-slate-500 italic p-6 bg-slate-950/20 rounded-xl border border-white/5 text-center">
+                          No status timing data is available for tasks. (Ensure active tasks exist or history is fetched).
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 4. Utilization Section */}
                 <div className="mb-8 animate-in fade-in">
                   <div className="flex items-center space-x-2 mb-4">
                       <Activity className="h-5 w-5 text-indigo-400 shrink-0" />
@@ -2852,57 +2961,6 @@
                         </div>
 
                       </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* 4. Estimation Accuracy Section */}
-                <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl mb-8 relative z-10 hover:z-[70]">
-                  <div className="p-6 md:p-8 flex flex-col md:flex-row md:items-center gap-8 lg:gap-12">
-                    {/* Left side: Emphasis */}
-                    <div className="flex-shrink-0 md:w-1/3">
-                      <div className="flex items-center flex-wrap space-x-3 mb-3">
-                        <div className="bg-purple-500/10 p-2.5 rounded-lg border border-purple-500/20 shrink-0">
-                          <Target className="h-6 w-6 text-purple-400" />
-                        </div>
-                        <h2 className="text-lg font-semibold text-white flex items-center flex-wrap gap-2">
-                          Est. Accuracy
-                          <MetricTooltip align="left" position="top" text="Measures the accuracy of time estimates against actual time spent." formula="100 - (|Actual Duration - Estimated Time| / Estimated Time * 100) for completed tasks.">
-                            <InfoIcon className="h-4 w-4 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
-                          </MetricTooltip>
-                        </h2>
-                      </div>
-                      <p className="text-sm text-slate-400 mb-5 leading-relaxed">
-                        Measures how closely the initial time estimates match the actual duration it takes to complete tasks.
-                      </p>
-                      <div className="flex items-end">
-                        <span className="text-6xl font-extrabold text-white tracking-tight leading-none">{estimationAccuracyDisplay}</span>
-                      </div>
-                    </div>
-
-                    {/* Right side: Detailed Breakdown */}
-                    <div className="flex-1 border-t md:border-t-0 md:border-l border-white/10 pt-6 md:pt-0 md:pl-8 lg:pl-12">
-                      <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4 flex items-center flex-wrap gap-2">
-                        Average Time in Status
-                        <MetricTooltip align="center" position="top" text="Average time completed tasks spend in intermediate phases." formula="Parses the task's Activity Logs timeline, calculates duration between status changes, and averages it.">
-                          <InfoIcon className="h-3.5 w-3.5 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
-                        </MetricTooltip>
-                      </h3>
-                      
-                      {avgTimeInStatusList.length > 0 ? (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3">
-                          {avgTimeInStatusList.map(stat => (
-                            <div key={stat.status} className="flex justify-between items-center text-sm p-3 bg-slate-950/30 rounded-xl border border-white/5 transition-colors hover:bg-slate-900/60">
-                              <span className="text-slate-300 capitalize truncate pr-4">{stat.status}</span>
-                              <span className="text-indigo-300 font-mono font-medium shrink-0 bg-indigo-500/10 px-2 py-1 rounded-md border border-indigo-500/20">{stat.timeDisplay}</span>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="text-sm text-slate-500 italic p-6 bg-slate-950/20 rounded-xl border border-white/5 text-center">
-                          No status timing data is available for tasks. (Ensure active tasks exist or history is fetched).
-                        </div>
-                      )}
                     </div>
                   </div>
                 </div>
