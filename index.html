@@ -1998,16 +1998,19 @@
         
         const devDemandHours = totalEstDays * 0.8 * 7;
         const qaDemandHours = totalEstDays * 0.2 * 7;
-        const totalDemandHours = devDemandHours + qaDemandHours;
+        
+        // Overall demand based on user rule (Total Estimates * 7 hours)
+        const totalDemandHours = totalEstDays * 7;
 
         // Multiply by 7 hours to convert the denominator's "Days" capacity into "Hours" for accurate percentage
         const devCapacityHours = devCount * bucketDurationDays * 7;
         const qaCapacityHours = qaCount * bucketDurationDays * 7;
-        const totalCapacityHours = devCapacityHours + qaCapacityHours;
 
         const devUtilPct = devCapacityHours > 0 ? Math.round((devDemandHours / devCapacityHours) * 100) : 0;
         const qaUtilPct = qaCapacityHours > 0 ? Math.round((qaDemandHours / qaCapacityHours) * 100) : 0;
-        const bucketUtilizationPct = totalCapacityHours > 0 ? Math.round((totalDemandHours / totalCapacityHours) * 100) : 0;
+        
+        // Updated Bucket Utilization: (Total Estimates * 7 hours) / (Developer resource count * Sprint Working days * 7 hours) * 100
+        const bucketUtilizationPct = devCapacityHours > 0 ? Math.round((totalDemandHours / devCapacityHours) * 100) : 0;
 
         const integrationUI = (
           <div className="animate-in fade-in duration-500 w-full">
@@ -2737,13 +2740,13 @@
                           </div>
                           <h3 className="text-lg font-semibold text-white flex items-center gap-2">
                             Bucket Utilization
-                            <MetricTooltip align="left" position="top" text="Calculated based on dynamic role capacity vs scope demand." formula="[(Est Days × 80% × 7h) + (Est Days × 20% × 7h)] ÷ [(Devs × Days × 7h) + (QAs × Days × 7h)] × 100">
+                            <MetricTooltip align="left" position="top" text="Calculated based on developer capacity vs total scope demand." formula="(Est Days × 7h) ÷ (Devs × Sprint Days × 7h) × 100">
                               <InfoIcon className="h-4 w-4 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
                             </MetricTooltip>
                           </h3>
                         </div>
                         <p className="text-sm text-slate-400 mb-5 leading-relaxed">
-                          Measures the total demand of your planned scope against the combined daily capacity of your tagged resources.
+                          Measures the total demand of your planned scope against the capacity of your tagged Developer resources.
                         </p>
                         
                         <div className="flex items-end mb-2">
