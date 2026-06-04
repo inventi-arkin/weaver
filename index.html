@@ -1314,9 +1314,23 @@
           initialTasks = MOCK_CLICKUP_DATA.tasks[selectedList] || [];
         } else {
           try {
-            // Include closed tasks and nested subtasks from the API
-            const data = await fetchClickUp(`list/${selectedList}/task?subtasks=true&include_closed=true`, clickUpToken);
-            initialTasks = buildTaskTree(data.tasks || []);
+            // Auto-Paginator: Fetch ALL tasks beyond the 100 item limit
+            let page = 0;
+            let hasMore = true;
+            let allFetchedTasks = [];
+            
+            while (hasMore) {
+                const data = await fetchClickUp(`list/${selectedList}/task?subtasks=true&include_closed=true&page=${page}`, clickUpToken);
+                const tasksChunk = data.tasks || [];
+                allFetchedTasks.push(...tasksChunk);
+                
+                if (tasksChunk.length === 100) {
+                    page++;
+                } else {
+                    hasMore = false;
+                }
+            }
+            initialTasks = buildTaskTree(allFetchedTasks);
           } catch (err) {
             console.error("Error fetching tasks for list", err);
           }
@@ -1363,9 +1377,23 @@
               updatedTasks = MOCK_CLICKUP_DATA.tasks[workflow.listId] || [];
             } else {
               try {
-                // Ensure the background sync ALSO pulls closed tasks
-                const data = await fetchClickUp(`list/${workflow.listId}/task?subtasks=true&include_closed=true`, clickUpToken);
-                updatedTasks = buildTaskTree(data.tasks || []);
+                // Auto-Paginator for Background Sync
+                let page = 0;
+                let hasMore = true;
+                let allFetchedTasks = [];
+                
+                while (hasMore) {
+                    const data = await fetchClickUp(`list/${workflow.listId}/task?subtasks=true&include_closed=true&page=${page}`, clickUpToken);
+                    const tasksChunk = data.tasks || [];
+                    allFetchedTasks.push(...tasksChunk);
+                    
+                    if (tasksChunk.length === 100) {
+                        page++;
+                    } else {
+                        hasMore = false;
+                    }
+                }
+                updatedTasks = buildTaskTree(allFetchedTasks);
               } catch (err) {
                 console.error(`Error syncing tasks for list ${workflow.listId}`, err);
               }
@@ -1913,26 +1941,38 @@
             return result;
         };
 
-        // Team Workload Math & Role Extraction (Moved before Utilization to feed the formulas)
+        // Team Workload Math & Role Extraction
         const assigneeStats = {};
-        filteredTasks.forEach(task => {
+        
+        // 1. Pre-populate all known members from the entire UNFILTERED list to guarantee no one disappears due to a Tag filter
+        allTasksFlattened.forEach(task => {
           if (task.assignees && task.assignees.length > 0) {
             task.assignees.forEach(assignee => {
-              // If filter is active for a specific assignee, skip others in the same task
-              if (completionFilterType === 'assignees' && selectedAssigneeFilter && assignee.username !== selectedAssigneeFilter) {
-                return;
-              }
-
-              const key = assignee.username;
+              const key = assignee.username || assignee.email || `User_${assignee.id}`;
               if (!assigneeStats[key]) {
                 assigneeStats[key] = {
-                  username: assignee.username,
-                  profilePicture: assignee.profilePicture,
+                  username: key,
+                  profilePicture: assignee.profilePicture || `https://ui-avatars.com/api/?name=${encodeURIComponent(key)}&background=random`,
                   statusCounts: {},
                   totalEstMs: 0,
                   totalSpentMs: 0
                 };
               }
+            });
+          }
+        });
+
+        // 2. Tally up workload ONLY based on the dynamically FILTERED tasks
+        filteredTasks.forEach(task => {
+          if (task.assignees && task.assignees.length > 0) {
+            task.assignees.forEach(assignee => {
+              const key = assignee.username || assignee.email || `User_${assignee.id}`;
+              
+              // Skip if filtering by specific assignee
+              if (completionFilterType === 'assignees' && selectedAssigneeFilter && key !== selectedAssigneeFilter) {
+                return;
+              }
+
               const statusName = task.status?.status || 'Open';
               const statusColor = task.status?.color || '#94a3b8';
               
@@ -1957,7 +1997,13 @@
             });
           }
         });
-        const assigneesList = Object.values(assigneeStats).sort((a,b) => b.totalEstMs - a.totalEstMs);
+
+        // 3. Purge hidden assignees ONLY if the Assignee Filter itself is turned on
+        let assigneesList = Object.values(assigneeStats);
+        if (completionFilterType === 'assignees' && selectedAssigneeFilter) {
+            assigneesList = assigneesList.filter(a => a.username === selectedAssigneeFilter);
+        }
+        assigneesList.sort((a,b) => b.totalEstMs - a.totalEstMs);
 
         // Utilization Math
         const devCount = assigneesList.filter(a => (userRoles[a.username] || 'Developer') === 'Developer').length;
