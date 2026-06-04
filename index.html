@@ -1310,8 +1310,13 @@
         const listDueDate = selectedListObj?.due_date || null;
 
         let initialTasks = [];
+        let initialMembers = [];
         if (clickUpToken === 'mock_token') {
           initialTasks = MOCK_CLICKUP_DATA.tasks[selectedList] || [];
+          initialMembers = [
+            { username: 'Alex D.', profilePicture: 'https://ui-avatars.com/api/?name=Alex+D&background=indigo&color=fff' },
+            { username: 'Sarah W.', profilePicture: 'https://ui-avatars.com/api/?name=Sarah+W&background=emerald&color=fff' }
+          ];
         } else {
           try {
             // Auto-Paginator: Fetch ALL tasks beyond the 100 item limit
@@ -1334,6 +1339,14 @@
           } catch (err) {
             console.error("Error fetching tasks for list", err);
           }
+
+          try {
+            // Explicitly fetch the official member roster for this specific list
+            const memberData = await fetchClickUp(`list/${selectedList}/member`, clickUpToken);
+            initialMembers = memberData.members || [];
+          } catch (err) {
+            console.error("Error fetching members for list", err);
+          }
         }
 
         // Replaces the existing workflow to switch the connection
@@ -1347,6 +1360,7 @@
           listStartDate: listStartDate,
           listDueDate: listDueDate,
           tasks: initialTasks,
+          members: initialMembers,
           lastSynced: Date.now()
         }]);
 
@@ -1372,6 +1386,7 @@
           
           const updatedWorkflows = await Promise.all(currentWorkflows.map(async (workflow) => {
             let updatedTasks = workflow.tasks;
+            let updatedMembers = workflow.members || [];
             
             if (clickUpToken === 'mock_token') {
               updatedTasks = MOCK_CLICKUP_DATA.tasks[workflow.listId] || [];
@@ -1397,11 +1412,19 @@
               } catch (err) {
                 console.error(`Error syncing tasks for list ${workflow.listId}`, err);
               }
+
+              try {
+                const memberData = await fetchClickUp(`list/${workflow.listId}/member`, clickUpToken);
+                if (memberData.members) updatedMembers = memberData.members;
+              } catch (err) {
+                console.error(`Error syncing members for list ${workflow.listId}`, err);
+              }
             }
             
             return {
               ...workflow,
               tasks: updatedTasks,
+              members: updatedMembers,
               lastSynced: Date.now()
             };
           }));
@@ -1481,7 +1504,14 @@
         const allTasksFlattened = flattenTasks(mappedWorkflows.flatMap(wf => wf.tasks || []));
         
         const uniqueTags = Array.from(new Set(allTasksFlattened.flatMap(t => t.tags?.map(tag => tag.name) || [])));
-        const uniqueAssignees = Array.from(new Set(allTasksFlattened.flatMap(t => t.assignees?.map(a => a.username) || [])));
+        
+        // Ensure dropdown filter only contains officially registered list members
+        let uniqueAssignees = [];
+        if (mappedWorkflows[0]?.members?.length > 0) {
+            uniqueAssignees = mappedWorkflows[0].members.map(m => (m.user || m).username).filter(Boolean);
+        } else {
+            uniqueAssignees = Array.from(new Set(allTasksFlattened.flatMap(t => t.assignees?.map(a => a.username) || [])));
+        }
 
         // Apply Global Filter to the core task list
         let filteredTasks = allTasksFlattened;
@@ -1943,24 +1973,43 @@
 
         // Team Workload Math & Role Extraction
         const assigneeStats = {};
+        const officialMembers = mappedWorkflows[0]?.members || [];
         
-        // 1. Pre-populate all known members from the entire UNFILTERED list to guarantee no one disappears due to a Tag filter
-        allTasksFlattened.forEach(task => {
-          if (task.assignees && task.assignees.length > 0) {
-            task.assignees.forEach(assignee => {
-              const key = assignee.username || assignee.email || `User_${assignee.id}`;
-              if (!assigneeStats[key]) {
-                assigneeStats[key] = {
-                  username: key,
-                  profilePicture: assignee.profilePicture || `https://ui-avatars.com/api/?name=${encodeURIComponent(key)}&background=random`,
-                  statusCounts: {},
-                  totalEstMs: 0,
-                  totalSpentMs: 0
-                };
-              }
+        if (officialMembers.length > 0) {
+            // 1. Initialize strictly with official list members to ignore legacy closed assignees
+            officialMembers.forEach(m => {
+                const u = m.user || m;
+                const key = u.username;
+                if (key && !assigneeStats[key]) {
+                    assigneeStats[key] = {
+                        username: key,
+                        profilePicture: u.profilePicture || `https://ui-avatars.com/api/?name=${encodeURIComponent(key)}&background=random`,
+                        statusCounts: {},
+                        totalEstMs: 0,
+                        totalSpentMs: 0
+                    };
+                }
             });
-          }
-        });
+        } else {
+            // Fallback: If member API fails or is empty, extract from active tasks
+            allTasksFlattened.forEach(task => {
+                const isClosed = ['closed', 'complete', 'done', 'resolved'].includes(task.status?.status?.toLowerCase());
+                if (!isClosed && task.assignees && task.assignees.length > 0) {
+                    task.assignees.forEach(assignee => {
+                        const key = assignee.username || assignee.email || `User_${assignee.id}`;
+                        if (!assigneeStats[key]) {
+                            assigneeStats[key] = {
+                                username: key,
+                                profilePicture: assignee.profilePicture || `https://ui-avatars.com/api/?name=${encodeURIComponent(key)}&background=random`,
+                                statusCounts: {},
+                                totalEstMs: 0,
+                                totalSpentMs: 0
+                            };
+                        }
+                    });
+                }
+            });
+        }
 
         // 2. Tally up workload ONLY based on the dynamically FILTERED tasks
         filteredTasks.forEach(task => {
@@ -1968,6 +2017,9 @@
             task.assignees.forEach(assignee => {
               const key = assignee.username || assignee.email || `User_${assignee.id}`;
               
+              // Skip if this person is not an official list member (or not caught in active fallback)
+              if (!assigneeStats[key]) return;
+
               // Skip if filtering by specific assignee
               if (completionFilterType === 'assignees' && selectedAssigneeFilter && key !== selectedAssigneeFilter) {
                 return;
