@@ -3345,8 +3345,12 @@
                         {mappedWorkflows.map(workflow => {
                           const currentTab = workflowTabs[workflow.id] || 'all';
 
-                          // Utilize the recursive engine to build a pristine active-only tree
-                          const rootTasksByTags = buildFilteredTree(workflow.tasks || [], false);
+                          // Utilize the recursive engine to build a pristine active-only tree, strictly filtering out bug containers
+                          const mainTasksOnly = (workflow.tasks || []).filter(t => {
+                            const n = t.name?.toLowerCase() || '';
+                            return !n.includes('qa bugs') && !n.includes('ui bugs');
+                          });
+                          const rootTasksByTags = buildFilteredTree(mainTasksOnly, false);
 
                           const uniqueStatuses = Array.from(new Set(rootTasksByTags.map(t => t.status?.status || 'Open')));
 
@@ -3392,7 +3396,7 @@
                               </div>
 
                               <div className="flex items-center justify-between mb-3">
-                                <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Top-Level Tasks</h4>
+                                <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Main Tasks</h4>
                                 <span className="text-xs bg-slate-900/60 text-slate-400 border border-white/5 px-2.5 py-0.5 rounded-full font-medium">
                                   {currentTab !== 'all'
                                     ? `Showing ${displayedTasks.length} of ${rootTasksByTags.length} tasks`
@@ -3439,13 +3443,23 @@
                       </div>
                       <div className="divide-y divide-white/5 max-h-[400px] overflow-y-auto rounded-b-2xl">
                         {mappedWorkflows.map(workflow => {
-                          // Utilize the recursive engine to build a pristine completed-only tree
-                          const completedTasksTree = buildFilteredTree(workflow.tasks || [], true);
+                          // Utilize the recursive engine to build a pristine completed-only tree, strictly filtering out bug containers
+                          const mainTasksOnly = (workflow.tasks || []).filter(t => {
+                            const n = t.name?.toLowerCase() || '';
+                            return !n.includes('qa bugs') && !n.includes('ui bugs');
+                          });
+                          const completedTasksTree = buildFilteredTree(mainTasksOnly, true);
 
                           if (completedTasksTree.length === 0) return null;
 
                           return (
                             <div key={`completed-${workflow.id}`} className="p-6 transition-colors">
+                              <div className="flex items-center justify-between mb-3">
+                                <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Main Tasks</h4>
+                                <span className="text-xs bg-slate-900/60 text-slate-400 border border-white/5 px-2.5 py-0.5 rounded-full font-medium">
+                                  {completedTasksTree.length} tasks
+                                </span>
+                              </div>
                               <div className="space-y-3">
                                 {completedTasksTree.map(task => (
                                   <TaskItem 
@@ -3461,7 +3475,11 @@
                           );
                         })}
                         {mappedWorkflows.every(workflow => {
-                          const completedTasksTree = buildFilteredTree(workflow.tasks || [], true);
+                          const mainTasksOnly = (workflow.tasks || []).filter(t => {
+                            const n = t.name?.toLowerCase() || '';
+                            return !n.includes('qa bugs') && !n.includes('ui bugs');
+                          });
+                          const completedTasksTree = buildFilteredTree(mainTasksOnly, true);
                           return completedTasksTree.length === 0;
                         }) && (
                           <div className="p-8 text-center text-sm text-slate-500 italic rounded-b-2xl">
