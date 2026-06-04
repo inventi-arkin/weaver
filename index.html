@@ -1973,58 +1973,28 @@
 
         // Team Workload Math & Role Extraction
         const assigneeStats = {};
-        const officialMembers = mappedWorkflows[0]?.members || [];
-        
-        if (officialMembers.length > 0) {
-            // 1. Initialize strictly with official list members to ignore legacy closed assignees
-            officialMembers.forEach(m => {
-                const u = m.user || m;
-                const key = u.username;
-                if (key && !assigneeStats[key]) {
-                    assigneeStats[key] = {
-                        username: key,
-                        profilePicture: u.profilePicture || `https://ui-avatars.com/api/?name=${encodeURIComponent(key)}&background=random`,
-                        statusCounts: {},
-                        totalEstMs: 0,
-                        totalSpentMs: 0
-                    };
-                }
-            });
-        } else {
-            // Fallback: If member API fails or is empty, extract from active tasks
-            allTasksFlattened.forEach(task => {
-                const isClosed = ['closed', 'complete', 'done', 'resolved'].includes(task.status?.status?.toLowerCase());
-                if (!isClosed && task.assignees && task.assignees.length > 0) {
-                    task.assignees.forEach(assignee => {
-                        const key = assignee.username || assignee.email || `User_${assignee.id}`;
-                        if (!assigneeStats[key]) {
-                            assigneeStats[key] = {
-                                username: key,
-                                profilePicture: assignee.profilePicture || `https://ui-avatars.com/api/?name=${encodeURIComponent(key)}&background=random`,
-                                statusCounts: {},
-                                totalEstMs: 0,
-                                totalSpentMs: 0
-                            };
-                        }
-                    });
-                }
-            });
-        }
 
-        // 2. Tally up workload ONLY based on the dynamically FILTERED tasks
+        // Tally up workload strictly based on the dynamically FILTERED tasks.
+        // This inherently excludes anyone who doesn't have tasks in the current connected list.
         filteredTasks.forEach(task => {
           if (task.assignees && task.assignees.length > 0) {
             task.assignees.forEach(assignee => {
               const key = assignee.username || assignee.email || `User_${assignee.id}`;
-              
-              // Skip if this person is not an official list member (or not caught in active fallback)
-              if (!assigneeStats[key]) return;
 
-              // Skip if filtering by specific assignee
+              // If filter is active for a specific assignee, skip others in the same task
               if (completionFilterType === 'assignees' && selectedAssigneeFilter && key !== selectedAssigneeFilter) {
                 return;
               }
 
+              if (!assigneeStats[key]) {
+                assigneeStats[key] = {
+                  username: key,
+                  profilePicture: assignee.profilePicture || `https://ui-avatars.com/api/?name=${encodeURIComponent(key)}&background=random`,
+                  statusCounts: {},
+                  totalEstMs: 0,
+                  totalSpentMs: 0
+                };
+              }
               const statusName = task.status?.status || 'Open';
               const statusColor = task.status?.color || '#94a3b8';
               
@@ -2050,12 +2020,7 @@
           }
         });
 
-        // 3. Purge hidden assignees ONLY if the Assignee Filter itself is turned on
-        let assigneesList = Object.values(assigneeStats);
-        if (completionFilterType === 'assignees' && selectedAssigneeFilter) {
-            assigneesList = assigneesList.filter(a => a.username === selectedAssigneeFilter);
-        }
-        assigneesList.sort((a,b) => b.totalEstMs - a.totalEstMs);
+        const assigneesList = Object.values(assigneeStats).sort((a,b) => b.totalEstMs - a.totalEstMs);
 
         // Utilization Math
         const devCount = assigneesList.filter(a => (userRoles[a.username] || 'Developer') === 'Developer').length;
