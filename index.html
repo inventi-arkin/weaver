@@ -1152,12 +1152,11 @@
             settingsData = JSON.parse(localStorage.getItem(`weaver_settings_${listId}`) || '{}');
           }
 
-          if (settingsData) {
-            if (settingsData.devHoursPerDay !== undefined) setDevHoursPerDay(settingsData.devHoursPerDay);
-            if (settingsData.qaHoursPerDay !== undefined) setQaHoursPerDay(settingsData.qaHoursPerDay);
-            if (settingsData.dateBlockers !== undefined) setDateBlockers(settingsData.dateBlockers);
-            if (settingsData.userRoles !== undefined) setUserRoles(settingsData.userRoles);
-          }
+          // Force apply defaults if properties are missing, so switching to a fresh list wipes previous memory states!
+          setDevHoursPerDay(settingsData.devHoursPerDay !== undefined ? settingsData.devHoursPerDay : 7);
+          setQaHoursPerDay(settingsData.qaHoursPerDay !== undefined ? settingsData.qaHoursPerDay : 7);
+          setDateBlockers(settingsData.dateBlockers || []);
+          setUserRoles(settingsData.userRoles || {});
         };
         fetchSettings();
       }, [mappedWorkflows[0]?.listId, auth.currentUser, user?.isMock]);
