@@ -1078,32 +1078,56 @@
 
       // Firebase Settings Auto-Save & Auto-Load Logic
       const saveSettings = async (updates) => {
-        if (!auth.currentUser || mappedWorkflows.length === 0 || user?.isMock) return;
+        if (mappedWorkflows.length === 0) return;
         const listId = mappedWorkflows[0].listId;
-        const uid = auth.currentUser.uid;
         
+        // 1. Local Storage (Instant & works flawlessly in Preview/Mock environments)
         try {
-          const docRef = db.collection('artifacts').doc(appId).collection('users').doc(uid).collection('listSettings').doc(listId);
-          await docRef.set(updates, { merge: true });
-        } catch(err) {
-          console.error('Error saving settings to Firebase:', err);
+          const key = `weaver_settings_${listId}`;
+          const existing = JSON.parse(localStorage.getItem(key) || '{}');
+          localStorage.setItem(key, JSON.stringify({ ...existing, ...updates }));
+        } catch(e) {
+          console.error('Local storage save failed', e);
+        }
+
+        // 2. Firebase (Only triggers if real authenticated user)
+        if (auth.currentUser && !user?.isMock) {
+          try {
+            const uid = auth.currentUser.uid;
+            const docRef = db.collection('artifacts').doc(appId).collection('users').doc(uid).collection('listSettings').doc(listId);
+            await docRef.set(updates, { merge: true });
+          } catch(err) {
+            console.error('Error saving settings to Firebase:', err);
+          }
         }
       };
 
       useEffect(() => {
-        if (mappedWorkflows.length > 0 && auth.currentUser && !user?.isMock) {
-          const listId = mappedWorkflows[0].listId;
+        const listId = mappedWorkflows[0]?.listId;
+        if (!listId) return;
+
+        const applyData = (data) => {
+          if (data.devHoursPerDay !== undefined) setDevHoursPerDay(data.devHoursPerDay);
+          if (data.qaHoursPerDay !== undefined) setQaHoursPerDay(data.qaHoursPerDay);
+          if (data.dateBlockers !== undefined) setDateBlockers(data.dateBlockers);
+          if (data.userRoles !== undefined) setUserRoles(prev => ({...prev, ...data.userRoles}));
+        };
+
+        // 1. Load from Local Storage First (Fastest, handles Preview mode)
+        try {
+          const localData = localStorage.getItem(`weaver_settings_${listId}`);
+          if (localData) applyData(JSON.parse(localData));
+        } catch(e) {}
+
+        // 2. Load from Firebase if applicable
+        if (auth.currentUser && !user?.isMock) {
           const fetchSettings = async () => {
             try {
               const uid = auth.currentUser.uid;
               const docRef = db.collection('artifacts').doc(appId).collection('users').doc(uid).collection('listSettings').doc(listId);
               const snapshot = await docRef.get();
               if (snapshot.exists) {
-                const data = snapshot.data();
-                if (data.devHoursPerDay !== undefined) setDevHoursPerDay(data.devHoursPerDay);
-                if (data.qaHoursPerDay !== undefined) setQaHoursPerDay(data.qaHoursPerDay);
-                if (data.dateBlockers !== undefined) setDateBlockers(data.dateBlockers);
-                if (data.userRoles !== undefined) setUserRoles(data.userRoles);
+                applyData(snapshot.data());
               }
             } catch(e) {
                console.error("Error loading settings from Firebase:", e);
@@ -1111,7 +1135,7 @@
           };
           fetchSettings();
         }
-      }, [mappedWorkflows[0]?.listId, auth.currentUser, user?.isMock]);
+      }, [mappedWorkflows]);
 
       const handleMockClickUpData = () => {
         setTeams(MOCK_CLICKUP_DATA.teams);
@@ -1207,11 +1231,50 @@
                 if (savedToken === 'mock_token') {
                   setTeams(MOCK_CLICKUP_DATA.teams);
                   setClickUpToken(savedToken);
+                  
+                  // Auto-restore mock connection
+                  const savedConnection = localStorage.getItem('weaver_saved_connection');
+                  if (savedConnection) {
+                     const conn = JSON.parse(savedConnection);
+                     setMappedWorkflows([{...conn, tasks: MOCK_CLICKUP_DATA.tasks[conn.listId] || [], lastSynced: Date.now()}]);
+                     setIntegrationStep('idle');
+                  } else {
+                     setIntegrationStep('selecting');
+                  }
                   return;
                 }
                 const data = await fetchClickUp('team', savedToken);
                 setTeams(data.teams || []);
                 setClickUpToken(savedToken);
+                
+                // Auto-restore real connection & Fetch
+                const savedConnection = localStorage.getItem('weaver_saved_connection');
+                if (savedConnection) {
+                    const conn = JSON.parse(savedConnection);
+                    // Show UI immediately
+                    setMappedWorkflows([{...conn, tasks: [], lastSynced: Date.now()}]);
+                    setIntegrationStep('idle');
+                    
+                    // Fetch real tasks behind the scenes
+                    setIsAutoSyncing(true);
+                    try {
+                        let page = 0;
+                        let hasMore = true;
+                        let allFetchedTasks = [];
+                        while (hasMore) {
+                            const resData = await fetchClickUp(`list/${conn.listId}/task?subtasks=true&include_closed=true&page=${page}`, savedToken);
+                            const tasksChunk = resData.tasks || [];
+                            allFetchedTasks.push(...tasksChunk);
+                            if (tasksChunk.length === 100) page++;
+                            else hasMore = false;
+                        }
+                        setMappedWorkflows([{...conn, tasks: buildTaskTree(allFetchedTasks), lastSynced: Date.now()}]);
+                    } catch (err) {
+                        console.error("Failed to fetch initial tasks", err);
+                    } finally {
+                        setIsAutoSyncing(false);
+                    }
+                }
               } catch (err) {
                 console.warn('Saved ClickUp token is invalid or expired. Clearing...');
                 localStorage.removeItem('weaver_clickup_token');
@@ -1328,6 +1391,7 @@
           initialTasks = MOCK_CLICKUP_DATA.tasks[selectedList] || [];
         } else {
           try {
+            // Auto-Paginator: Fetch ALL tasks beyond the 100 item limit
             let page = 0;
             let hasMore = true;
             let allFetchedTasks = [];
@@ -1349,12 +1413,13 @@
           }
         }
 
+        // Reset settings locally before mapping new workflow
         setDevHoursPerDay(7);
         setQaHoursPerDay(7);
         setDateBlockers([]);
         setUserRoles({});
 
-        setMappedWorkflows([{
+        const newWorkflow = {
           id: Date.now().toString(),
           team: teamName,
           space: spaceName,
@@ -1365,7 +1430,13 @@
           listDueDate: listDueDate,
           tasks: initialTasks,
           lastSynced: Date.now()
-        }]);
+        };
+
+        // Replaces the existing workflow to switch the connection
+        setMappedWorkflows([newWorkflow]);
+        
+        // Save connection metadata for auto-restore (tasks excluded to save storage quota)
+        localStorage.setItem('weaver_saved_connection', JSON.stringify({ ...newWorkflow, tasks: [] }));
 
         setSelectedTeam('');
         setSelectedSpace('');
@@ -1377,8 +1448,10 @@
 
       const removeMapping = (id) => {
         setMappedWorkflows(mappedWorkflows.filter(w => w.id !== id));
+        localStorage.removeItem('weaver_saved_connection');
       };
 
+      // Simulated Auto-Sync Engine
       useEffect(() => {
         if (mappedWorkflows.length === 0) return;
 
@@ -1489,6 +1562,7 @@
         }
         
         localStorage.removeItem('weaver_clickup_token');
+        localStorage.removeItem('weaver_saved_connection');
         setClickUpToken('');
         setTeams([]);
         setMappedWorkflows([]);
