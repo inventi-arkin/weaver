@@ -2154,24 +2154,19 @@
         const spillOverEstHours = Math.round(spillOverEstMs / 3600000);
 
         // 5th Dataset: Advanced Bucket Utilization & Role Metrics
-        // Total estimates converted to generic days (Standard 8h ClickUp calculation)
-        const totalEstDays = plottedScopeEstHours / 8;
-        
-        const devDemandHours = totalEstDays * 0.8 * devHoursPerDay;
-        const qaDemandHours = totalEstDays * 0.2 * qaHoursPerDay;
-        
-        // Overall demand based on user rule using configured Developer hours
-        const totalDemandHours = totalEstDays * devHoursPerDay;
+        // Demand remains fixed as the absolute raw Estimated Hours (it does not shrink if devs work fewer hours!)
+        const devDemandHours = plottedScopeEstHours * 0.8;
+        const qaDemandHours = plottedScopeEstHours * 0.2;
+        const totalDemandHours = plottedScopeEstHours;
 
-        // Multiply by configured daily hours to convert the denominator's "Days" capacity into "Hours" for accurate percentage
-        // Leaves are strictly deducted from the specific role's total sprint capacity here
+        // Capacity fluctuates based on available resources, sprint days, and their specific daily hours
         const devCapacityHours = Math.max(0, (devCount * bucketDurationDays * devHoursPerDay) - (devLeaveDays * devHoursPerDay));
         const qaCapacityHours = Math.max(0, (qaCount * bucketDurationDays * qaHoursPerDay) - (qaLeaveDays * qaHoursPerDay));
 
         const devUtilPct = devCapacityHours > 0 ? Math.round((devDemandHours / devCapacityHours) * 100) : 0;
         const qaUtilPct = qaCapacityHours > 0 ? Math.round((qaDemandHours / qaCapacityHours) * 100) : 0;
         
-        // Updated Bucket Utilization
+        // Updated Bucket Utilization: Total Estimated Hours / Dev Capacity Hours
         const bucketUtilizationPct = devCapacityHours > 0 ? Math.round((totalDemandHours / devCapacityHours) * 100) : 0;
 
         const integrationUI = (
@@ -3066,7 +3061,7 @@
                   </div>
                 </div>
 
-                {/* 3. Utilization Section */}
+                {/* 4. Utilization Section */}
                 <div className="mb-8 animate-in fade-in">
                   <div className="flex items-center space-x-2 mb-4">
                       <Activity className="h-5 w-5 text-indigo-400 shrink-0" />
@@ -3084,7 +3079,7 @@
                           </div>
                           <h3 className="text-lg font-semibold text-white flex items-center gap-2">
                             Bucket Utilization
-                            <MetricTooltip align="left" position="top" text="Calculated based on developer capacity vs total scope demand." formula={`(Est Days × ${devHoursPerDay}h) ÷ ((Devs × Sprint Days × ${devHoursPerDay}h) - (Dev Leaves × ${devHoursPerDay}h)) × 100`}>
+                            <MetricTooltip align="left" position="top" text="Calculated based on developer capacity vs total scope demand." formula="Total Est Hours ÷ ((Devs × Sprint Days × Dev Hours) - Dev Leaves) × 100">
                               <InfoIcon className="h-4 w-4 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
                             </MetricTooltip>
                           </h3>
@@ -3107,7 +3102,12 @@
                         <div className="space-y-4">
                           <div>
                              <div className="flex justify-between items-center mb-1.5">
-                               <span className="text-xs font-medium text-slate-400">Developer Util (80% Demand)</span>
+                               <span className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
+                                 Developer Util (80% Demand)
+                                 <MetricTooltip align="left" position="top" text="Dev workload vs capacity." formula="(Total Est Hours × 80%) ÷ Dev Capacity">
+                                    <InfoIcon className="h-3 w-3 text-slate-500 cursor-help" />
+                                 </MetricTooltip>
+                               </span>
                                <span className="text-xs font-bold text-white">{devUtilPct}%</span>
                              </div>
                              <div className="w-full bg-slate-950 border border-white/5 rounded-full h-1.5 overflow-hidden shadow-inner">
@@ -3116,7 +3116,12 @@
                           </div>
                           <div>
                              <div className="flex justify-between items-center mb-1.5">
-                               <span className="text-xs font-medium text-slate-400">QA Util (20% Demand)</span>
+                               <span className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
+                                 QA Util (20% Demand)
+                                 <MetricTooltip align="left" position="top" text="QA workload vs capacity." formula="(Total Est Hours × 20%) ÷ QA Capacity">
+                                    <InfoIcon className="h-3 w-3 text-slate-500 cursor-help" />
+                                 </MetricTooltip>
+                               </span>
                                <span className="text-xs font-bold text-white">{qaUtilPct}%</span>
                              </div>
                              <div className="w-full bg-slate-950 border border-white/5 rounded-full h-1.5 overflow-hidden shadow-inner">
