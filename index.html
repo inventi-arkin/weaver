@@ -16,6 +16,7 @@
   <!-- Firebase Compat CDNs (Safe for direct static script execution) -->
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
 
   <style>
     /* Styling custom animations & custom scrollbar settings */
@@ -66,7 +67,9 @@
     // Initialize compat version
     firebase.initializeApp(firebaseConfig);
     const auth = firebase.auth();
+    const db = firebase.firestore();
     const googleProvider = new firebase.auth.GoogleAuthProvider();
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'weaver-default-app';
 
     // --- Inline Custom SVG Icons representing Lucide Specs ---
     const InfoIcon = ({ className }) => (
@@ -1060,6 +1063,8 @@
 
       // --- Capacity Settings State ---
       const [isBlockerModalOpen, setIsBlockerModalOpen] = useState(false);
+      const [devHoursPerDay, setDevHoursPerDay] = useState(7);
+      const [qaHoursPerDay, setQaHoursPerDay] = useState(7);
       const [dateBlockers, setDateBlockers] = useState([]);
       const [newBlockerDays, setNewBlockerDays] = useState(1);
       const [newBlockerRemark, setNewBlockerRemark] = useState('Holiday');
@@ -1093,6 +1098,43 @@
       const [selectedSpace, setSelectedSpace] = useState('');
       const [selectedFolder, setSelectedFolder] = useState('');
       const [selectedList, setSelectedList] = useState('');
+
+      // Firebase Settings Auto-Save & Auto-Load Logic
+      const saveSettings = async (updates) => {
+        if (!auth.currentUser || mappedWorkflows.length === 0 || user?.isMock) return;
+        const listId = mappedWorkflows[0].listId;
+        const uid = auth.currentUser.uid;
+        
+        try {
+          const docRef = db.collection('artifacts').doc(appId).collection('users').doc(uid).collection('listSettings').doc(listId);
+          await docRef.set(updates, { merge: true });
+        } catch(err) {
+          console.error('Error saving settings to Firebase:', err);
+        }
+      };
+
+      useEffect(() => {
+        if (mappedWorkflows.length > 0 && auth.currentUser && !user?.isMock) {
+          const listId = mappedWorkflows[0].listId;
+          const fetchSettings = async () => {
+            try {
+              const uid = auth.currentUser.uid;
+              const docRef = db.collection('artifacts').doc(appId).collection('users').doc(uid).collection('listSettings').doc(listId);
+              const snapshot = await docRef.get();
+              if (snapshot.exists) {
+                const data = snapshot.data();
+                if (data.devHoursPerDay !== undefined) setDevHoursPerDay(data.devHoursPerDay);
+                if (data.qaHoursPerDay !== undefined) setQaHoursPerDay(data.qaHoursPerDay);
+                if (data.dateBlockers !== undefined) setDateBlockers(data.dateBlockers);
+                if (data.userRoles !== undefined) setUserRoles(data.userRoles);
+              }
+            } catch(e) {
+               console.error("Error loading settings from Firebase:", e);
+            }
+          };
+          fetchSettings();
+        }
+      }, [mappedWorkflows[0]?.listId, auth.currentUser, user?.isMock]);
 
       const handleMockClickUpData = () => {
         setTeams(MOCK_CLICKUP_DATA.teams);
@@ -1348,6 +1390,12 @@
             console.error("Error fetching members for list", err);
           }
         }
+
+        // Reset settings locally before mapping new workflow
+        setDevHoursPerDay(7);
+        setQaHoursPerDay(7);
+        setDateBlockers([]);
+        setUserRoles({});
 
         // Replaces the existing workflow to switch the connection
         setMappedWorkflows([{
@@ -2112,21 +2160,21 @@
         // Total estimates converted to generic days (Standard 8h ClickUp calculation)
         const totalEstDays = plottedScopeEstHours / 8;
         
-        const devDemandHours = totalEstDays * 0.8 * 7;
-        const qaDemandHours = totalEstDays * 0.2 * 7;
+        const devDemandHours = totalEstDays * 0.8 * devHoursPerDay;
+        const qaDemandHours = totalEstDays * 0.2 * qaHoursPerDay;
         
-        // Overall demand based on user rule (Total Estimates * 7 hours)
-        const totalDemandHours = totalEstDays * 7;
+        // Overall demand based on user rule (Total Estimates * dynamic dev hours)
+        const totalDemandHours = totalEstDays * devHoursPerDay;
 
-        // Multiply by 7 hours to convert the denominator's "Days" capacity into "Hours" for accurate percentage
+        // Multiply by dynamic hours to convert the denominator's "Days" capacity into "Hours" for accurate percentage
         // Leaves are strictly deducted from the specific role's total sprint capacity here
-        const devCapacityHours = Math.max(0, (devCount * bucketDurationDays * 7) - (devLeaveDays * 7));
-        const qaCapacityHours = Math.max(0, (qaCount * bucketDurationDays * 7) - (qaLeaveDays * 7));
+        const devCapacityHours = Math.max(0, (devCount * bucketDurationDays * devHoursPerDay) - (devLeaveDays * devHoursPerDay));
+        const qaCapacityHours = Math.max(0, (qaCount * bucketDurationDays * qaHoursPerDay) - (qaLeaveDays * qaHoursPerDay));
 
         const devUtilPct = devCapacityHours > 0 ? Math.round((devDemandHours / devCapacityHours) * 100) : 0;
         const qaUtilPct = qaCapacityHours > 0 ? Math.round((qaDemandHours / qaCapacityHours) * 100) : 0;
         
-        // Updated Bucket Utilization: (Total Estimates * 7 hours) / ((Devs * Sprint Days * 7h) - (Dev Leaves * 7h)) * 100
+        // Updated Bucket Utilization: (Total Estimates * Dev Hours) / ((Devs * Sprint Days * Dev Hours) - (Dev Leaves * Dev Hours)) * 100
         const bucketUtilizationPct = devCapacityHours > 0 ? Math.round((totalDemandHours / devCapacityHours) * 100) : 0;
 
         const integrationUI = (
@@ -2374,15 +2422,55 @@
                 <div className="bg-slate-900 border border-white/10 rounded-2xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden animate-in slide-in-from-bottom-4">
                    <div className="flex items-center justify-between p-5 border-b border-white/5 bg-slate-900/50">
                      <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                        <Calendar className="w-5 h-5 text-indigo-400" />
-                        Sprint Capacity Settings
+                        <Settings className="w-5 h-5 text-indigo-400" />
+                        Capacity Settings
                      </h2>
                      <button onClick={() => setIsBlockerModalOpen(false)} className="p-1.5 rounded-lg text-slate-400 hover:bg-white/5 hover:text-white transition-colors">
                        <XIcon className="w-5 h-5" />
                      </button>
                    </div>
                    
-                   <div className="p-5 space-y-6">
+                   <div className="p-5 space-y-6 overflow-y-auto max-h-[80vh]">
+                     
+                     {/* Daily Working Hours Configuration */}
+                     <div className="bg-slate-950/40 p-4 rounded-xl border border-white/5 space-y-4">
+                        <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-2">
+                           <Clock className="w-3.5 h-3.5 text-indigo-400" /> Daily Working Hours
+                        </h3>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider font-semibold">Developers</label>
+                            <input 
+                              type="number" 
+                              min="1" 
+                              max="24"
+                              value={devHoursPerDay} 
+                              onChange={e => {
+                                const val = Number(e.target.value);
+                                setDevHoursPerDay(val);
+                                saveSettings({ devHoursPerDay: val });
+                              }} 
+                              className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-indigo-500" 
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider font-semibold">QA Resources</label>
+                            <input 
+                              type="number" 
+                              min="1" 
+                              max="24"
+                              value={qaHoursPerDay} 
+                              onChange={e => {
+                                const val = Number(e.target.value);
+                                setQaHoursPerDay(val);
+                                saveSettings({ qaHoursPerDay: val });
+                              }} 
+                              className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-indigo-500" 
+                            />
+                          </div>
+                        </div>
+                     </div>
+
                      <div className="space-y-3">
                        <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider flex items-center justify-between">
                          Active Blockers
@@ -2398,7 +2486,14 @@
                                    <span className="text-sm font-semibold text-slate-200">{b.remark} <span className="text-slate-400 font-normal">({b.days} day{b.days > 1 ? 's' : ''})</span></span>
                                    {b.remark === 'Leave' && <span className="text-xs text-indigo-400 font-medium mt-0.5">{b.assignee}</span>}
                                 </div>
-                                <button onClick={() => setDateBlockers(prev => prev.filter(x => x.id !== b.id))} className="text-slate-500 hover:text-red-400 p-1.5 rounded-md hover:bg-red-500/10 transition-colors">
+                                <button 
+                                  onClick={() => {
+                                    const newBlockers = dateBlockers.filter(x => x.id !== b.id);
+                                    setDateBlockers(newBlockers);
+                                    saveSettings({ dateBlockers: newBlockers });
+                                  }} 
+                                  className="text-slate-500 hover:text-red-400 p-1.5 rounded-md hover:bg-red-500/10 transition-colors"
+                                >
                                   <Trash2 className="w-4 h-4" />
                                 </button>
                              </li>
@@ -2448,12 +2543,15 @@
                         <button 
                           onClick={() => {
                             if (!newBlockerDays || newBlockerDays <= 0) return;
-                            setDateBlockers(prev => [...prev, {
+                            const newBlocker = {
                               id: Date.now().toString(),
                               days: parseInt(newBlockerDays),
                               remark: newBlockerRemark,
                               assignee: newBlockerRemark === 'Leave' ? (newBlockerAssignee || assigneesList[0]?.username) : null
-                            }]);
+                            };
+                            const newBlockers = [...dateBlockers, newBlocker];
+                            setDateBlockers(newBlockers);
+                            saveSettings({ dateBlockers: newBlockers });
                             setNewBlockerDays(1); // Reset day count for UX
                           }}
                           className="w-full flex items-center justify-center bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors shadow-sm"
@@ -3044,7 +3142,7 @@
                           </div>
                           <h3 className="text-lg font-semibold text-white flex items-center gap-2">
                             Bucket Utilization
-                            <MetricTooltip align="left" position="top" text="Calculated based on developer capacity vs total scope demand." formula="(Est Days × 7h) ÷ ((Devs × Sprint Days × 7h) - (Dev Leaves × 7h)) × 100">
+                            <MetricTooltip align="left" position="top" text="Calculated based on developer capacity vs total scope demand." formula={`(Est Days × ${devHoursPerDay}h) ÷ ((Devs × Sprint Days × ${devHoursPerDay}h) - (Dev Leaves × ${devHoursPerDay}h)) × 100`}>
                               <InfoIcon className="h-4 w-4 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
                             </MetricTooltip>
                           </h3>
@@ -3093,24 +3191,38 @@
                         <div className="space-y-4">
                           <h4 className="text-sm font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-2">
                             Capacity Limits
-                            <MetricTooltip align="center" position="top" text="Available resource limits for the sprint." formula="Resources = Unique Assignees. Duration = Working Days - (Holidays + Events). Click 'Sprint Days' to configure.">
+                            <MetricTooltip align="center" position="top" text="Available resource limits for the sprint." formula="Resources = Unique Assignees. Duration = Working Days - (Holidays + Events). Click any item below to configure.">
                               <InfoIcon className="h-3.5 w-3.5 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
                             </MetricTooltip>
                           </h4>
                           <div className="grid grid-cols-1 gap-3">
-                            <div className="bg-slate-950/30 p-3.5 rounded-xl border border-white/5 flex items-center justify-between transition-colors hover:bg-slate-900/60">
-                              <div className="flex items-center text-slate-300">
-                                <Users className="w-4 h-4 mr-2 text-blue-400" />
+                            <div 
+                              onClick={() => setIsBlockerModalOpen(true)}
+                              className="bg-slate-950/30 p-3.5 rounded-xl border border-white/5 flex items-center justify-between transition-colors hover:bg-slate-900/60 cursor-pointer group"
+                              title="Configure Capacity Settings"
+                            >
+                              <div className="flex items-center text-slate-300 group-hover:text-indigo-300 transition-colors">
+                                <Users className="w-4 h-4 mr-2 text-blue-400 group-hover:text-indigo-400" />
                                 <span className="text-sm">Developers</span>
                               </div>
-                              <span className="text-lg font-bold text-white">{devCount}</span>
+                              <span className="text-lg font-bold text-white flex items-center gap-2">
+                                {devCount}
+                                <Settings className="w-3.5 h-3.5 text-slate-500 group-hover:text-indigo-400 transition-colors" />
+                              </span>
                             </div>
-                            <div className="bg-slate-950/30 p-3.5 rounded-xl border border-white/5 flex items-center justify-between transition-colors hover:bg-slate-900/60">
-                              <div className="flex items-center text-slate-300">
-                                <Users className="w-4 h-4 mr-2 text-emerald-400" />
+                            <div 
+                              onClick={() => setIsBlockerModalOpen(true)}
+                              className="bg-slate-950/30 p-3.5 rounded-xl border border-white/5 flex items-center justify-between transition-colors hover:bg-slate-900/60 cursor-pointer group"
+                              title="Configure Capacity Settings"
+                            >
+                              <div className="flex items-center text-slate-300 group-hover:text-indigo-300 transition-colors">
+                                <Users className="w-4 h-4 mr-2 text-emerald-400 group-hover:text-indigo-400" />
                                 <span className="text-sm">QA Resources</span>
                               </div>
-                              <span className="text-lg font-bold text-white">{qaCount}</span>
+                              <span className="text-lg font-bold text-white flex items-center gap-2">
+                                {qaCount}
+                                <Settings className="w-3.5 h-3.5 text-slate-500 group-hover:text-indigo-400 transition-colors" />
+                              </span>
                             </div>
                             <div 
                               onClick={() => setIsBlockerModalOpen(true)}
@@ -3199,7 +3311,14 @@
                                 </div>
                                 <select
                                   value={userRoles[assignee.username] || 'Developer'}
-                                  onChange={(e) => setUserRoles(prev => ({...prev, [assignee.username]: e.target.value}))}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setUserRoles(prev => {
+                                      const nextRoles = {...prev, [assignee.username]: val};
+                                      saveSettings({ userRoles: nextRoles });
+                                      return nextRoles;
+                                    });
+                                  }}
                                   className="bg-slate-950 border border-white/10 text-indigo-300 text-[11px] font-semibold tracking-wide uppercase rounded-lg px-2.5 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-sm cursor-pointer"
                                 >
                                   <option value="Developer">Developer</option>
