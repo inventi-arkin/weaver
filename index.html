@@ -1685,7 +1685,7 @@
         const applyLedger = (tasks) => {
           return tasks.map(t => {
             const ledgerEntries = localTimeLedger[t.id];
-            const addedTime = ledgerEntries ? ledgerEntries.reduce((sum, e) => sum + e.duration, 0) : 0;
+            const addedTime = Array.isArray(ledgerEntries) ? ledgerEntries.reduce((sum, e) => sum + e.duration, 0) : 0;
             return {
               ...t,
               time_spent: (parseInt(t.time_spent) || 0) + addedTime,
