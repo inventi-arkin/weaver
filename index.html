@@ -151,10 +151,10 @@
     const extractBugs = (tasks, inBugContext = false) => {
       let bugs = [];
       tasks.forEach(t => {
-          const taskNameLower = t.name.toLowerCase();
+          const taskNameLower = (t.name || '').toLowerCase();
           const isBugContainer = taskNameLower.includes('qa bugs') || taskNameLower.includes('ui bugs');
           const isContext = inBugContext || isBugContainer;
-          const hasBugTag = t.tags?.some(tag => ['bug', 'defect'].includes(tag.name.toLowerCase()));
+          const hasBugTag = t.tags?.some(tag => ['bug', 'defect'].includes((tag.name || '').toLowerCase()));
           
           if ((isContext && !isBugContainer) || hasBugTag) {
               if (!bugs.find(b => b.id === t.id)) bugs.push(t);
@@ -1031,7 +1031,7 @@
         const spillOverTasks = filteredMotherTasks.filter(t => {
             if (['closed', 'complete', 'done', 'resolved'].includes(t.status?.status?.toLowerCase())) return false;
             if (t.due_date && parseInt(t.due_date) < Date.now()) return true;
-            if (t.tags?.some(tag => tag.name.toLowerCase().includes('spill over'))) return true;
+            if (t.tags?.some(tag => (tag.name || '').toLowerCase().includes('spill over'))) return true;
             return false;
         });
         const spillOverCount = spillOverTasks.length;
@@ -1621,8 +1621,8 @@
                             <div>
                               <div className="flex items-start justify-between mb-4">
                                 <div className="flex items-center space-x-3">
-                                  <div className="w-10 h-10 rounded-full border border-white/10 flex items-center justify-center font-bold text-slate-900 bg-[#c4f1a4]" style={{ backgroundColor: assignee.profilePicture.includes('ui-avatars') ? assignee.profilePicture.split('background=')[1]?.substring(0,6) ? `#${assignee.profilePicture.split('background=')[1]?.substring(0,6)}` : '#c4f1a4' : 'transparent', backgroundImage: assignee.profilePicture.includes('ui-avatars') ? 'none' : `url(${assignee.profilePicture})`, backgroundSize: 'cover' }}>
-                                      {assignee.profilePicture.includes('ui-avatars') && assignee.username.substring(0,2).toUpperCase()}
+                                  <div className="w-10 h-10 rounded-full border border-white/10 flex items-center justify-center font-bold text-slate-900 bg-[#c4f1a4]" style={{ backgroundColor: (assignee.profilePicture || '').includes('ui-avatars') ? assignee.profilePicture.split('background=')[1]?.substring(0,6) ? `#${assignee.profilePicture.split('background=')[1]?.substring(0,6)}` : '#c4f1a4' : 'transparent', backgroundImage: (assignee.profilePicture || '').includes('ui-avatars') ? 'none' : `url(${assignee.profilePicture})`, backgroundSize: 'cover' }}>
+                                      {(!assignee.profilePicture || (assignee.profilePicture || '').includes('ui-avatars')) && (assignee.username || 'U').substring(0,2).toUpperCase()}
                                   </div>
                                   <div>
                                     <h3 className="text-md font-bold text-white">{assignee.username}</h3>
@@ -1708,8 +1708,8 @@
                                 <div className="flex items-center text-xs text-slate-500 ml-4"><ClockAlert className="h-3 w-3 mr-1 text-amber-500" /> Elapsed: {daysOld}d / Est: {estimatedHours}h</div>
                               </div>
                               {task.assignees && task.assignees.length > 0 ? (
-                                <div className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-slate-900 bg-[#ffb4b4] text-xs" style={{ backgroundImage: task.assignees[0].profilePicture.includes('ui-avatars') ? 'none' : `url(${task.assignees[0].profilePicture})`, backgroundSize: 'cover' }}>
-                                    {task.assignees[0].profilePicture.includes('ui-avatars') && task.assignees[0].username.substring(0,2).toUpperCase()}
+                                <div className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-slate-900 bg-[#ffb4b4] text-xs" style={{ backgroundImage: (task.assignees[0].profilePicture || '').includes('ui-avatars') ? 'none' : `url(${task.assignees[0].profilePicture})`, backgroundSize: 'cover' }}>
+                                    {(!task.assignees[0].profilePicture || (task.assignees[0].profilePicture || '').includes('ui-avatars')) && (task.assignees[0].username || 'U').substring(0,2).toUpperCase()}
                                 </div>
                               ) : (<div className="flex items-center justify-center w-8 h-8 rounded-full bg-[#0f172a] text-slate-500"><Users className="h-3 w-3" /></div>)}
                             </li>
