@@ -42,9 +42,14 @@
     .animate-spin-slow {
       animation: spin-slow 12s linear infinite;
     }
+
+    /* Restored premium dark theme background */
+    body {
+      background-color: #020617; /* slate-950 */
+    }
   </style>
 </head>
-<body class="bg-slate-950 text-slate-100 overflow-x-hidden min-h-screen selection:bg-indigo-500/30 selection:text-indigo-200">
+<body class="text-slate-100 overflow-x-hidden min-h-screen selection:bg-indigo-500/30 selection:text-indigo-200">
 
   <!-- Root mount point for React app -->
   <div id="root"></div>
@@ -65,7 +70,9 @@
     };
 
     // Initialize compat version
-    firebase.initializeApp(firebaseConfig);
+    if (!firebase.apps.length) {
+      firebase.initializeApp(firebaseConfig);
+    }
     const auth = firebase.auth();
     const db = firebase.firestore();
     const googleProvider = new firebase.auth.GoogleAuthProvider();
@@ -922,7 +929,7 @@
       return (
         <div className={`transition-all overflow-hidden ${
           isParent 
-            ? 'bg-slate-950/30 border border-white/5 rounded-xl shadow-inner hover:border-indigo-500/20' 
+            ? 'bg-[#0f172a] border border-[#1e293b] rounded-xl shadow-inner hover:border-indigo-500/30' 
             : 'bg-slate-900/10 rounded-r-lg border-l-2'
         }`}
         style={!isParent ? { borderLeftColor: `${themeColor}40` } : {}}
@@ -1027,7 +1034,7 @@
                         key={i} 
                         src={assignee.profilePicture || `https://ui-avatars.com/api/?name=${encodeURIComponent(assignee.username)}&background=random`} 
                         alt={assignee.username} 
-                        className="w-6 h-6 rounded-full border border-slate-900 bg-slate-800 object-cover" 
+                        className="w-6 h-6 rounded-full border border-[#0f172a] bg-slate-800 object-cover" 
                         title={`Assigned to ${assignee.username}`} 
                       />
                     ))}
@@ -1043,7 +1050,7 @@
 
           {/* Recursive Nested Subtasks Container */}
           {isExpanded && hasSubtasks && (
-            <div className="bg-slate-950/40 border-t border-white/5 p-3 space-y-2 animate-in slide-in-from-top-2 duration-200 ml-4 pl-3 border-l border-dashed border-white/10">
+            <div className="bg-[#0b1120] border-t border-[#1e293b] p-3 space-y-2 animate-in slide-in-from-top-2 duration-200 ml-4 pl-3 border-l border-dashed">
               {relevantSubtasks.map(sub => (
                 <TaskItem 
                   key={sub.id} 
@@ -1100,6 +1107,10 @@
       const [timeDate, setTimeDate] = useState(new Date().toISOString().split('T')[0]);
       const [timeNotes, setTimeNotes] = useState('');
       const [timeAssignee, setTimeAssignee] = useState('me');
+
+      // --- The Unsynced Time Ledger ---
+      // Stores time entries that failed to sync to ClickUp so they persist locally
+      const [localTimeLedger, setLocalTimeLedger] = useState({});
 
       // Interactive Ticket Modal State
       const [selectedTicketForModal, setSelectedTicketForModal] = useState(null);
@@ -1178,6 +1189,7 @@
           setQaHoursPerDay(settingsData.qaHoursPerDay !== undefined ? settingsData.qaHoursPerDay : 7);
           setDateBlockers(settingsData.dateBlockers || []);
           setUserRoles(settingsData.userRoles || {});
+          setLocalTimeLedger(settingsData.localTimeLedger || {});
         };
         fetchSettings();
       }, [mappedWorkflows[0]?.listId, auth.currentUser, user?.isMock]);
@@ -1484,34 +1496,48 @@
 
         const teamId = mappedWorkflows[0]?.teamId || teams.find(t => t.name === mappedWorkflows[0]?.team)?.id;
 
+        let syncFailed = false;
+
         if (clickUpToken !== 'mock_token') {
             if (!teamId) {
               alert("Workspace ID missing. Please click 'Switch Connection' to quickly reconnect your ClickUp list to refresh the mapping data.");
-              return;
-            }
-            try {
-              const payload = {
-                  start: startMs,
-                  duration: durationMs,
-                  tid: timeTrackModalTask.id,
-                  description: timeNotes
-              };
-              if (timeAssignee && timeAssignee !== 'me') {
-                  const parsedAssignee = parseInt(timeAssignee);
-                  if (!isNaN(parsedAssignee)) {
-                      payload.assignee = parsedAssignee;
-                  }
+              syncFailed = true;
+            } else {
+              try {
+                const payload = {
+                    start: startMs,
+                    duration: durationMs,
+                    tid: timeTrackModalTask.id,
+                    description: timeNotes
+                };
+                if (timeAssignee && timeAssignee !== 'me') {
+                    const parsedAssignee = parseInt(timeAssignee);
+                    if (!isNaN(parsedAssignee)) {
+                        payload.assignee = parsedAssignee;
+                    }
+                }
+                // ClickUp Time Tracking API 2.0
+                await fetchClickUp(`team/${teamId}/time_entries`, clickUpToken, 'POST', payload);
+              } catch (err) {
+                console.warn("Failed to log time to ClickUp API. Saving to local ledger.", err);
+                syncFailed = true;
               }
-              // ClickUp Time Tracking API 2.0
-              await fetchClickUp(`team/${teamId}/time_entries`, clickUpToken, 'POST', payload);
-            } catch (err) {
-              console.error("Failed to log time to ClickUp", err);
-              alert("Failed to sync time with ClickUp. " + err.message);
-              return; // Halt local update if the API fails
             }
+        } else {
+            syncFailed = true; // Always use local ledger in mock mode
         }
 
-        // Local Optimistic Update
+        // 1. If Sync Failed, save to persistent local ledger
+        if (syncFailed) {
+            const updatedLedger = {
+                ...localTimeLedger,
+                [timeTrackModalTask.id]: (localTimeLedger[timeTrackModalTask.id] || 0) + durationMs
+            };
+            setLocalTimeLedger(updatedLedger);
+            saveSettings({ localTimeLedger: updatedLedger });
+        }
+
+        // 2. Immediate Optimistic UI Update (always happens so UI feels fast)
         setMappedWorkflows(prev => prev.map(wf => {
             const updateTree = (tasks) => {
                 return tasks.map(t => {
@@ -1569,6 +1595,24 @@
                 console.error(`Error syncing tasks for list ${workflow.listId}`, err);
               }
             }
+
+            // --- Apply Unsynced Local Ledger ---
+            // Crucial: Mathmatically inject local unsynced time on top of whatever ClickUp returned
+            // so manual entries survive the auto-refresh cycle.
+            const applyLedger = (tasks) => {
+                return tasks.map(t => {
+                    let taskWithLedger = { ...t };
+                    if (localTimeLedger[t.id]) {
+                        taskWithLedger.time_spent = (parseInt(taskWithLedger.time_spent) || 0) + localTimeLedger[t.id];
+                    }
+                    if (taskWithLedger.subtasks && taskWithLedger.subtasks.length > 0) {
+                        taskWithLedger.subtasks = applyLedger(taskWithLedger.subtasks);
+                    }
+                    return taskWithLedger;
+                });
+            };
+
+            updatedTasks = applyLedger(updatedTasks);
             
             return {
               ...workflow,
@@ -1655,7 +1699,7 @@
 
       if (!authInitialized) {
         return (
-          <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+          <div className="min-h-screen bg-[#020617] flex items-center justify-center">
             <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
           </div>
         );
@@ -1877,7 +1921,6 @@
             const isDone = ['closed', 'complete', 'done', 'resolved'].includes(statusName);
             
             // 1. If it's an ACTIVE task, we can measure how long it has been in its current status!
-            // This guarantees we get specific active status durations even if ClickUp doesn't return history!
             if (!isDone && !excludedStatusesForAccuracy.includes(statusName)) {
                 const lastUpdated = t.date_updated ? parseDateMs(t.date_updated) : (t.date_created ? parseDateMs(t.date_created) : Date.now());
                 const timeInCurrent = Math.max(0, Date.now() - lastUpdated);
@@ -1896,7 +1939,6 @@
                 let actualRunningMs = 0;
                 let parsedTimeInStatus = {};
 
-                // A. Process from Activity Logs (Most accurate movement history if available)
                 if (t.activity_logs && Array.isArray(t.activity_logs) && t.activity_logs.length > 0) {
                     const statusLogs = t.activity_logs
                         .filter(log => log.field === 'status')
@@ -1916,7 +1958,6 @@
                             lastDate = changeDate;
                         });
 
-                        // Add final duration until closed
                         if (t.date_closed && lastDate > 0) {
                             const closedDate = parseDateMs(t.date_closed);
                             if (closedDate >= lastDate) {
@@ -1926,7 +1967,6 @@
                         }
                     }
                 } 
-                // B. Fallback to API's pre-calculated time_in_status if no logs available
                 if (Object.keys(parsedTimeInStatus).length === 0 && t.time_in_status) {
                     if (Array.isArray(t.time_in_status)) {
                         t.time_in_status.forEach(item => {
@@ -1941,35 +1981,24 @@
                     }
                 }
 
-                // C. Populate Historical Stats
                 if (Object.keys(parsedTimeInStatus).length > 0) {
                     Object.entries(parsedTimeInStatus).forEach(([statusStr, durationMs]) => {
                         const cleanStatus = statusStr.toLowerCase();
-                        
-                        // Always exclude done/completed and initial open states from the visual breakdown list
                         if (!excludedStatusesForAccuracy.includes(cleanStatus)) {
                             if (!timeInStatusStats[cleanStatus]) {
                                 timeInStatusStats[cleanStatus] = { sum: 0, count: 0 };
                             }
                             timeInStatusStats[cleanStatus].sum += durationMs;
                             timeInStatusStats[cleanStatus].count++;
-                            
-                            // Sum active statuses for the actual running time (excluding done/holding statuses)
                             actualRunningMs += durationMs;
                         }
                     });
                 } else {
-                    // D. Robust fallback using ClickUp's core timestamp fields if history isn't provided
                     const end_date = t.date_closed ? parseDateMs(t.date_closed) : (t.date_updated ? parseDateMs(t.date_updated) : Date.now());
                     const start_date = t.start_date ? parseDateMs(t.start_date) : (t.date_created ? parseDateMs(t.date_created) : end_date);
-                    const fallbackDuration = Math.max(0, end_date - start_date);
-                    
-                    // We purposefully do NOT bucket this generic time into a "Total Resolution" label anymore.
-                    // This prevents generic/fake labels from cluttering the specific status timeframe list.
-                    actualRunningMs = fallbackDuration;
+                    actualRunningMs = Math.max(0, end_date - start_date);
                 }
 
-                // Only measure overall accuracy for tasks that are complete, have an estimate, and recorded active time
                 const estimateMs = t.time_estimate ? parseDateMs(t.time_estimate) : 0;
                 if (actualRunningMs > 0 && estimateMs > 0) {
                     totalEstForAccuracyMs += estimateMs;
@@ -1980,9 +2009,8 @@
 
         let estimationAccuracyDisplay = "N/A";
         if (totalEstForAccuracyMs > 0) {
-            // Error ratio = absolute difference / expected estimate
             const error = Math.abs(totalActualForAccuracyMs - totalEstForAccuracyMs) / totalEstForAccuracyMs;
-            const accuracy = Math.max(0, Math.round((1 - error) * 100)); // Prevents going below 0% accuracy
+            const accuracy = Math.max(0, Math.round((1 - error) * 100)); 
             estimationAccuracyDisplay = `${accuracy}%`;
         }
 
@@ -2011,20 +2039,15 @@
             const nameLower = t.name.toLowerCase();
             const statusLower = t.status?.status?.toLowerCase() || '';
             
-            // Exclude specific container tasks
             if (nameLower === 'ui bugs' || nameLower === 'qa bugs') return false;
-            
-            // Exclude closed/done and sprint backlog tasks
             if (['closed', 'complete', 'done', 'resolved', 'sprint backlog'].includes(statusLower)) return false;
             
-            // Include specific active development statuses
             const isActiveStatus = ['ongoing dev', 'in progress', 'open', 'review'].includes(statusLower);
             
             if (isActiveStatus) {
               const createdDate = parseInt(t.date_created);
               const estimateMs = parseInt(t.time_estimate);
               
-              // Stalled if duration since creation exceeds estimated time
               if (createdDate && estimateMs > 0) {
                 const durationMs = Date.now() - createdDate;
                 if (durationMs > estimateMs) {
@@ -2055,17 +2078,14 @@
         let minDate = Infinity;
         let maxDate = 0;
 
-        // 1. Prioritize List boundaries if defined
         mappedWorkflows.forEach(wf => {
           if (wf.listStartDate) minDate = Math.min(minDate, parseInt(wf.listStartDate));
           if (wf.listDueDate) maxDate = Math.max(maxDate, parseInt(wf.listDueDate));
         });
 
-        // 2. Fallback to task-level bounds
         if (minDate === Infinity) minDate = taskMinDate;
         if (maxDate === 0) maxDate = taskMaxDate;
 
-        // 3. Fallback to dynamic window if absolutely no dates exist
         const now = Date.now();
         if (minDate === Infinity) minDate = now - (7 * 86400000);
         if (maxDate === 0) maxDate = now + (7 * 86400000);
@@ -2101,8 +2121,6 @@
         const linePointsString = burndownPointsData.map(p => `${p[0]},${p[1]}`).join(' ');
         const polygonPointsString = `0,100 ${linePointsString} ${currentX},100 0,100`;
 
-        // --- Recursive Tree Filtering Engine ---
-        // This securely trims the nested tree without flattening it, preserving parent context.
         const checkGlobalFilter = (t) => {
             if (completionFilterType === 'none') return true;
             if (completionFilterType === 'tags' && selectedTagFilter) {
@@ -2118,17 +2136,14 @@
             let result = [];
             tasks.forEach(task => {
                 const isDone = ['closed', 'complete', 'done', 'resolved'].includes(task.status?.status?.toLowerCase());
-                // Determine if this exact task matches our target state (Active vs Completed)
                 const matchesMode = isDoneMode ? isDone : !isDone;
                 const matchesFilter = checkGlobalFilter(task);
                 
-                // Recursively dig into subtasks
                 let filteredSubtasks = [];
                 if (task.subtasks && task.subtasks.length > 0) {
                     filteredSubtasks = buildFilteredTree(task.subtasks, isDoneMode);
                 }
 
-                // Keep this task IF it matches directly OR if it acts as a mother/container for a matching subtask!
                 if ((matchesMode && matchesFilter) || filteredSubtasks.length > 0) {
                     result.push({
                         ...task,
@@ -2142,11 +2157,9 @@
         // Team Workload Math & Role Extraction
         const assigneeStats = {};
         
-        // Tally up workload ONLY based on the dynamically FILTERED tasks
         filteredTasks.forEach(task => {
           if (task.assignees && task.assignees.length > 0) {
             task.assignees.forEach(assignee => {
-              // Skip if filtering by specific assignee
               if (completionFilterType === 'assignees' && selectedAssigneeFilter && assignee.username !== selectedAssigneeFilter) {
                 return;
               }
@@ -2187,7 +2200,6 @@
           }
         });
 
-        // Purge hidden assignees ONLY if the Assignee Filter itself is turned on
         let assigneesList = Object.values(assigneeStats);
         if (completionFilterType === 'assignees' && selectedAssigneeFilter) {
             assigneesList = assigneesList.filter(a => a.username === selectedAssigneeFilter);
@@ -2198,7 +2210,6 @@
         const devCount = assigneesList.filter(a => (userRoles[a.username] || 'Developer') === 'Developer').length;
         const qaCount = assigneesList.filter(a => (userRoles[a.username] || 'Developer') === 'QA').length;
         
-        // Calculate working days only (excluding Saturdays and Sundays)
         const start = new Date(minDate);
         start.setHours(0, 0, 0, 0);
         const end = new Date(maxDate);
@@ -2208,13 +2219,12 @@
         let current = new Date(start);
         while (current < end) {
             const day = current.getDay();
-            if (day !== 0 && day !== 6) { // 0 = Sunday, 6 = Saturday
+            if (day !== 0 && day !== 6) { 
                 workingDaysCount++;
             }
             current.setDate(current.getDate() + 1);
         }
         
-        // --- Dynamic Date Blocker Engine ---
         let globalBlockerDays = 0;
         let devLeaveDays = 0;
         let qaLeaveDays = 0;
@@ -2229,10 +2239,8 @@
             }
         });
 
-        // Sprint Days are now working days strictly minus Global Blockers (Holidays/Events)
         const bucketDurationDays = Math.max(0, workingDaysCount - globalBlockerDays); 
         
-        // Mother Tasks Extraction (Top-level tasks only, excluding bug containers)
         const allMotherTasks = mappedWorkflows.flatMap(wf => wf.tasks || []).filter(t => {
             const n = t.name?.toLowerCase() || '';
             return !n.includes('qa bugs') && !n.includes('ui bugs');
@@ -2244,22 +2252,18 @@
           filteredMotherTasks = allMotherTasks.filter(t => t.assignees?.some(a => a.username === selectedAssigneeFilter));
         }
 
-        // 2nd Dataset: Plotted Scope
         const plottedScopeCount = filteredMotherTasks.length;
         const plottedScopeEstMs = filteredMotherTasks.reduce((sum, t) => sum + (parseInt(t.time_estimate) || 0), 0);
         const plottedScopeEstHours = Math.round(plottedScopeEstMs / 3600000);
 
-        // 3rd Dataset: Completed Mother Tasks
         const completedMotherTasks = filteredMotherTasks.filter(t => ['closed', 'complete', 'done', 'resolved'].includes(t.status?.status?.toLowerCase()));
         const completedMotherCount = completedMotherTasks.length;
         const completedMotherEstMs = completedMotherTasks.reduce((sum, t) => sum + (parseInt(t.time_estimate) || 0), 0);
         const completedMotherEstHours = Math.round(completedMotherEstMs / 3600000);
 
-        // 4th Dataset: Spill Over Mother Tasks
         const spillOverTasks = filteredMotherTasks.filter(t => {
             const isDone = ['closed', 'complete', 'done', 'resolved'].includes(t.status?.status?.toLowerCase());
             if (isDone) return false;
-            // Evaluates as Spill Over if due date has passed or explicitly tagged
             if (t.due_date && parseInt(t.due_date) < Date.now()) return true;
             if (t.tags?.some(tag => tag.name.toLowerCase().includes('spill over'))) return true;
             return false;
@@ -2268,26 +2272,22 @@
         const spillOverEstMs = spillOverTasks.reduce((sum, t) => sum + (parseInt(t.time_estimate) || 0), 0);
         const spillOverEstHours = Math.round(spillOverEstMs / 3600000);
 
-        // 5th Dataset: Advanced Bucket Utilization & Role Metrics
-        // Demand remains fixed as the absolute raw Estimated Hours (it does not shrink if devs work fewer hours!)
         const devDemandHours = plottedScopeEstHours * 0.8;
         const qaDemandHours = plottedScopeEstHours * 0.2;
         const totalDemandHours = plottedScopeEstHours;
 
-        // Capacity fluctuates based on available resources, sprint days, and their specific daily hours
         const devCapacityHours = Math.max(0, (devCount * bucketDurationDays * devHoursPerDay) - (devLeaveDays * devHoursPerDay));
         const qaCapacityHours = Math.max(0, (qaCount * bucketDurationDays * qaHoursPerDay) - (qaLeaveDays * qaHoursPerDay));
 
         const devUtilPct = devCapacityHours > 0 ? Math.round((devDemandHours / devCapacityHours) * 100) : 0;
         const qaUtilPct = qaCapacityHours > 0 ? Math.round((qaDemandHours / qaCapacityHours) * 100) : 0;
         
-        // Updated Bucket Utilization: Total Estimated Hours / Dev Capacity Hours
         const bucketUtilizationPct = devCapacityHours > 0 ? Math.round((totalDemandHours / devCapacityHours) * 100) : 0;
 
         const integrationUI = (
           <div className="animate-in fade-in duration-500 w-full">
             {integrationStep === 'idle' && mappedWorkflows.length === 0 && (
-              <div className="bg-slate-900/40 backdrop-blur-md rounded-xl border border-white/10 shadow-2xl overflow-hidden flex flex-col md:flex-row items-center justify-between p-8">
+              <div className="bg-[#0b1120] rounded-2xl border border-[#1e293b] shadow-2xl overflow-hidden flex flex-col md:flex-row items-center justify-between p-8">
                 <div className="mb-4 md:mb-0">
                   <h2 className="text-lg font-semibold text-white">Connect your ticketing system</h2>
                   <p className="text-slate-400 mt-1 max-w-xl">To start weaving, connect Weaver to ClickUp. This allows us to automatically sync your support tickets with your development tasks.</p>
@@ -2306,7 +2306,7 @@
             )}
 
             {integrationStep === 'entering_token' && (
-              <div className="bg-slate-900/40 backdrop-blur-md rounded-xl border border-white/10 shadow-2xl p-8 animate-in fade-in slide-in-from-bottom-4">
+              <div className="bg-[#0b1120] rounded-2xl border border-[#1e293b] shadow-2xl p-8 animate-in fade-in slide-in-from-bottom-4">
                 <div className="flex items-center mb-6">
                   <div className="bg-indigo-500/10 p-2.5 rounded-lg mr-4 border border-indigo-500/20">
                     <Key className="h-6 w-6 text-indigo-400" />
@@ -2324,7 +2324,7 @@
                       value={tempToken} 
                       onChange={(e) => setTempToken(e.target.value)}
                       placeholder="pk_123456789_..."
-                      className="w-full bg-slate-950/60 border border-slate-700/60 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 font-mono text-sm"
+                      className="w-full bg-[#0f172a] border border-[#1e293b] rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 font-mono text-sm"
                     />
                     <p className="text-xs text-slate-500 mt-2">
                       You can generate this in ClickUp by clicking your Avatar &gt; Settings &gt; Apps.
@@ -2369,7 +2369,7 @@
             )}
 
             {integrationStep === 'connecting' && (
-              <div className="bg-slate-900/40 backdrop-blur-md rounded-xl border border-white/10 shadow-2xl p-12 flex flex-col items-center justify-center text-center animate-in fade-in">
+              <div className="bg-[#0b1120] rounded-2xl border border-[#1e293b] shadow-2xl p-12 flex flex-col items-center justify-center text-center animate-in fade-in">
                 <RefreshCw className="h-8 w-8 text-indigo-400 animate-spin mb-4" />
                 <h3 className="text-lg font-semibold text-white">Authenticating with ClickUp</h3>
                 <p className="text-slate-400 mt-2 max-w-md">Securely connecting and fetching your hierarchy. Please wait...</p>
@@ -2377,7 +2377,7 @@
             )}
 
             {integrationStep === 'selecting' && (
-              <div className="bg-slate-900/40 backdrop-blur-md rounded-xl border border-indigo-500/20 shadow-2xl overflow-hidden animate-in fade-in slide-in-from-bottom-4">
+              <div className="bg-[#0b1120] rounded-2xl border border-indigo-500/20 shadow-2xl overflow-hidden animate-in fade-in slide-in-from-bottom-4">
                 <div className="bg-indigo-500/10 px-6 py-4 border-b border-indigo-500/20 flex items-center">
                   <div className="bg-indigo-600 p-1.5 rounded-md mr-3 shadow-md">
                     <svg viewBox="0 0 100 100" className="h-5 w-5 text-white" fill="currentColor">
@@ -2407,11 +2407,11 @@
                         setSelectedFolder(''); 
                         setSelectedList(''); 
                       }}
-                      className="w-full bg-slate-950/60 border border-slate-700/60 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                      className="w-full bg-[#0f172a] border border-[#1e293b] rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                     >
-                      <option value="" className="bg-slate-900 text-slate-300">-- Choose a Workspace --</option>
+                      <option value="" className="text-slate-300">-- Choose a Workspace --</option>
                       {teams.map(team => (
-                        <option key={team.id} value={team.id} className="bg-slate-900 text-white">{team.name}</option>
+                        <option key={team.id} value={team.id} className="text-white">{team.name}</option>
                       ))}
                     </select>
                   </div>
@@ -2426,11 +2426,11 @@
                           setSelectedFolder(''); 
                           setSelectedList(''); 
                         }}
-                        className="w-full bg-slate-950/60 border border-slate-700/60 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                        className="w-full bg-[#0f172a] border border-[#1e293b] rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                       >
-                        <option value="" className="bg-slate-900 text-slate-300">-- Choose a Space --</option>
+                        <option value="" className="text-slate-300">-- Choose a Space --</option>
                         {spaces.map(space => (
-                          <option key={space.id} value={space.id} className="bg-slate-900 text-white">{space.name}</option>
+                          <option key={space.id} value={space.id} className="text-white">{space.name}</option>
                         ))}
                       </select>
                     </div>
@@ -2445,11 +2445,11 @@
                           setSelectedFolder(e.target.value); 
                           setSelectedList(''); 
                         }}
-                        className="w-full bg-slate-950/60 border border-slate-700/60 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                        className="w-full bg-[#0f172a] border border-[#1e293b] rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                       >
-                        <option value="" className="bg-slate-900 text-slate-300">-- Folderless / Direct to Space --</option>
+                        <option value="" className="text-slate-300">-- Folderless / Direct to Space --</option>
                         {folders.map(folder => (
-                          <option key={folder.id} value={folder.id} className="bg-slate-900 text-white">{folder.name}</option>
+                          <option key={folder.id} value={folder.id} className="text-white">{folder.name}</option>
                         ))}
                       </select>
                     </div>
@@ -2461,11 +2461,11 @@
                       <select 
                         value={selectedList} 
                         onChange={(e) => setSelectedList(e.target.value)}
-                        className="w-full bg-slate-950/60 border border-slate-700/60 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                        className="w-full bg-[#0f172a] border border-[#1e293b] rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                       >
-                        <option value="" className="bg-slate-900 text-slate-300">-- Choose a List --</option>
+                        <option value="" className="text-slate-300">-- Choose a List --</option>
                         {availableLists.map(list => (
-                          <option key={list.id} value={list.id} className="bg-slate-900 text-white">{list.name}</option>
+                          <option key={list.id} value={list.id} className="text-white">{list.name}</option>
                         ))}
                       </select>
                       {availableLists.length === 0 && (
@@ -2474,7 +2474,7 @@
                     </div>
                   )}
 
-                  <div className="pt-4 flex items-center justify-end space-x-3 border-t border-white/5">
+                  <div className="pt-4 flex items-center justify-end space-x-3 border-t border-[#1e293b]">
                     <button 
                       onClick={() => {
                         setIntegrationStep('idle');
@@ -2504,7 +2504,7 @@
         );
 
         return (
-          <div className="min-h-screen bg-slate-950 font-sans text-slate-100 relative">
+          <div className="min-h-screen font-sans text-slate-100 relative">
             <WebNestBackground opacity={0.35} />
 
             {/* Switch Connection Modal Overlay */}
@@ -2526,8 +2526,8 @@
             {/* Capacity Settings Blocker Modal */}
             {isBlockerModalOpen && (
               <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
-                <div className="bg-slate-900 border border-white/10 rounded-2xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden animate-in slide-in-from-bottom-4">
-                   <div className="flex items-center justify-between p-5 border-b border-white/5 bg-slate-900/50">
+                <div className="bg-[#0b1120] border border-[#1e293b] rounded-2xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden animate-in slide-in-from-bottom-4">
+                   <div className="flex items-center justify-between p-5 border-b border-[#1e293b] bg-[#0f172a]">
                      <h2 className="text-lg font-bold text-white flex items-center gap-2">
                         <Calendar className="w-5 h-5 text-indigo-400" />
                         Sprint Capacity Settings
@@ -2538,7 +2538,7 @@
                    </div>
                    
                    <div className="p-5 space-y-6">
-                     <div className="bg-slate-950/40 p-4 rounded-xl border border-white/5 space-y-4">
+                     <div className="bg-[#0f172a] p-4 rounded-xl border border-[#1e293b] space-y-4">
                         <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Daily Working Hours</h3>
                         <div className="grid grid-cols-2 gap-4">
                           <div>
@@ -2553,7 +2553,7 @@
                                 setDevHoursPerDay(val);
                                 saveSettings({ devHoursPerDay: val });
                               }} 
-                              className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-indigo-500" 
+                              className="w-full bg-[#0b1120] border border-[#1e293b] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-indigo-500" 
                             />
                           </div>
                           <div>
@@ -2568,7 +2568,7 @@
                                 setQaHoursPerDay(val);
                                 saveSettings({ qaHoursPerDay: val });
                               }} 
-                              className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-indigo-500" 
+                              className="w-full bg-[#0b1120] border border-[#1e293b] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-indigo-500" 
                             />
                           </div>
                         </div>
@@ -2580,11 +2580,11 @@
                          <span className="text-indigo-400">{dateBlockers.length} Items</span>
                        </h3>
                        {dateBlockers.length === 0 ? (
-                         <div className="text-sm text-slate-400 italic p-4 bg-slate-950/30 rounded-xl text-center border border-white/5">No blockers added.</div>
+                         <div className="text-sm text-slate-400 italic p-4 bg-[#0f172a] rounded-xl text-center border border-[#1e293b]">No blockers added.</div>
                        ) : (
                          <ul className="space-y-2 max-h-40 overflow-y-auto pr-1">
                            {dateBlockers.map(b => (
-                             <li key={b.id} className="flex items-center justify-between bg-slate-950/50 p-3 rounded-xl border border-white/5">
+                             <li key={b.id} className="flex items-center justify-between bg-[#0f172a] p-3 rounded-xl border border-[#1e293b]">
                                 <div className="flex flex-col">
                                    <span className="text-sm font-semibold text-slate-200">{b.remark} <span className="text-slate-400 font-normal">({b.days} day{b.days > 1 ? 's' : ''})</span></span>
                                    {b.remark === 'Leave' && <span className="text-xs text-indigo-400 font-medium mt-0.5">{b.assignee}</span>}
@@ -2605,7 +2605,7 @@
                        )}
                      </div>
 
-                     <div className="bg-slate-950/40 p-4 rounded-xl border border-white/5 space-y-4">
+                     <div className="bg-[#0f172a] p-4 rounded-xl border border-[#1e293b] space-y-4">
                         <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Add New Blocker</h3>
                         <div className="grid grid-cols-2 gap-4">
                           <div>
@@ -2615,7 +2615,7 @@
                               min="1" 
                               value={newBlockerDays} 
                               onChange={e => setNewBlockerDays(e.target.value)} 
-                              className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-indigo-500" 
+                              className="w-full bg-[#0b1120] border border-[#1e293b] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-indigo-500" 
                             />
                           </div>
                           <div>
@@ -2623,7 +2623,7 @@
                             <select 
                               value={newBlockerRemark} 
                               onChange={e => setNewBlockerRemark(e.target.value)} 
-                              className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                              className="w-full bg-[#0b1120] border border-[#1e293b] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
                             >
                               <option value="Holiday">Holiday</option>
                               <option value="Company Event">Company Event</option>
@@ -2637,7 +2637,7 @@
                             <select 
                               value={newBlockerAssignee || (assigneesList[0]?.username || '')} 
                               onChange={e => setNewBlockerAssignee(e.target.value)} 
-                              className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                              className="w-full bg-[#0b1120] border border-[#1e293b] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
                             >
                               {assigneesList.map(a => <option key={a.username} value={a.username}>{a.username}</option>)}
                             </select>
@@ -2670,8 +2670,8 @@
             {/* Time Tracking Modal */}
             {timeTrackModalTask && (
               <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[110] flex items-center justify-center p-4 animate-in fade-in duration-200">
-                <div className="bg-slate-900 border border-white/10 rounded-2xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden animate-in slide-in-from-bottom-4">
-                  <div className="flex items-center justify-between p-5 border-b border-white/5 bg-slate-900/50">
+                <div className="bg-[#0b1120] border border-[#1e293b] rounded-2xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden animate-in slide-in-from-bottom-4">
+                  <div className="flex items-center justify-between p-5 border-b border-[#1e293b] bg-[#0f172a]">
                     <h2 className="text-lg font-bold text-white flex items-center gap-2">
                        <Clock className="w-5 h-5 text-emerald-400" />
                        Track Time
@@ -2682,7 +2682,7 @@
                   </div>
                   
                   <div className="p-5 space-y-5">
-                    <div className="bg-slate-950/40 p-3 rounded-xl border border-white/5">
+                    <div className="bg-[#0f172a] p-3 rounded-xl border border-[#1e293b]">
                       <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-1">Logging time for task</p>
                       <p className="text-sm font-medium text-slate-200">{timeTrackModalTask.name}</p>
                     </div>
@@ -2695,7 +2695,7 @@
                           min="0" 
                           value={timeHours} 
                           onChange={e => setTimeHours(e.target.value)} 
-                          className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-emerald-500" 
+                          className="w-full bg-[#0b1120] border border-[#1e293b] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-emerald-500" 
                         />
                       </div>
                       <div>
@@ -2706,7 +2706,7 @@
                           max="59" 
                           value={timeMinutes} 
                           onChange={e => setTimeMinutes(e.target.value)} 
-                          className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-emerald-500" 
+                          className="w-full bg-[#0b1120] border border-[#1e293b] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-emerald-500" 
                         />
                       </div>
                     </div>
@@ -2718,7 +2718,7 @@
                           type="date" 
                           value={timeDate} 
                           onChange={e => setTimeDate(e.target.value)} 
-                          className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 [color-scheme:dark]" 
+                          className="w-full bg-[#0b1120] border border-[#1e293b] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 [color-scheme:dark]" 
                         />
                       </div>
                       <div>
@@ -2726,7 +2726,7 @@
                         <select 
                           value={timeAssignee} 
                           onChange={e => setTimeAssignee(e.target.value)} 
-                          className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer"
+                          className="w-full bg-[#0b1120] border border-[#1e293b] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer"
                         >
                           <option value="me">Myself</option>
                           {allWorkspaceAssignees.map(a => (
@@ -2742,7 +2742,7 @@
                         value={timeNotes} 
                         onChange={e => setTimeNotes(e.target.value)} 
                         placeholder="What did you work on?"
-                        className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 resize-none h-20" 
+                        className="w-full bg-[#0b1120] border border-[#1e293b] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 resize-none h-20" 
                       />
                     </div>
 
@@ -2761,9 +2761,8 @@
             {/* Modal for Ticket Details & Comments */}
             {selectedTicketForModal && (
               <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
-                <div className="bg-slate-900 border border-white/10 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden animate-in slide-in-from-bottom-4">
-                  {/* Modal Header */}
-                  <div className="flex items-center justify-between p-6 border-b border-white/5 bg-slate-900/50">
+                <div className="bg-[#0b1120] border border-[#1e293b] rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden animate-in slide-in-from-bottom-4">
+                  <div className="flex items-center justify-between p-6 border-b border-[#1e293b] bg-[#0f172a]">
                     <div>
                       <div className="flex items-center space-x-2 mb-2">
                         <span className="text-xs font-mono text-slate-500 uppercase">#{selectedTicketForModal.id}</span>
@@ -2788,26 +2787,23 @@
                     </button>
                   </div>
 
-                  {/* Modal Body (Scrollable) */}
                   <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                    {/* Description Section */}
                     <div>
                       <h3 className="text-sm font-semibold text-slate-400 mb-2 uppercase tracking-wider">Description</h3>
-                      <div className="bg-slate-950/50 border border-white/5 p-4 rounded-xl text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">
+                      <div className="bg-[#0f172a] border border-[#1e293b] p-4 rounded-xl text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">
                         {selectedTicketForModal.description || "No description provided."}
                       </div>
                     </div>
 
-                    {/* Metadata Section */}
                     <div className="grid grid-cols-2 gap-4">
-                      <div className="bg-slate-950/30 border border-white/5 p-4 rounded-xl">
+                      <div className="bg-[#0f172a] border border-[#1e293b] p-4 rounded-xl">
                          <h3 className="text-xs font-semibold text-slate-500 mb-2 uppercase">Time Estimate</h3>
                          <div className="flex items-center text-sm font-medium text-slate-300">
                            <Clock className="h-4 w-4 mr-2 text-indigo-400" />
                            {selectedTicketForModal.time_estimate ? `${Math.round(parseInt(selectedTicketForModal.time_estimate)/3600000)} Hours` : 'Not set'}
                          </div>
                       </div>
-                      <div className="bg-slate-950/30 border border-white/5 p-4 rounded-xl">
+                      <div className="bg-[#0f172a] border border-[#1e293b] p-4 rounded-xl">
                          <h3 className="text-xs font-semibold text-slate-500 mb-2 uppercase">Priority</h3>
                          <div className="flex items-center text-sm font-medium text-slate-300 capitalize">
                            <Flag className="h-4 w-4 mr-2" style={{ color: selectedTicketForModal.priority?.color || '#94a3b8' }} />
@@ -2816,17 +2812,16 @@
                       </div>
                     </div>
 
-                    {/* Comments Thread */}
                     <div>
                       <h3 className="text-sm font-semibold text-slate-400 mb-4 uppercase tracking-wider flex items-center">
                         <MessageSquare className="h-4 w-4 mr-2" /> Comments
                       </h3>
                       <div className="space-y-4">
                         {(!localMockComments[selectedTicketForModal.id] || localMockComments[selectedTicketForModal.id].length === 0) ? (
-                          <p className="text-sm text-slate-500 italic p-4 bg-slate-950/30 rounded-xl text-center border border-white/5">No comments yet. Start the conversation!</p>
+                          <p className="text-sm text-slate-500 italic p-4 bg-[#0f172a] rounded-xl text-center border border-[#1e293b]">No comments yet. Start the conversation!</p>
                         ) : (
                           localMockComments[selectedTicketForModal.id].map(comment => (
-                            <div key={comment.id} className="bg-slate-950/50 border border-white/5 p-4 rounded-xl flex space-x-3">
+                            <div key={comment.id} className="bg-[#0f172a] border border-[#1e293b] p-4 rounded-xl flex space-x-3">
                               <img src={comment.user?.profilePicture} alt="User" className="w-8 h-8 rounded-full border border-slate-700 bg-slate-800" />
                               <div>
                                 <div className="flex items-baseline space-x-2 mb-1">
@@ -2842,16 +2837,15 @@
                     </div>
                   </div>
 
-                  {/* Modal Footer / Comment Input */}
-                  <div className="p-4 border-t border-white/5 bg-slate-950">
+                  <div className="p-4 border-t border-[#1e293b] bg-[#0f172a]">
                     <div className="flex items-start space-x-3">
-                      <img src={user.avatar} alt="You" className="w-8 h-8 rounded-full border border-slate-700 bg-slate-800 shrink-0" />
+                      <img src={user.avatar} alt="You" className="w-8 h-8 rounded-full border border-[#1e293b] bg-slate-800 shrink-0" />
                       <div className="flex-1 relative">
                         <textarea 
                           value={commentText}
                           onChange={(e) => setCommentText(e.target.value)}
                           placeholder="Write a comment or status update..."
-                          className="w-full bg-slate-900 border border-slate-700/60 rounded-xl px-4 py-3 pr-12 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none h-16"
+                          className="w-full bg-[#0b1120] border border-[#1e293b] rounded-xl px-4 py-3 pr-12 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none h-16"
                         />
                         <button 
                           onClick={handleSendComment}
@@ -2874,7 +2868,7 @@
               </div>
             )}
 
-            <nav className="relative z-30 bg-slate-950/50 backdrop-blur-md border-b border-white/10 sticky top-0">
+            <nav className="relative z-30 bg-[#0b1120] border-b border-[#1e293b] sticky top-0">
               <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                 <div className="flex justify-between h-16">
                   <div className="flex items-center">
@@ -2885,8 +2879,8 @@
                     <button className="text-slate-400 hover:text-white transition-colors">
                       <Bell className="h-5 w-5" />
                     </button>
-                    <div className="h-8 w-8 rounded-full bg-indigo-950/50 flex items-center justify-center overflow-hidden border border-white/10 cursor-pointer">
-                      <img src={user.avatar} alt={user.name} className="h-full w-full object-cover" />
+                    <div className="h-8 w-8 rounded-full flex items-center justify-center overflow-hidden border border-[#1e293b] cursor-pointer">
+                      <img src={user.avatar} alt={user.name} className="h-full w-full object-cover bg-slate-800" />
                     </div>
                     <button 
                       onClick={handleLogout}
@@ -2900,6 +2894,7 @@
               </div>
             </nav>
 
+            {}
             {mappedWorkflows.length === 0 ? (
               <main className="relative z-25 max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
                 <div className="text-center mb-10">
@@ -2916,34 +2911,34 @@
             ) : (
               <main className="relative z-25 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 animate-in fade-in duration-500">
                 
-                {/* 0. Connection Path & Source (TOP MOST) */}
+                {/* 0. Connection Path & Source (TOP MOST) - Restored Dark Solid Panel */}
                 {mappedWorkflows.length > 0 && (
-                  <div className="mb-6 bg-slate-900/60 p-4 rounded-2xl border border-indigo-500/30 shadow-lg backdrop-blur-xl flex flex-col lg:flex-row lg:items-center justify-between gap-4 relative z-[80] animate-in slide-in-from-top-4">
+                  <div className="mb-6 bg-[#0b1120] p-4 rounded-2xl border border-[#1e293b] shadow-lg flex flex-col lg:flex-row lg:items-center justify-between gap-4 relative z-[80] animate-in slide-in-from-top-4">
                     <div className="flex items-center gap-3 w-full min-w-0">
                       <div className="bg-indigo-500/20 p-2 rounded-lg border border-indigo-500/30 shadow-inner hidden sm:block shrink-0">
                         <SpiderNetworkIcon className="h-5 w-5 text-indigo-400" />
                       </div>
 
-                      <div className="flex items-center flex-wrap text-sm text-slate-400 gap-1.5 min-w-0 flex-1">
+                      <div className="flex items-center flex-wrap text-sm text-slate-400 gap-1.5 min-w-0 flex-1 font-semibold">
                         <span className="flex items-center shrink-0 max-w-[100px] sm:max-w-[200px]" title={mappedWorkflows[0].team}>
                           <Box className="h-4 w-4 mr-1.5 text-slate-500 shrink-0" /> 
-                          <span className="truncate text-slate-300 font-medium">{mappedWorkflows[0].team}</span>
+                          <span className="truncate text-slate-300">{mappedWorkflows[0].team}</span>
                         </span>
                         <ChevronRight className="h-4 w-4 text-slate-600 shrink-0" />
                         <span className="flex items-center shrink-0 max-w-[100px] sm:max-w-[200px]" title={mappedWorkflows[0].space}>
-                          <span className="truncate text-slate-300 font-medium">{mappedWorkflows[0].space}</span>
+                          <span className="truncate text-slate-300">{mappedWorkflows[0].space}</span>
                         </span>
                         {mappedWorkflows[0].folder !== 'No Folder' && (
                           <>
                             <ChevronRight className="h-4 w-4 text-slate-600 shrink-0" />
                             <span className="flex items-center shrink-0 max-w-[100px] sm:max-w-[200px]" title={mappedWorkflows[0].folder}>
                               <FolderOpen className="h-4 w-4 mr-1.5 text-slate-500 shrink-0" /> 
-                              <span className="truncate text-slate-300 font-medium">{mappedWorkflows[0].folder}</span>
+                              <span className="truncate text-slate-300">{mappedWorkflows[0].folder}</span>
                             </span>
                           </>
                         )}
                         <ChevronRight className="h-4 w-4 text-slate-600 shrink-0" />
-                        <span className="font-bold text-indigo-300 flex items-center bg-indigo-500/10 px-2.5 py-0.5 rounded-md border border-indigo-500/20 shadow-sm shrink-0 max-w-[140px] sm:max-w-[250px]" title={mappedWorkflows[0].list}>
+                        <span className="font-bold text-indigo-300 flex items-center bg-[#0f172a] px-2.5 py-1 rounded-md border border-[#1e293b] shadow-sm shrink-0 max-w-[140px] sm:max-w-[250px]" title={mappedWorkflows[0].list}>
                           <ListTodo className="h-4 w-4 mr-1.5 shrink-0" /> 
                           <span className="truncate">{mappedWorkflows[0].list}</span>
                         </span>
@@ -2956,14 +2951,14 @@
                            setIsSwitchModalOpen(true);
                            handleConnectClickUp();
                          }}
-                         className="flex items-center px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold rounded-lg transition-colors border border-white/10 shadow-sm"
+                         className="flex items-center px-4 py-2 bg-[#0f172a] hover:bg-[#1e293b] text-white text-xs font-semibold rounded-lg transition-colors border border-[#1e293b] shadow-sm"
                        >
-                         <RefreshCw className="h-3.5 w-3.5 mr-2 text-indigo-400" />
+                         <RefreshCw className="h-3.5 w-3.5 mr-2 text-slate-300" />
                          Switch Connection
                        </button>
                        <button 
                          onClick={() => removeMapping(mappedWorkflows[0].id)}
-                         className="flex items-center justify-center p-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg transition-colors border border-red-500/20"
+                         className="flex items-center justify-center p-2 bg-red-950/30 hover:bg-red-900/40 text-red-400 rounded-lg transition-colors border border-red-900/50"
                          title="Disconnect"
                        >
                          <LogOut className="h-4 w-4" />
@@ -2972,10 +2967,10 @@
                   </div>
                 )}
 
-                {/* Dashboard Command Center Header */}
-                <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-8 bg-slate-900/40 p-6 rounded-2xl border border-white/5 backdrop-blur-md shadow-xl relative z-20">
+                {/* Dashboard Command Center Header - Restored Floating Style */}
+                <div className="flex flex-col md:flex-row md:items-start justify-between gap-6 mb-8 relative z-20">
                   <div>
-                    <h1 className="text-2xl font-bold text-white flex flex-wrap items-center gap-3 mb-2">
+                    <h1 className="text-3xl font-extrabold tracking-tight text-white flex flex-wrap items-center gap-4 mb-2">
                       {mappedWorkflows[0]?.list || 'Your Workspace'}
                       <div className="flex flex-wrap items-center gap-2">
                         <MetricTooltip 
@@ -2984,14 +2979,14 @@
                           text={isAutoSyncing ? "Fetching latest data from ClickUp..." : "Real-time updates are active."} 
                           formula="Dashboard automatically syncs every 15 seconds."
                         >
-                          <div className={`flex items-center px-3 py-1.5 rounded-full border transition-all shadow-sm cursor-help ${isAutoSyncing ? 'bg-indigo-500/10 border-indigo-500/20 text-indigo-300' : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'}`}>
+                          <div className={`flex items-center px-3 py-1 rounded-full border transition-all shadow-sm cursor-help ${isAutoSyncing ? 'bg-indigo-950/50 border-indigo-500/30 text-indigo-300' : 'bg-emerald-950/30 border-emerald-900/50 text-emerald-400'}`}>
                             {isAutoSyncing ? (
                               <RefreshCw className="h-3.5 w-3.5 mr-2 animate-spin" /> 
                             ) : (
-                              <div className="h-2 w-2 rounded-full bg-emerald-400 mr-2 animate-pulse"></div> 
+                              <div className="h-2.5 w-2.5 rounded-full bg-emerald-500 mr-2 animate-pulse"></div> 
                             )}
                             {mappedWorkflows.length > 0 && (
-                              <div className="flex items-center text-xs font-medium">
+                              <div className="flex items-center text-xs font-semibold">
                                 <span className="tracking-wide">
                                   {isAutoSyncing ? 'Syncing...' : `Synced: ${new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: 'numeric', second: 'numeric' }).format(new Date(mappedWorkflows[0].lastSynced))}`}
                                 </span>
@@ -3001,11 +2996,11 @@
                         </MetricTooltip>
                       </div>
                     </h1>
-                    <p className="text-slate-400 text-sm">Dashboard metrics are dynamically synced and globally filtered.</p>
+                    <p className="text-slate-400 text-sm font-medium">Dashboard metrics are dynamically synced and globally filtered.</p>
                   </div>
                   
-                  <div className="flex items-center space-x-3 bg-slate-950/50 p-2 rounded-xl border border-white/5">
-                    <span className="text-sm text-slate-400 font-medium pl-2 flex items-center">
+                  <div className="flex items-center space-x-3 bg-[#0b1120] px-4 py-2 rounded-xl border border-[#1e293b] shadow-lg">
+                    <span className="text-sm text-slate-400 font-semibold flex items-center">
                       <svg className="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 00-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"></path></svg>
                       Global Filter:
                     </span>
@@ -3020,7 +3015,7 @@
                           setSelectedAssigneeFilter(uniqueAssignees[0]);
                         }
                       }}
-                      className="border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-900 shadow-sm"
+                      className="border border-[#1e293b] rounded-lg px-3 py-1.5 text-sm font-medium text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-[#0f172a] shadow-sm"
                     >
                       <option value="none">All Data</option>
                       <option value="tags">By Tag</option>
@@ -3031,7 +3026,7 @@
                       <select
                         value={selectedTagFilter}
                         onChange={(e) => setSelectedTagFilter(e.target.value)}
-                        className="border border-indigo-500/30 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-indigo-950/30 shadow-sm min-w-[120px]"
+                        className="border border-indigo-500/30 rounded-lg px-3 py-1.5 text-sm font-medium text-indigo-300 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-indigo-950/30 shadow-sm min-w-[120px]"
                       >
                         {uniqueTags.length === 0 && <option value="">No tags found</option>}
                         {uniqueTags.map(tag => (
@@ -3044,7 +3039,7 @@
                       <select
                         value={selectedAssigneeFilter}
                         onChange={(e) => setSelectedAssigneeFilter(e.target.value)}
-                        className="border border-indigo-500/30 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-indigo-950/30 shadow-sm min-w-[120px]"
+                        className="border border-indigo-500/30 rounded-lg px-3 py-1.5 text-sm font-medium text-indigo-300 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-indigo-950/30 shadow-sm min-w-[120px]"
                       >
                         {uniqueAssignees.length === 0 && <option value="">No assignees found</option>}
                         {uniqueAssignees.map(a => (
@@ -3055,99 +3050,99 @@
                   </div>
                 </div>
 
-                {/* 1. Metrics */}
+                {/* 1. Metrics - Restored Solid Dark Panels */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                  <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl relative z-10 hover:z-[70] flex items-center justify-between gap-4">
+                  <div className="bg-[#0b1120] p-6 rounded-2xl border border-[#1e293b] shadow-xl relative z-10 hover:z-[70] flex items-center justify-between gap-4">
                     <div className="flex items-start space-x-4 min-w-0">
-                      <div className="bg-blue-500/10 p-3 rounded-lg border border-blue-500/20 shrink-0">
+                      <div className="bg-[#0f172a] p-3 rounded-lg border border-[#1e293b] shrink-0">
                         <Box className="h-6 w-6 text-blue-400" />
                       </div>
                       <div className="min-w-0">
                         <div className="flex items-center flex-wrap gap-1.5 mb-1">
-                          <p className="text-sm font-medium text-slate-400">Backlog</p>
+                          <p className="text-sm font-semibold text-slate-300">Backlog</p>
                           <MetricTooltip align="left" position="bottom" text="Tasks that are not yet started." formula="Count of tasks and subtasks with status 'Open', 'To Do', or 'Backlog'. (Excludes bug containers)">
                             <InfoIcon className="h-3.5 w-3.5 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
                           </MetricTooltip>
                         </div>
-                        <p className="text-3xl font-extrabold text-white mt-1 tracking-tight">{backlogTasksCount}</p>
+                        <p className="text-4xl font-extrabold text-white mt-1 tracking-tight">{backlogTasksCount}</p>
                       </div>
                     </div>
                     <div className="flex flex-col gap-2 shrink-0">
-                      <div className="bg-slate-950/40 border border-white/5 rounded-lg px-3 py-1.5 flex items-center justify-between min-w-[80px]" title="Main Tasks">
-                        <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mr-3">Main</span>
-                        <span className="text-sm font-bold text-slate-300">{backlogBreakdown.mothers}</span>
+                      <div className="bg-[#0f172a] border border-[#1e293b] rounded-lg px-3 py-1.5 flex items-center justify-between min-w-[80px]" title="Main Tasks">
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mr-3">Main</span>
+                        <span className="text-sm font-bold text-white">{backlogBreakdown.mothers}</span>
                       </div>
-                      <div className="bg-slate-950/40 border border-white/5 rounded-lg px-3 py-1.5 flex items-center justify-between min-w-[80px]" title="Subtasks">
-                        <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mr-3">Sub</span>
-                        <span className="text-sm font-bold text-slate-300">{backlogBreakdown.subs}</span>
+                      <div className="bg-[#0f172a] border border-[#1e293b] rounded-lg px-3 py-1.5 flex items-center justify-between min-w-[80px]" title="Subtasks">
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mr-3">Sub</span>
+                        <span className="text-sm font-bold text-white">{backlogBreakdown.subs}</span>
                       </div>
                     </div>
                   </div>
 
-                  <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl relative z-10 hover:z-[70] flex items-center justify-between gap-4">
+                  <div className="bg-[#0b1120] p-6 rounded-2xl border border-[#1e293b] shadow-xl relative z-10 hover:z-[70] flex items-center justify-between gap-4">
                     <div className="flex items-start space-x-4 min-w-0">
-                      <div className="bg-indigo-500/10 p-3 rounded-lg border border-indigo-500/20 shrink-0">
+                      <div className="bg-[#0f172a] p-3 rounded-lg border border-[#1e293b] shrink-0">
                         <CheckSquare className="h-6 w-6 text-indigo-400" />
                       </div>
                       <div className="min-w-0">
                         <div className="flex items-center flex-wrap gap-1.5 mb-1">
-                          <p className="text-sm font-medium text-slate-400">Active Tasks</p>
+                          <p className="text-sm font-semibold text-slate-300">Active Tasks</p>
                           <MetricTooltip align="center" position="bottom" text="Tasks currently being worked on." formula="Tasks and subtasks with active development statuses. (Excludes bug containers)">
                             <InfoIcon className="h-3.5 w-3.5 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
                           </MetricTooltip>
                         </div>
-                        <p className="text-3xl font-extrabold text-white mt-1 tracking-tight">{activeTasksCount}</p>
+                        <p className="text-4xl font-extrabold text-white mt-1 tracking-tight">{activeTasksCount}</p>
                       </div>
                     </div>
                     <div className="flex flex-col gap-2 shrink-0">
-                      <div className="bg-slate-950/40 border border-white/5 rounded-lg px-3 py-1.5 flex items-center justify-between min-w-[80px]" title="Main Tasks">
-                        <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mr-3">Main</span>
-                        <span className="text-sm font-bold text-slate-300">{activeBreakdown.mothers}</span>
+                      <div className="bg-[#0f172a] border border-[#1e293b] rounded-lg px-3 py-1.5 flex items-center justify-between min-w-[80px]" title="Main Tasks">
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mr-3">Main</span>
+                        <span className="text-sm font-bold text-white">{activeBreakdown.mothers}</span>
                       </div>
-                      <div className="bg-slate-950/40 border border-white/5 rounded-lg px-3 py-1.5 flex items-center justify-between min-w-[80px]" title="Subtasks">
-                        <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mr-3">Sub</span>
-                        <span className="text-sm font-bold text-slate-300">{activeBreakdown.subs}</span>
+                      <div className="bg-[#0f172a] border border-[#1e293b] rounded-lg px-3 py-1.5 flex items-center justify-between min-w-[80px]" title="Subtasks">
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mr-3">Sub</span>
+                        <span className="text-sm font-bold text-white">{activeBreakdown.subs}</span>
                       </div>
                     </div>
                   </div>
 
-                  <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl relative z-10 hover:z-[70] flex items-center justify-between gap-4">
+                  <div className="bg-[#0b1120] p-6 rounded-2xl border border-[#1e293b] shadow-xl relative z-10 hover:z-[70] flex items-center justify-between gap-4">
                     <div className="flex items-start space-x-4 min-w-0">
-                      <div className="bg-emerald-500/10 p-3 rounded-lg border border-emerald-500/20 shrink-0">
-                        <CheckCircle2 className="h-6 w-6 text-emerald-400" />
+                      <div className="bg-emerald-950/20 p-3 rounded-lg border border-emerald-900/50 shrink-0">
+                        <CheckCircle2 className="h-6 w-6 text-emerald-500" />
                       </div>
                       <div className="min-w-0">
                         <div className="flex items-center flex-wrap gap-1.5 mb-1">
-                          <p className="text-sm font-medium text-slate-400">Total Resolved</p>
+                          <p className="text-sm font-semibold text-slate-300">Total Resolved</p>
                           <MetricTooltip align="right" position="bottom" text="Tasks completed across mapped workflows." formula="Count of tasks and subtasks with status 'Closed', 'Complete', 'Done', or 'Resolved'. (Excludes bug containers)">
                             <InfoIcon className="h-3.5 w-3.5 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
                           </MetricTooltip>
                         </div>
-                        <p className="text-3xl font-extrabold text-white mt-1 tracking-tight">{completedFilteredTasksCount}</p>
+                        <p className="text-4xl font-extrabold text-white mt-1 tracking-tight">{completedFilteredTasksCount}</p>
                       </div>
                     </div>
                     <div className="flex flex-col gap-2 shrink-0">
-                      <div className="bg-slate-950/40 border border-white/5 rounded-lg px-3 py-1.5 flex items-center justify-between min-w-[80px]" title="Main Tasks">
-                        <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mr-3">Main</span>
-                        <span className="text-sm font-bold text-slate-300">{completedBreakdown.mothers}</span>
+                      <div className="bg-[#0f172a] border border-[#1e293b] rounded-lg px-3 py-1.5 flex items-center justify-between min-w-[80px]" title="Main Tasks">
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mr-3">Main</span>
+                        <span className="text-sm font-bold text-white">{completedBreakdown.mothers}</span>
                       </div>
-                      <div className="bg-slate-950/40 border border-white/5 rounded-lg px-3 py-1.5 flex items-center justify-between min-w-[80px]" title="Subtasks">
-                        <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mr-3">Sub</span>
-                        <span className="text-sm font-bold text-slate-300">{completedBreakdown.subs}</span>
+                      <div className="bg-[#0f172a] border border-[#1e293b] rounded-lg px-3 py-1.5 flex items-center justify-between min-w-[80px]" title="Subtasks">
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mr-3">Sub</span>
+                        <span className="text-sm font-bold text-white">{completedBreakdown.subs}</span>
                       </div>
                     </div>
                   </div>
                 </div>
 
-                {/* 2. Progress / Burndown */}
+                {/* 2. Progress / Burndown - Restored Solid Dark Panels */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-                  <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl flex flex-col justify-between relative z-10 hover:z-[70]">
+                  <div className="bg-[#0b1120] p-6 rounded-2xl border border-[#1e293b] shadow-xl flex flex-col justify-between relative z-10 hover:z-[70]">
                     <div>
                       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start mb-6 gap-4">
                         <div>
                           <div className="flex items-center flex-wrap space-x-2 mb-1">
                             <Target className="h-5 w-5 text-indigo-400 shrink-0" />
-                            <h2 className="text-lg font-semibold text-white flex items-center flex-wrap gap-2">
+                            <h2 className="text-lg font-bold text-white flex items-center flex-wrap gap-2">
                               Overall Progress
                               <MetricTooltip align="left" position="bottom" text="Weighted completion percentage based on tracked time estimates." formula="((Total Estimated Hours - Total Remaining Hours) / Total Estimated Hours) × 100">
                                 <InfoIcon className="h-4 w-4 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
@@ -3160,35 +3155,35 @@
                       
                       <div className="flex items-end justify-between mb-4">
                         <div className="flex flex-col">
-                          <span className="text-5xl font-extrabold text-white leading-none">{completionPercentage}%</span>
+                          <span className="text-6xl font-extrabold text-white leading-none tracking-tight">{completionPercentage}%</span>
                         </div>
                         <div className="flex flex-col items-end space-y-1.5">
-                          <div className="flex items-center text-xs text-slate-400 bg-slate-950/50 px-2.5 py-1 rounded-md border border-white/5" title="Completed vs Total Items">
+                          <div className="flex items-center text-xs text-slate-400 bg-[#0f172a] px-2.5 py-1 rounded-md border border-[#1e293b]" title="Completed vs Total Items">
                             <CheckCircle2 className="h-3.5 w-3.5 mr-1.5 text-emerald-400" />
-                            <span className="text-white font-medium mr-1">{completedFilteredTasksCount}</span> / {totalFilteredCount} Items
+                            <span className="text-white font-bold mr-1">{completedFilteredTasksCount}</span> / {totalFilteredCount} Items
                           </div>
-                          <div className="flex items-center text-xs text-slate-400 bg-slate-950/50 px-2.5 py-1 rounded-md border border-white/5" title="Logged vs Estimated Hours">
+                          <div className="flex items-center text-xs text-slate-400 bg-[#0f172a] px-2.5 py-1 rounded-md border border-[#1e293b]" title="Logged vs Estimated Hours">
                             <Clock className="h-3.5 w-3.5 mr-1.5 text-indigo-400" />
-                            <span className="text-white font-medium mr-1">{totalSpentHours}h</span> / {totalEstHours}h Logged
+                            <span className="text-white font-bold mr-1">{totalSpentHours}h</span> / {totalEstHours}h Logged
                           </div>
                         </div>
                       </div>
                       
-                      <div className="w-full bg-slate-950 border border-white/5 rounded-full h-4 overflow-hidden mb-2 shadow-inner">
+                      <div className="w-full bg-[#0f172a] border border-[#1e293b] rounded-full h-4 overflow-hidden mb-2 shadow-inner">
                         <div 
-                          className="bg-gradient-to-r from-indigo-500 to-violet-500 h-4 rounded-full transition-all duration-1000 ease-out shadow-[0_0_12px_rgba(99,102,241,0.4)]" 
+                          className="bg-gradient-to-r from-indigo-500 to-purple-500 h-4 rounded-full transition-all duration-1000 ease-out shadow-[0_0_12px_rgba(99,102,241,0.5)]" 
                           style={{ width: `${completionPercentage}%` }}
                         ></div>
                       </div>
                     </div>
                   </div>
 
-                  <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl relative z-10 hover:z-[70]">
+                  <div className="bg-[#0b1120] p-6 rounded-2xl border border-[#1e293b] shadow-xl relative z-10 hover:z-[70]">
                     <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start mb-6 gap-4">
                       <div>
                         <div className="flex items-center flex-wrap space-x-2 mb-1">
                           <TrendingDown className="h-5 w-5 text-indigo-400 shrink-0" />
-                          <h2 className="text-lg font-semibold text-white flex items-center flex-wrap gap-2">
+                          <h2 className="text-lg font-bold text-white flex items-center flex-wrap gap-2">
                             Sprint Burndown
                             <MetricTooltip align="right" position="bottom" text="Tracks remaining task effort versus your ideal timeline." formula="Y-Axis: Remaining tracked hours. X-Axis: Elapsed time between earliest Start Date and latest Due Date.">
                               <InfoIcon className="h-4 w-4 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
@@ -3197,12 +3192,12 @@
                         </div>
                         <p className="text-sm text-slate-400">Tracking actual time remaining over scheduled timeline.</p>
                       </div>
-                      <div className="flex flex-row sm:flex-col gap-4 sm:gap-1.5 text-sm bg-slate-950/40 px-3 py-2 rounded-lg border border-white/5 shrink-0">
-                        <div className="flex items-center text-slate-400 font-medium">
+                      <div className="flex flex-row sm:flex-col gap-4 sm:gap-1.5 text-sm shrink-0">
+                        <div className="flex items-center text-slate-400 font-semibold">
                           <div className="w-4 h-0 border-t-2 border-dashed border-slate-500 mr-2"></div>
                           Ideal Effort
                         </div>
-                        <div className="flex items-center text-slate-400 font-medium">
+                        <div className="flex items-center text-slate-400 font-semibold">
                           <div className="w-3 h-3 bg-indigo-500 rounded-full mr-2 shadow-lg shadow-indigo-500/50"></div>
                           Remaining Time
                         </div>
@@ -3210,7 +3205,7 @@
                     </div>
                     
                     <div className="relative h-48 w-full">
-                      <div className="absolute left-0 top-0 bottom-6 w-8 flex flex-col justify-between text-xs font-medium text-slate-500 text-right pr-2">
+                      <div className="absolute left-0 top-0 bottom-6 w-8 flex flex-col justify-between text-[10px] font-semibold text-slate-500 text-right pr-2">
                         <span>{totalEstHours}h</span>
                         <span>{Math.round(totalEstHours * 0.75)}h</span>
                         <span>{Math.round(totalEstHours * 0.5)}h</span>
@@ -3218,7 +3213,7 @@
                         <span>0h</span>
                       </div>
                       
-                      <div className="absolute left-10 right-2 top-2 bottom-6">
+                      <div className="absolute left-10 right-2 top-2 bottom-6 border-b border-l border-[#1e293b]">
                         <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="w-full h-full overflow-visible">
                           <defs>
                             <linearGradient id="burndownGradient" x1="0" y1="0" x2="0" y2="1">
@@ -3226,16 +3221,13 @@
                               <stop offset="100%" stopColor="#6366f1" stopOpacity="0" />
                             </linearGradient>
                           </defs>
-                          <line x1="0" y1="0" x2="100" y2="0" stroke="#1e293b" strokeWidth="1" vectorEffect="non-scaling-stroke" />
-                          <line x1="0" y1="25" x2="100" y2="25" stroke="#1e293b" strokeWidth="1" vectorEffect="non-scaling-stroke" />
-                          <line x1="0" y1="50" x2="100" y2="50" stroke="#1e293b" strokeWidth="1" vectorEffect="non-scaling-stroke" />
-                          <line x1="0" y1="75" x2="100" y2="75" stroke="#1e293b" strokeWidth="1" vectorEffect="non-scaling-stroke" />
-                          <line x1="0" y1="100" x2="100" y2="100" stroke="#334155" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+                          <line x1="0" y1="0" x2="100" y2="0" stroke="#1e293b" strokeWidth="0.5" vectorEffect="non-scaling-stroke" />
+                          <line x1="0" y1="25" x2="100" y2="25" stroke="#1e293b" strokeWidth="0.5" vectorEffect="non-scaling-stroke" />
+                          <line x1="0" y1="50" x2="100" y2="50" stroke="#1e293b" strokeWidth="0.5" vectorEffect="non-scaling-stroke" />
+                          <line x1="0" y1="75" x2="100" y2="75" stroke="#1e293b" strokeWidth="0.5" vectorEffect="non-scaling-stroke" />
 
-                          <line x1="0" y1="0" x2="0" y2="100" stroke="#334155" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
-                          <line x1="33.3" y1="0" x2="33.3" y2="100" stroke="#111827" strokeWidth="1" vectorEffect="non-scaling-stroke" />
-                          <line x1="66.6" y1="0" x2="66.6" y2="100" stroke="#111827" strokeWidth="1" vectorEffect="non-scaling-stroke" />
-                          <line x1="100" y1="0" x2="100" y2="100" stroke="#111827" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+                          <line x1="33.3" y1="0" x2="33.3" y2="100" stroke="#1e293b" strokeWidth="0.5" vectorEffect="non-scaling-stroke" />
+                          <line x1="66.6" y1="0" x2="66.6" y2="100" stroke="#1e293b" strokeWidth="0.5" vectorEffect="non-scaling-stroke" />
 
                           <line x1="0" y1="0" x2="100" y2="100" stroke="#475569" strokeWidth="2" strokeDasharray="6 6" vectorEffect="non-scaling-stroke" />
 
@@ -3257,7 +3249,7 @@
                         </svg>
                       </div>
 
-                      <div className="absolute left-10 right-2 bottom-0 h-6 flex justify-between text-xs font-medium text-slate-500">
+                      <div className="absolute left-10 right-2 bottom-0 h-6 flex justify-between text-[10px] font-semibold text-slate-500">
                         <span className="-ml-3">{dayLabels[0]}</span>
                         <span>{dayLabels[1]}</span>
                         <span>{dayLabels[2]}</span>
@@ -3267,23 +3259,23 @@
                   </div>
                 </div>
 
-                {/* 4. Utilization Section */}
+                {/* 4. Utilization Section - Restored Solid Dark Panels */}
                 <div className="mb-8 animate-in fade-in">
                   <div className="flex items-center space-x-2 mb-4">
                       <Activity className="h-5 w-5 text-indigo-400 shrink-0" />
-                      <h2 className="text-lg font-semibold text-white">Utilization Breakdown</h2>
+                      <h2 className="text-lg font-bold text-white">Utilization Breakdown</h2>
                   </div>
                   
-                  <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl relative z-10 hover:z-[70]">
+                  <div className="bg-[#0b1120] rounded-2xl border border-[#1e293b] shadow-xl relative z-10 hover:z-[70]">
                     <div className="p-6 md:p-8 flex flex-col lg:flex-row gap-8 lg:gap-12">
                       
                       {/* Left: Overall Utilization Percent */}
-                      <div className="flex-shrink-0 lg:w-1/3 flex flex-col justify-center border-b lg:border-b-0 lg:border-r border-white/10 pb-6 lg:pb-0 lg:pr-8">
+                      <div className="flex-shrink-0 lg:w-1/3 flex flex-col justify-center border-b lg:border-b-0 lg:border-r border-[#1e293b] pb-6 lg:pb-0 lg:pr-8">
                         <div className="flex items-center space-x-3 mb-3">
-                          <div className="bg-indigo-500/10 p-2.5 rounded-lg border border-indigo-500/20 shrink-0">
+                          <div className="bg-[#0f172a] p-2.5 rounded-lg border border-[#1e293b] shrink-0">
                             <Target className="h-6 w-6 text-indigo-400" />
                           </div>
-                          <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+                          <h3 className="text-lg font-bold text-white flex items-center gap-2">
                             Bucket Utilization
                             <MetricTooltip align="left" position="top" text="Calculated based on developer capacity vs total scope demand." formula="Total Est Hours ÷ ((Devs × Sprint Days × Dev Hours) - Dev Leaves) × 100">
                               <InfoIcon className="h-4 w-4 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
@@ -3295,9 +3287,9 @@
                         </p>
                         
                         <div className="flex items-end mb-2">
-                          <span className="text-6xl font-extrabold text-white tracking-tight leading-none">{bucketUtilizationPct}%</span>
+                          <span className="text-7xl font-extrabold text-white tracking-tight leading-none">{bucketUtilizationPct}%</span>
                         </div>
-                        <div className="w-full bg-slate-950 border border-white/5 rounded-full h-3 overflow-hidden shadow-inner mt-2 mb-8">
+                        <div className="w-full bg-[#0f172a] rounded-full h-3 overflow-hidden mt-2 mb-8">
                           <div 
                             className={`h-full rounded-full transition-all duration-1000 ease-out ${bucketUtilizationPct > 100 ? 'bg-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.4)]' : 'bg-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.4)]'}`}
                             style={{ width: `${Math.min(bucketUtilizationPct, 100)}%` }}
@@ -3308,7 +3300,7 @@
                         <div className="space-y-4">
                           <div>
                              <div className="flex justify-between items-center mb-1.5">
-                               <span className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
+                               <span className="text-[11px] font-bold text-slate-400 flex items-center gap-1.5 uppercase tracking-wider">
                                  Developer Util (80% Demand)
                                  <MetricTooltip align="left" position="top" text="Dev workload vs capacity." formula="(Total Est Hours × 80%) ÷ Dev Capacity">
                                     <InfoIcon className="h-3 w-3 text-slate-500 cursor-help" />
@@ -3316,13 +3308,13 @@
                                </span>
                                <span className="text-xs font-bold text-white">{devUtilPct}%</span>
                              </div>
-                             <div className="w-full bg-slate-950 border border-white/5 rounded-full h-1.5 overflow-hidden shadow-inner">
+                             <div className="w-full bg-[#0f172a] rounded-full h-1.5 overflow-hidden">
                                <div className={`h-full rounded-full transition-all duration-1000 ${devUtilPct > 100 ? 'bg-rose-500' : 'bg-blue-500'}`} style={{ width: `${Math.min(devUtilPct, 100)}%` }}></div>
                              </div>
                           </div>
                           <div>
                              <div className="flex justify-between items-center mb-1.5">
-                               <span className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
+                               <span className="text-[11px] font-bold text-slate-400 flex items-center gap-1.5 uppercase tracking-wider">
                                  QA Util (20% Demand)
                                  <MetricTooltip align="left" position="top" text="QA workload vs capacity." formula="(Total Est Hours × 20%) ÷ QA Capacity">
                                     <InfoIcon className="h-3 w-3 text-slate-500 cursor-help" />
@@ -3330,7 +3322,7 @@
                                </span>
                                <span className="text-xs font-bold text-white">{qaUtilPct}%</span>
                              </div>
-                             <div className="w-full bg-slate-950 border border-white/5 rounded-full h-1.5 overflow-hidden shadow-inner">
+                             <div className="w-full bg-[#0f172a] rounded-full h-1.5 overflow-hidden">
                                <div className={`h-full rounded-full transition-all duration-1000 ${qaUtilPct > 100 ? 'bg-rose-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(qaUtilPct, 100)}%` }}></div>
                              </div>
                           </div>
@@ -3343,7 +3335,7 @@
                         {/* Capacity Group */}
                         <div className="space-y-4">
                           <div className="flex items-center justify-between">
-                            <h4 className="text-sm font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                            <h4 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
                               Capacity Limits
                               <MetricTooltip align="center" position="top" text="Available resource limits for the sprint." formula="Resources = Unique Assignees. Duration = Working Days - (Holidays + Events). Click the gear icon to configure.">
                                 <InfoIcon className="h-3.5 w-3.5 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
@@ -3351,31 +3343,31 @@
                             </h4>
                             <button 
                               onClick={() => setIsBlockerModalOpen(true)}
-                              className="p-1.5 rounded-lg bg-slate-950/50 hover:bg-indigo-500/20 text-slate-400 hover:text-indigo-300 border border-white/5 hover:border-indigo-500/30 transition-all shadow-sm"
+                              className="p-1.5 rounded-lg bg-[#0f172a] hover:bg-[#1e293b] text-slate-400 hover:text-white border border-[#1e293b] transition-all shadow-sm"
                               title="Configure Sprint Capacity"
                             >
                               <Settings className="w-4 h-4" />
                             </button>
                           </div>
                           <div className="grid grid-cols-1 gap-3">
-                            <div className="bg-slate-950/30 p-3.5 rounded-xl border border-white/5 flex items-center justify-between transition-colors hover:bg-slate-900/60">
+                            <div className="bg-[#0f172a] p-3.5 rounded-xl border border-[#1e293b] flex items-center justify-between">
                               <div className="flex items-center text-slate-300">
                                 <Users className="w-4 h-4 mr-2 text-blue-400" />
-                                <span className="text-sm">Developers</span>
+                                <span className="text-sm font-medium">Developers</span>
                               </div>
                               <span className="text-lg font-bold text-white">{devCount}</span>
                             </div>
-                            <div className="bg-slate-950/30 p-3.5 rounded-xl border border-white/5 flex items-center justify-between transition-colors hover:bg-slate-900/60">
+                            <div className="bg-[#0f172a] p-3.5 rounded-xl border border-[#1e293b] flex items-center justify-between">
                               <div className="flex items-center text-slate-300">
                                 <Users className="w-4 h-4 mr-2 text-emerald-400" />
-                                <span className="text-sm">QA Resources</span>
+                                <span className="text-sm font-medium">QA Resources</span>
                               </div>
                               <span className="text-lg font-bold text-white">{qaCount}</span>
                             </div>
-                            <div className="bg-slate-950/30 p-3.5 rounded-xl border border-white/5 flex items-center justify-between transition-colors hover:bg-slate-900/60">
+                            <div className="bg-[#0f172a] p-3.5 rounded-xl border border-[#1e293b] flex items-center justify-between">
                               <div className="flex items-center text-slate-300">
                                 <Calendar className="w-4 h-4 mr-2 text-sky-400" />
-                                <span className="text-sm">Sprint Days</span>
+                                <span className="text-sm font-medium">Sprint Days</span>
                               </div>
                               <span className="text-lg font-bold text-white">{bucketDurationDays}</span>
                             </div>
@@ -3384,33 +3376,33 @@
 
                         {/* Scope Group */}
                         <div className="space-y-4">
-                          <h4 className="text-sm font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                          <h4 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
                             Scope (Main Tasks)
                             <MetricTooltip align="center" position="top" text="Total workload based on parent tasks." formula="Count of Main Tasks & Sum of their tracked Time Estimates.">
                               <InfoIcon className="h-3.5 w-3.5 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
                             </MetricTooltip>
                           </h4>
                           <div className="space-y-3">
-                            <div className="bg-slate-950/30 p-3 rounded-xl border border-white/5 flex flex-col transition-colors hover:bg-slate-900/60">
+                            <div className="bg-[#0f172a] p-3 rounded-xl border border-[#1e293b] border-l-2 border-l-slate-500 flex flex-col">
                               <div className="flex justify-between items-center mb-1">
-                                <span className="text-sm text-slate-300 flex items-center"><Box className="w-3.5 h-3.5 mr-1.5 text-slate-500"/> Plotted</span>
-                                <span className="text-sm font-bold text-white">{plottedScopeCount}</span>
+                                <span className="text-sm text-slate-300 flex items-center font-medium"><Box className="w-3.5 h-3.5 mr-1.5 text-slate-500"/> Plotted</span>
+                                <span className="text-lg font-bold text-white leading-none">{plottedScopeCount}</span>
                               </div>
-                              <div className="text-xs text-slate-500 text-right">{plottedScopeEstHours} Est. Hours</div>
+                              <div className="text-[10px] text-slate-500 font-semibold text-right">{plottedScopeEstHours} Est. Hours</div>
                             </div>
-                            <div className="bg-emerald-500/5 p-3 rounded-xl border border-emerald-500/10 flex flex-col transition-colors hover:bg-emerald-500/10">
+                            <div className="bg-[#0f172a] p-3 rounded-xl border border-[#1e293b] border-l-2 border-l-emerald-500 flex flex-col">
                               <div className="flex justify-between items-center mb-1">
-                                <span className="text-sm text-emerald-200 flex items-center"><CheckCircle2 className="w-3.5 h-3.5 mr-1.5 text-emerald-400"/> Completed</span>
-                                <span className="text-sm font-bold text-white">{completedMotherCount}</span>
+                                <span className="text-sm text-emerald-100 flex items-center font-medium"><CheckCircle2 className="w-3.5 h-3.5 mr-1.5 text-emerald-400"/> Completed</span>
+                                <span className="text-lg font-bold text-white leading-none">{completedMotherCount}</span>
                               </div>
-                              <div className="text-xs text-emerald-500/70 text-right">{completedMotherEstHours} Est. Hours</div>
+                              <div className="text-[10px] text-emerald-500/70 font-semibold text-right">{completedMotherEstHours} Est. Hours</div>
                             </div>
-                            <div className="bg-amber-500/5 p-3 rounded-xl border border-amber-500/10 flex flex-col transition-colors hover:bg-amber-500/10">
+                            <div className="bg-[#0f172a] p-3 rounded-xl border border-[#1e293b] border-l-2 border-l-amber-500 flex flex-col">
                               <div className="flex justify-between items-center mb-1">
-                                <span className="text-sm text-amber-200 flex items-center"><ClockAlert className="w-3.5 h-3.5 mr-1.5 text-amber-400"/> Spill Over</span>
-                                <span className="text-sm font-bold text-white">{spillOverCount}</span>
+                                <span className="text-sm text-amber-200 flex items-center font-medium"><ClockAlert className="w-3.5 h-3.5 mr-1.5 text-amber-400"/> Spill Over</span>
+                                <span className="text-lg font-bold text-white leading-none">{spillOverCount}</span>
                               </div>
-                              <div className="text-xs text-amber-500/70 text-right">{spillOverEstHours} Est. Hours</div>
+                              <div className="text-[10px] text-amber-500/70 font-semibold text-right">{spillOverEstHours} Est. Hours</div>
                             </div>
                           </div>
                         </div>
@@ -3420,16 +3412,16 @@
                   </div>
                 </div>
 
-                {/* 4. Estimation Accuracy Section */}
-                <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl mb-8 relative z-10 hover:z-[70]">
+                {/* 4. Estimation Accuracy Section - Restored Solid Dark Panels */}
+                <div className="bg-[#0b1120] rounded-2xl border border-[#1e293b] shadow-xl mb-8 relative z-10 hover:z-[70]">
                   <div className="p-6 md:p-8 flex flex-col md:flex-row md:items-center gap-8 lg:gap-12">
                     {/* Left side: Emphasis */}
                     <div className="flex-shrink-0 md:w-1/3">
                       <div className="flex items-center flex-wrap space-x-3 mb-3">
-                        <div className="bg-purple-500/10 p-2.5 rounded-lg border border-purple-500/20 shrink-0">
+                        <div className="bg-[#0f172a] p-2.5 rounded-lg border border-[#1e293b] shrink-0">
                           <Target className="h-6 w-6 text-purple-400" />
                         </div>
-                        <h2 className="text-lg font-semibold text-white flex items-center flex-wrap gap-2">
+                        <h2 className="text-lg font-bold text-white flex items-center flex-wrap gap-2">
                           Est. Accuracy
                           <MetricTooltip align="left" position="top" text="Measures the accuracy of time estimates against actual time spent." formula="100 - (|Actual Duration - Estimated Time| / Estimated Time * 100) for completed tasks.">
                             <InfoIcon className="h-4 w-4 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
@@ -3445,8 +3437,8 @@
                     </div>
 
                     {/* Right side: Detailed Breakdown */}
-                    <div className="flex-1 border-t md:border-t-0 md:border-l border-white/10 pt-6 md:pt-0 md:pl-8 lg:pl-12">
-                      <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4 flex items-center flex-wrap gap-2">
+                    <div className="flex-1 border-t md:border-t-0 md:border-l border-[#1e293b] pt-6 md:pt-0 md:pl-8 lg:pl-12">
+                      <h3 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-4 flex items-center flex-wrap gap-2">
                         Average Time in Status
                         <MetricTooltip align="center" position="top" text="Average time completed tasks spend in intermediate phases." formula="Parses the task's Activity Logs timeline, calculates duration between status changes, and averages it.">
                           <InfoIcon className="h-3.5 w-3.5 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
@@ -3456,14 +3448,14 @@
                       {avgTimeInStatusList.length > 0 ? (
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3">
                           {avgTimeInStatusList.map(stat => (
-                            <div key={stat.status} className="flex justify-between items-center text-sm p-3 bg-slate-950/30 rounded-xl border border-white/5 transition-colors hover:bg-slate-900/60">
-                              <span className="text-slate-300 capitalize truncate pr-4">{stat.status}</span>
-                              <span className="text-indigo-300 font-mono font-medium shrink-0 bg-indigo-500/10 px-2 py-1 rounded-md border border-indigo-500/20">{stat.timeDisplay}</span>
+                            <div key={stat.status} className="flex justify-between items-center text-sm p-3 bg-[#0f172a] rounded-xl border border-[#1e293b]">
+                              <span className="text-slate-300 capitalize font-medium truncate pr-4">{stat.status}</span>
+                              <span className="text-indigo-300 font-mono text-[11px] shrink-0 bg-[#0b1120] px-2 py-1 rounded border border-[#1e293b]">{stat.timeDisplay}</span>
                             </div>
                           ))}
                         </div>
                       ) : (
-                        <div className="text-sm text-slate-500 italic p-6 bg-slate-950/20 rounded-xl border border-white/5 text-center">
+                        <div className="text-sm text-slate-500 italic p-6 bg-[#0f172a] rounded-xl border border-[#1e293b] text-center">
                           No status timing data is available for completed tasks yet.
                         </div>
                       )}
@@ -3471,12 +3463,12 @@
                   </div>
                 </div>
 
-                {/* 5. Team Workload Section */}
+                {/* 5. Team Workload Section - Restored matching image_bcb88d.png */}
                 {assigneesList.length > 0 && (
                   <div className="mb-8 animate-in fade-in">
                     <div className="flex items-center flex-wrap space-x-2 mb-4">
                         <Users className="h-5 w-5 text-indigo-400 shrink-0" />
-                        <h2 className="text-lg font-semibold text-white flex items-center flex-wrap gap-2">
+                        <h2 className="text-lg font-bold text-white flex items-center flex-wrap gap-2">
                           Team Workload & Roles
                           <MetricTooltip align="left" position="top" text="Tag resources to calculate Dev/QA utilization accurately." formula="Change a role below to dynamically update the Bucket Utilization percentages.">
                             <InfoIcon className="h-4 w-4 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
@@ -3490,52 +3482,82 @@
                         const progressPct = estHours > 0 ? Math.min(100, Math.round((spentHours / estHours) * 100)) : (spentHours > 0 ? 100 : 0);
                         const totalTasksAssigned = Object.values(assignee.statusCounts).reduce((sum, s) => sum + s.count, 0);
 
+                        // Robustly extract initials for default avatar fallback from "Firstname Lastname"
+                        let initials = "NA";
+                        if (assignee.username) {
+                            const parts = assignee.username.split(/[ -]/);
+                            if (parts.length >= 2) {
+                                initials = (parts[0][0] + parts[parts.length-1][0]).toUpperCase();
+                            } else {
+                                initials = assignee.username.substring(0, 2).toUpperCase();
+                            }
+                        }
+
+                        // Determine circle background color based on their most prominent active status, or default fallback
+                        let dominantColor = '#6366f1';
+                        if (assignee.statusCounts) {
+                            let maxCount = 0;
+                            Object.values(assignee.statusCounts).forEach(stat => {
+                                if (stat.count > maxCount) {
+                                    maxCount = stat.count;
+                                    dominantColor = stat.color;
+                                }
+                            });
+                        }
+
                         return (
-                          <div key={assignee.username} className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl relative z-10 hover:z-[70] flex flex-col justify-between">
+                          <div key={assignee.username} className="bg-[#0b1120] p-6 rounded-2xl border border-[#1e293b] shadow-xl relative z-10 hover:z-[70] flex flex-col justify-between hover:border-indigo-500/30 transition-colors">
                             <div>
                               <div className="flex items-start justify-between mb-4">
                                 <div className="flex items-center space-x-4">
-                                  <img src={assignee.profilePicture} alt={assignee.username} className="w-10 h-10 rounded-full border border-white/10 object-cover bg-slate-800" />
+                                  {/* Solid Initial Circle matches screenshot exactly */}
+                                  <div className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-slate-950 text-sm shadow-inner" style={{ backgroundColor: dominantColor }}>
+                                    {initials}
+                                  </div>
                                   <div>
-                                    <h3 className="text-md font-semibold text-white">{assignee.username}</h3>
-                                    <p className="text-xs text-slate-400">{totalTasksAssigned} Assigned Item{totalTasksAssigned !== 1 ? 's' : ''}</p>
+                                    <h3 className="text-[15px] font-bold text-white leading-tight">{assignee.username}</h3>
+                                    <p className="text-xs font-medium text-slate-400 mt-0.5">{totalTasksAssigned} Assigned Items</p>
                                   </div>
                                 </div>
-                                <select
-                                  value={userRoles[assignee.username] || 'Developer'}
-                                  onChange={(e) => {
-                                    const val = e.target.value;
-                                    setUserRoles(prev => {
-                                      const nextRoles = {...prev, [assignee.username]: val};
-                                      saveSettings({ userRoles: nextRoles });
-                                      return nextRoles;
-                                    });
-                                  }}
-                                  className="bg-slate-950 border border-white/10 text-indigo-300 text-[11px] font-semibold tracking-wide uppercase rounded-lg px-2.5 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-sm cursor-pointer"
-                                >
-                                  <option value="Developer">Developer</option>
-                                  <option value="QA">QA</option>
-                                </select>
+                                
+                                <div className="relative inline-flex items-center shrink-0">
+                                  <select
+                                    value={userRoles[assignee.username] || 'Developer'}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setUserRoles(prev => {
+                                        const nextRoles = {...prev, [assignee.username]: val};
+                                        saveSettings({ userRoles: nextRoles });
+                                        return nextRoles;
+                                      });
+                                    }}
+                                    className="appearance-none bg-[#0f172a] border border-[#1e293b] text-indigo-200 text-[10px] font-bold tracking-widest uppercase rounded-lg px-3 py-1.5 pr-7 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                                  >
+                                    <option value="Developer">DEVELOPER</option>
+                                    <option value="QA">QA</option>
+                                  </select>
+                                  <ChevronRight className="absolute right-2 top-1/2 -translate-y-1/2 h-3 w-3 text-indigo-400 pointer-events-none rotate-90" />
+                                </div>
                               </div>
                               
                               <div className="flex flex-wrap gap-2 mb-6">
                                 {Object.entries(assignee.statusCounts).map(([status, {count, color}]) => (
-                                  <span key={status} className="px-2 py-0.5 text-[10px] font-bold rounded capitalize border flex items-center" style={{ color: color, backgroundColor: `${color}15`, borderColor: `${color}30` }}>
-                                    {status} <span className="ml-1 opacity-75 bg-slate-900/40 px-1.5 py-[1px] rounded-sm">{count}</span>
+                                  <span key={status} className="px-2.5 py-1 text-[10px] font-bold rounded capitalize border flex items-center gap-1.5" style={{ color: color, backgroundColor: `${color}10`, borderColor: `${color}30` }}>
+                                    {status} <span className="text-white bg-slate-950 px-1.5 py-[1px] rounded opacity-90 leading-tight border border-[#1e293b]">{count}</span>
                                   </span>
                                 ))}
                               </div>
                             </div>
 
-                            <div>
-                              <div className="flex justify-between text-xs mb-1.5 font-medium">
-                                <span className="text-slate-400 flex items-center"><Clock className="h-3 w-3 mr-1" /> Logged Time</span>
-                                <span className="text-white">{spentHours}h <span className="text-slate-500 font-normal">/ {estHours}h</span></span>
+                            <div className="mt-auto">
+                              <div className="flex justify-between text-xs mb-2 font-medium">
+                                <span className="text-slate-400 flex items-center"><Clock className="h-3.5 w-3.5 mr-1" /> Logged Time</span>
+                                <span className="text-white font-bold">{spentHours}h <span className="text-slate-500 font-semibold">/ {estHours}h</span></span>
                               </div>
-                              <div className="w-full bg-slate-950 border border-white/5 rounded-full h-2 overflow-hidden shadow-inner">
+                              <div className="w-full bg-[#0f172a] rounded-full h-1.5 overflow-hidden">
                                 <div 
-                                  className="bg-gradient-to-r from-indigo-500 to-violet-500 h-full rounded-full transition-all duration-1000" 
-                                  style={{ width: `${progressPct}%`, boxShadow: `0 0 8px rgba(99,102,241,0.5)` }}
+                                  className="bg-indigo-500 h-full rounded-full transition-all duration-1000 shadow-[0_0_8px_rgba(99,102,241,0.5)]" 
+                                  style={{ width: `${progressPct}%` }}
                                 ></div>
                               </div>
                             </div>
@@ -3546,90 +3568,88 @@
                   </div>
                 )}
 
-                {/* 6. Bug Tracking Widgets */}
+                {/* 6. Bug Tracking Widgets - Restored to match image_bcb885.png */}
                 {totalBugsCount > 0 && (
                   <div className="mb-8 animate-in fade-in">
                     <div className="flex items-center space-x-2 mb-4">
                         <Bug className="h-5 w-5 text-rose-400 shrink-0" />
-                        <h2 className="text-lg font-semibold text-white">Quality & Defects</h2>
+                        <h2 className="text-lg font-bold text-white">Quality & Defects</h2>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 lg:gap-6">
-                      <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-purple-500/10 shadow-xl flex items-start space-x-4 relative z-10 hover:z-[70]">
-                        <div className="bg-purple-500/10 p-3 rounded-lg border border-purple-500/20 shrink-0">
+                    <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                      <div className="bg-[#0b1120] p-5 rounded-2xl border border-[#1e293b] shadow-xl flex items-center gap-4 relative z-10 hover:z-[70]">
+                        <div className="bg-[#0f172a] p-3 rounded-lg border border-[#1e293b] shrink-0">
                           <Target className="h-6 w-6 text-purple-400" />
                         </div>
                         <div className="min-w-0">
-                          <div className="flex items-center flex-wrap gap-1.5 mb-1">
-                            <p className="text-sm font-medium text-slate-400">Avg Quality Rate</p>
+                          <div className="flex items-center flex-wrap gap-1 mb-0.5">
+                            <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Avg Quality Rate</p>
                             <MetricTooltip align="left" position="top" text="Average quality score across mother tasks." formula="100% minus penalty points for each bug based on complexity/priority. (Critical: -20, High: -15, Normal: -10, Low: -5).">
-                              <InfoIcon className="h-3.5 w-3.5 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
+                              <InfoIcon className="h-3 w-3 text-slate-600 hover:text-indigo-400 transition-colors cursor-help" />
                             </MetricTooltip>
                           </div>
-                          <p className="text-2xl font-bold text-white mt-1">{avgQualityRate}%</p>
+                          <p className="text-2xl font-extrabold text-white tracking-tight">{avgQualityRate}%</p>
                         </div>
                       </div>
 
-                      <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-rose-500/10 shadow-xl flex items-start space-x-4 relative z-10 hover:z-[70]">
-                        <div className="bg-rose-500/10 p-3 rounded-lg border border-rose-500/20 shrink-0">
+                      <div className="bg-[#0b1120] p-5 rounded-2xl border border-rose-900/30 shadow-xl flex items-center gap-4 relative z-10 hover:z-[70]">
+                        <div className="bg-[#0f172a] p-3 rounded-lg border border-rose-900/40 shrink-0">
                           <Bug className="h-6 w-6 text-rose-400" />
                         </div>
                         <div className="min-w-0">
-                          <div className="flex items-center flex-wrap gap-1.5 mb-1">
-                            <p className="text-sm font-medium text-slate-400">Active Defects</p>
+                          <div className="flex items-center flex-wrap gap-1 mb-0.5">
+                            <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Active Defects</p>
                             <MetricTooltip align="left" position="top" text="Unresolved bugs or defects." formula="Total identified bugs (in QA/UI Bug lists or tagged 'bug') minus resolved bugs.">
-                              <InfoIcon className="h-3.5 w-3.5 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
+                              <InfoIcon className="h-3 w-3 text-slate-600 hover:text-indigo-400 transition-colors cursor-help" />
                             </MetricTooltip>
                           </div>
-                          <p className="text-2xl font-bold text-white mt-1">{activeBugsCount}</p>
+                          <p className="text-2xl font-extrabold text-white tracking-tight">{activeBugsCount}</p>
                         </div>
                       </div>
                       
-                      <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-orange-500/10 shadow-xl flex items-start space-x-4 relative z-10 hover:z-[70]">
-                        <div className="bg-orange-500/10 p-3 rounded-lg border border-orange-500/20 shrink-0">
-                          <ShieldAlert className="h-6 w-6 text-orange-400" />
+                      <div className="bg-[#0b1120] p-5 rounded-2xl border border-amber-900/30 shadow-xl flex items-center gap-4 relative z-10 hover:z-[70]">
+                        <div className="bg-[#0f172a] p-3 rounded-lg border border-amber-900/40 shrink-0">
+                          <ShieldAlert className="h-6 w-6 text-amber-500" />
                         </div>
                         <div className="min-w-0">
-                          <div className="flex items-center flex-wrap gap-1.5 mb-1">
-                            <p className="text-sm font-medium text-slate-400">High/Critical</p>
+                          <div className="flex items-center flex-wrap gap-1 mb-0.5">
+                            <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">High/Critical</p>
                             <MetricTooltip align="center" position="top" text="Urgent defects requiring immediate attention." formula="Active defects with priority set to 'High', 'Urgent', or 'Critical'.">
-                              <InfoIcon className="h-3.5 w-3.5 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
+                              <InfoIcon className="h-3 w-3 text-slate-600 hover:text-indigo-400 transition-colors cursor-help" />
                             </MetricTooltip>
                           </div>
-                          <p className="text-2xl font-bold text-white mt-1">{criticalBugsCount}</p>
+                          <p className="text-2xl font-extrabold text-white tracking-tight">{criticalBugsCount}</p>
                         </div>
                       </div>
 
-                      <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-emerald-500/10 shadow-xl flex items-start space-x-4 relative z-10 hover:z-[70]">
-                        <div className="bg-emerald-500/10 p-3 rounded-lg border border-emerald-500/20 shrink-0">
+                      <div className="bg-[#0b1120] p-5 rounded-2xl border border-emerald-900/30 shadow-xl flex items-center gap-4 relative z-10 hover:z-[70]">
+                        <div className="bg-[#0f172a] p-3 rounded-lg border border-emerald-900/40 shrink-0">
                           <Activity className="h-6 w-6 text-emerald-400" />
                         </div>
                         <div className="min-w-0">
-                          <div className="flex items-center flex-wrap gap-1.5 mb-1">
-                            <p className="text-sm font-medium text-slate-400">Resolution Rate</p>
+                          <div className="flex items-center flex-wrap gap-1 mb-0.5">
+                            <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Resolution Rate</p>
                             <MetricTooltip align="center" position="top" text="Percentage of total identified bugs that have been fixed." formula="(Resolved Bugs / Total Identified Bugs) × 100">
-                              <InfoIcon className="h-3.5 w-3.5 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
+                              <InfoIcon className="h-3 w-3 text-slate-600 hover:text-indigo-400 transition-colors cursor-help" />
                             </MetricTooltip>
                           </div>
-                          <div className="flex items-end space-x-2 mt-1">
-                            <p className="text-2xl font-bold text-white">{bugResolutionRate}%</p>
-                          </div>
+                          <p className="text-2xl font-extrabold text-white tracking-tight">{bugResolutionRate}%</p>
                         </div>
                       </div>
 
-                      <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-sky-500/10 shadow-xl flex items-start space-x-4 relative z-10 hover:z-[70]">
-                        <div className="bg-sky-500/10 p-3 rounded-lg border border-sky-500/20 shrink-0">
+                      <div className="bg-[#0b1120] p-5 rounded-2xl border border-sky-900/30 shadow-xl flex items-center gap-4 relative z-10 hover:z-[70] md:col-span-2 lg:col-span-1">
+                        <div className="bg-[#0f172a] p-3 rounded-lg border border-sky-900/40 shrink-0">
                           <Zap className="h-6 w-6 text-sky-400" />
                         </div>
                         <div className="min-w-0">
-                          <div className="flex items-center flex-wrap gap-1.5 mb-1">
-                            <p className="text-sm font-medium text-slate-400">Avg Fix Velocity</p>
+                          <div className="flex items-center flex-wrap gap-1 mb-0.5">
+                            <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Avg Fix Velocity</p>
                             <MetricTooltip align="right" position="top" text="Average turnaround time to resolve a defect." formula="Sum of (Date Closed - Date Created) for all resolved bugs / Total number of resolved bugs.">
-                              <InfoIcon className="h-3.5 w-3.5 text-slate-500 hover:text-indigo-400 transition-colors cursor-help" />
+                              <InfoIcon className="h-3 w-3 text-slate-600 hover:text-indigo-400 transition-colors cursor-help" />
                             </MetricTooltip>
                           </div>
-                          <div className="flex items-end space-x-2 mt-1">
-                            <p className="text-2xl font-bold text-white">{avgVelocityValue}</p>
-                            {avgVelocityUnit && <p className="text-xs text-slate-400 mb-1">{avgVelocityUnit}</p>}
+                          <div className="flex items-baseline space-x-1">
+                            <p className="text-2xl font-extrabold text-white tracking-tight">{avgVelocityValue}</p>
+                            {avgVelocityUnit && <p className="text-[10px] font-bold text-slate-500 uppercase">{avgVelocityUnit}</p>}
                           </div>
                         </div>
                       </div>
@@ -3637,59 +3657,76 @@
                   </div>
                 )}
 
-                {/* 7. Stalled Tasks Section (Exceptions) */}
+                {/* 7. Stalled Tasks Section (Exceptions) - Restored matching image_bcb885.png */}
                 <div className="w-full space-y-6 mb-8">
-                  <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl animate-in slide-in-from-bottom-4 relative z-10 hover:z-[70]">
-                    <div className="px-5 py-4 border-b border-white/5 bg-amber-500/5 flex flex-wrap items-center justify-between rounded-t-2xl gap-2">
+                  <div className="bg-[#0b1120] rounded-2xl border border-[#1e293b] shadow-xl animate-in slide-in-from-bottom-4 relative z-10 hover:z-[70] overflow-hidden">
+                    <div className="px-5 py-3 border-b border-[#1e293b] bg-[#0f172a] flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-center space-x-2 min-w-0">
-                        <ClockAlert className="h-5 w-5 text-amber-400 shrink-0" />
-                        <h2 className="text-lg font-semibold text-white flex items-center flex-wrap gap-2">
+                        <ClockAlert className="h-4 w-4 text-amber-400 shrink-0" />
+                        <h2 className="text-[13px] font-bold text-white flex items-center flex-wrap gap-2">
                           Needs Attention
                           <MetricTooltip align="left" position="top" text="Active items where logged/elapsed time exceeds originally estimated time." formula="Elapsed Time (Date Now - Date Created) > Estimated Hours OR Logged Hours > Estimated Hours">
-                            <InfoIcon className="h-4 w-4 text-amber-500 hover:text-amber-400 transition-colors cursor-help" />
+                            <InfoIcon className="h-3.5 w-3.5 text-amber-500 hover:text-amber-400 transition-colors cursor-help" />
                           </MetricTooltip>
                         </h2>
                       </div>
-                      <span className="text-xs font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 uppercase tracking-wider shrink-0">Stalled</span>
+                      <span className="text-[10px] font-bold text-amber-400 border border-amber-500/30 px-2 py-0.5 rounded uppercase tracking-wider shrink-0 bg-amber-500/10">Stalled</span>
                     </div>
                     
                     {stalledTasks.length > 0 ? (
-                      <ul className="divide-y divide-white/5 rounded-b-2xl">
+                      <ul className="divide-y divide-[#1e293b] bg-[#0b1120]">
                         {stalledTasks.map(task => {
-                          const themeColor = task.status?.color || '#94a3b8';
                           const createdDate = task.date_created ? parseInt(task.date_created) : Date.now();
                           const daysOld = Math.floor((Date.now() - createdDate) / 86400000);
                           const estimatedHours = Math.round((parseInt(task.time_estimate) || 0) / 3600000);
                           
+                          let assigneeInitials = "NA";
+                          let assigneeColor = '#3b82f6';
+                          if (task.assignees && task.assignees.length > 0) {
+                              const assignee = task.assignees[0];
+                              const parts = assignee.username.split(/[ -]/);
+                              if (parts.length >= 2) {
+                                  assigneeInitials = (parts[0][0] + parts[parts.length-1][0]).toUpperCase();
+                              } else {
+                                  assigneeInitials = assignee.username.substring(0, 2).toUpperCase();
+                              }
+                              // Pick color deterministically based on ID or name length for a consistent "avatar" feel
+                              const colors = ['#f43f5e', '#ec4899', '#d946ef', '#a855f7', '#8b5cf6', '#6366f1', '#3b82f6', '#0ea5e9', '#06b6d4', '#14b8a6', '#10b981', '#22c55e', '#84cc16'];
+                              const colorIndex = (assignee.username.length + (assignee.id || 0)) % colors.length;
+                              assigneeColor = colors[colorIndex];
+                          }
+
                           return (
                             <li 
                               key={task.id} 
                               onClick={() => setSelectedTicketForModal(task)}
-                              className="p-4 hover:bg-slate-800/50 cursor-pointer transition-colors group flex items-start justify-between gap-3"
+                              className="p-4 hover:bg-[#0f172a] cursor-pointer transition-colors group flex items-center justify-between gap-3"
                             >
-                              <div className="min-w-0">
-                                <div className="flex items-center space-x-2 mb-1">
-                                  <div 
-                                    className="w-2 h-2 rounded-full shrink-0" 
-                                    style={{ backgroundColor: themeColor }} 
-                                  />
-                                  <span className="text-sm font-semibold text-slate-200 truncate group-hover:text-white transition-colors">{task.name}</span>
-                                </div>
-                                <div className="flex items-center text-xs text-slate-500 ml-4">
-                                  <ClockAlert className="h-3 w-3 mr-1 text-amber-500/70" />
-                                  Elapsed: {daysOld}d / Est: {estimatedHours}h
+                              <div className="flex items-start gap-3 min-w-0">
+                                {/* Blue dot marker */}
+                                <div className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0 mt-1.5 shadow-[0_0_8px_rgba(59,130,246,0.8)]" />
+                                
+                                <div className="min-w-0">
+                                  <div className="flex items-center space-x-2 mb-1">
+                                    <span className="text-sm font-bold text-slate-200 truncate group-hover:text-white transition-colors">{task.name}</span>
+                                  </div>
+                                  <div className="flex items-center text-xs font-semibold text-slate-500">
+                                    <ClockAlert className="h-3 w-3 mr-1 text-amber-500/70" />
+                                    Elapsed: {daysOld}d / Est: {estimatedHours}h
+                                  </div>
                                 </div>
                               </div>
                               
                               {task.assignees && task.assignees.length > 0 ? (
-                                <img 
-                                  src={task.assignees[0].profilePicture || `https://ui-avatars.com/api/?name=${encodeURIComponent(task.assignees[0].username)}&background=random`} 
-                                  alt={task.assignees[0].username} 
-                                  className="w-6 h-6 rounded-full border border-slate-700 bg-slate-800 object-cover shrink-0 mt-0.5" 
-                                  title={`Assigned to ${task.assignees[0].username}`} 
-                                />
+                                <div 
+                                    className="w-7 h-7 rounded-full flex items-center justify-center font-bold text-slate-950 text-[10px] shrink-0" 
+                                    style={{ backgroundColor: assigneeColor }}
+                                    title={`Assigned to ${task.assignees[0].username}`}
+                                >
+                                    {assigneeInitials}
+                                </div>
                               ) : (
-                                <div className="flex items-center justify-center w-6 h-6 rounded-full border border-white/5 bg-slate-900 text-slate-500 shrink-0 mt-0.5" title="Unassigned">
+                                <div className="flex items-center justify-center w-7 h-7 rounded-full border border-[#1e293b] bg-[#0f172a] text-slate-500 shrink-0" title="Unassigned">
                                   <Users className="h-3 w-3" />
                                 </div>
                               )}
@@ -3698,7 +3735,7 @@
                         })}
                       </ul>
                     ) : (
-                      <div className="p-8 text-center text-sm text-slate-500 italic rounded-b-2xl">
+                      <div className="p-8 text-center text-sm text-slate-500 italic">
                           All tasks are running on schedule.
                       </div>
                     )}
@@ -3708,20 +3745,19 @@
                 <div className="flex flex-col space-y-8 mb-8">
                   {/* 8. Active Tasks Explorer */}
                   <div className="w-full space-y-6">
-                    <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl relative z-10 hover:z-[70]">
-                      <div className="px-6 py-4 border-b border-white/5 bg-slate-900/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-t-2xl">
+                    <div className="bg-[#0b1120] rounded-2xl border border-[#1e293b] shadow-xl relative z-10 hover:z-[70] overflow-hidden">
+                      <div className="px-6 py-4 border-b border-[#1e293b] bg-[#0f172a] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                         <div className="flex items-center space-x-3">
-                          <h2 className="text-lg font-semibold text-white flex items-center">
+                          <h2 className="text-lg font-bold text-white flex items-center">
                              <ListTodo className="h-5 w-5 mr-2 text-indigo-400" />
                              Active Tasks Explorer
                           </h2>
                         </div>
                       </div>
-                      <div className="divide-y divide-white/5 max-h-[600px] overflow-y-auto rounded-b-2xl">
+                      <div className="divide-y divide-[#1e293b] max-h-[600px] overflow-y-auto">
                         {mappedWorkflows.map(workflow => {
                           const currentTab = workflowTabs[workflow.id] || 'all';
 
-                          // Utilize the recursive engine to build a pristine active-only tree, strictly filtering out bug containers
                           const mainTasksOnly = (workflow.tasks || []).filter(t => {
                             const n = t.name?.toLowerCase() || '';
                             return !n.includes('qa bugs') && !n.includes('ui bugs');
@@ -3737,13 +3773,13 @@
 
                           return (
                             <div key={workflow.id} className="p-6 transition-colors">
-                              <div className="flex flex-wrap gap-2 mb-4 border-b border-white/5 pb-3">
+                              <div className="flex flex-wrap gap-2 mb-4 border-b border-[#1e293b] pb-3">
                                 <button
                                   onClick={() => setWorkflowTabs(prev => ({ ...prev, [workflow.id]: 'all' }))}
-                                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                                  className={`px-3 py-1.5 text-xs font-bold uppercase tracking-wider rounded-lg transition-all ${
                                     currentTab === 'all'
                                       ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/30'
-                                      : 'bg-slate-900/60 text-slate-400 border border-transparent hover:text-slate-200'
+                                      : 'bg-[#0f172a] text-slate-400 border border-transparent hover:text-slate-200'
                                   }`}
                                 >
                                   All ({rootTasksByTags.length})
@@ -3757,12 +3793,12 @@
                                     <button
                                       key={status}
                                       onClick={() => setWorkflowTabs(prev => ({ ...prev, [workflow.id]: status }))}
-                                      className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5 capitalize border ${
+                                      className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-lg transition-all flex items-center gap-1.5 border ${
                                         isSelected
-                                          ? 'bg-slate-900 text-white'
-                                          : 'bg-slate-900/40 text-slate-400 border-transparent hover:text-slate-200'
+                                          ? 'bg-[#0b1120] text-white border-[#1e293b]'
+                                          : 'bg-[#0f172a] text-slate-400 border-transparent hover:text-slate-200'
                                       }`}
-                                      style={isSelected ? { borderColor: `${statusColor}40`, boxShadow: `0 0 8px ${statusColor}15` } : {}}
+                                      style={isSelected ? { borderColor: `${statusColor}60`, boxShadow: `0 0 8px ${statusColor}15` } : {}}
                                     >
                                       <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: statusColor, boxShadow: `0 0 6px ${statusColor}` }} />
                                       {status} ({count})
@@ -3772,8 +3808,8 @@
                               </div>
 
                               <div className="flex items-center justify-between mb-3">
-                                <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Main Tasks</h4>
-                                <span className="text-xs bg-slate-900/60 text-slate-400 border border-white/5 px-2.5 py-0.5 rounded-full font-medium">
+                                <h4 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Main Tasks</h4>
+                                <span className="text-[10px] bg-[#0f172a] text-slate-400 border border-[#1e293b] px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider">
                                   {currentTab !== 'all'
                                     ? `Showing ${displayedTasks.length} of ${rootTasksByTags.length} tasks`
                                     : `${rootTasksByTags.length} tasks`}
@@ -3793,7 +3829,7 @@
                                   ))}
                                 </div>
                               ) : (
-                                <div className="text-sm text-slate-400 italic p-4 bg-slate-950/20 rounded-lg text-center border border-white/5">
+                                <div className="text-sm text-slate-500 italic p-4 bg-[#0f172a] rounded-xl text-center border border-[#1e293b]">
                                   No tasks match this status tab filter.
                                </div>
                               )}
@@ -3806,21 +3842,20 @@
 
                   {/* 9. Completed Tasks Section */}
                   <div className="w-full space-y-6">
-                    <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl relative z-10 hover:z-[70]">
-                      <div className="px-6 py-4 border-b border-white/5 bg-slate-900/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-t-2xl">
+                    <div className="bg-[#0b1120] rounded-2xl border border-[#1e293b] shadow-xl relative z-10 hover:z-[70] overflow-hidden">
+                      <div className="px-6 py-4 border-b border-[#1e293b] bg-[#0f172a] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                         <div className="flex items-center space-x-3">
-                          <h2 className="text-lg font-semibold text-white flex items-center">
+                          <h2 className="text-lg font-bold text-white flex items-center">
                              <CheckCircle2 className="h-5 w-5 mr-2 text-emerald-400" />
                              Completed Tasks Explorer
                           </h2>
-                          <span className="flex items-center text-xs font-medium text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20 transition-all">
+                          <span className="flex items-center text-[10px] font-bold uppercase tracking-wider text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20 transition-all">
                             {completedFilteredTasksCount} Resolved
                           </span>
                         </div>
                       </div>
-                      <div className="divide-y divide-white/5 max-h-[400px] overflow-y-auto rounded-b-2xl">
+                      <div className="divide-y divide-[#1e293b] max-h-[400px] overflow-y-auto">
                         {mappedWorkflows.map(workflow => {
-                          // Utilize the recursive engine to build a pristine completed-only tree, strictly filtering out bug containers
                           const mainTasksOnly = (workflow.tasks || []).filter(t => {
                             const n = t.name?.toLowerCase() || '';
                             return !n.includes('qa bugs') && !n.includes('ui bugs');
@@ -3832,8 +3867,8 @@
                           return (
                             <div key={`completed-${workflow.id}`} className="p-6 transition-colors">
                               <div className="flex items-center justify-between mb-3">
-                                <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Main Tasks</h4>
-                                <span className="text-xs bg-slate-900/60 text-slate-400 border border-white/5 px-2.5 py-0.5 rounded-full font-medium">
+                                <h4 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Main Tasks</h4>
+                                <span className="text-[10px] bg-[#0f172a] text-slate-400 border border-[#1e293b] px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider">
                                   {completedTasksTree.length} tasks
                                 </span>
                               </div>
@@ -3860,7 +3895,7 @@
                           const completedTasksTree = buildFilteredTree(mainTasksOnly, true);
                           return completedTasksTree.length === 0;
                         }) && (
-                          <div className="p-8 text-center text-sm text-slate-500 italic rounded-b-2xl">
+                          <div className="p-8 text-center text-sm text-slate-500 italic">
                             No completed tasks match your filters yet.
                           </div>
                         )}
@@ -3875,13 +3910,13 @@
       }
 
       return (
-        <div className="min-h-screen bg-slate-900 flex font-sans relative overflow-hidden">
+        <div className="min-h-screen bg-[#020617] flex font-sans relative overflow-hidden">
           <WebNestBackground opacity={0.85} />
           
-          <div className="absolute inset-0 pointer-events-none z-10" style={{ background: 'radial-gradient(circle, transparent 30%, rgba(9, 13, 22, 0.4) 100%)' }}></div>
+          <div className="absolute inset-0 pointer-events-none z-10" style={{ background: 'radial-gradient(circle, transparent 30%, rgba(2, 6, 23, 0.6) 100%)' }}></div>
 
           <div className="hidden lg:flex lg:w-1/2 items-center justify-center p-12 relative z-20">
-            <div className="max-w-md relative bg-slate-900/40 backdrop-blur-md p-8 rounded-[2rem] border border-white/5 shadow-2xl">
+            <div className="max-w-md relative bg-[#0b1120] p-8 rounded-[2rem] border border-[#1e293b] shadow-2xl">
               <div className="flex items-center mb-8">
                 <div className="bg-indigo-600 p-2.5 rounded-xl shadow-lg shadow-indigo-500/20">
                   <SpiderNetworkIcon className="h-8 w-8 text-white" />
@@ -3912,13 +3947,13 @@
             </div>
           </div>
 
-          <div className="w-full lg:w-1/2 flex items-center justify-center p-8 sm:p-12 lg:p-24 relative z-20 bg-slate-950/20 backdrop-blur-[4px] border-l border-white/10 shadow-[-20px_0_50px_rgba(0,0,0,0.3)]">
-            <div className="absolute top-8 left-8 flex items-center lg:hidden bg-slate-900/60 backdrop-blur-xl px-4 py-2 rounded-2xl shadow-sm border border-white/10">
+          <div className="w-full lg:w-1/2 flex items-center justify-center p-8 sm:p-12 lg:p-24 relative z-20 bg-[#020617]/40 backdrop-blur-[4px] border-l border-[#1e293b] shadow-[-20px_0_50px_rgba(0,0,0,0.5)]">
+            <div className="absolute top-8 left-8 flex items-center lg:hidden bg-[#0b1120] px-4 py-2 rounded-2xl shadow-sm border border-[#1e293b]">
               <SpiderNetworkIcon className="h-6 w-6 text-indigo-400" />
               <span className="ml-2 text-xl font-bold tracking-tight text-white">Weaver</span>
             </div>
 
-            <div className="w-full max-w-sm space-y-8 bg-slate-900/30 backdrop-blur-2xl p-8 sm:p-10 rounded-[2.5rem] shadow-[0_25px_50px_-12px_rgba(0,0,0,0.5)] border border-white/10">
+            <div className="w-full max-w-sm space-y-8 bg-[#0b1120] p-8 sm:p-10 rounded-[2.5rem] shadow-[0_25px_50px_-12px_rgba(0,0,0,0.5)] border border-[#1e293b]">
               <div className="text-center lg:text-left">
                 <h2 className="text-3xl font-bold text-white tracking-tight">Welcome back</h2>
                 <p className="mt-2 text-sm text-slate-400 font-medium">
@@ -3930,7 +3965,7 @@
                 <button
                   onClick={handleGoogleLogin}
                   disabled={isLoggingIn}
-                  className="w-full flex items-center justify-center px-4 py-3 border border-slate-700/60 shadow-lg bg-slate-800/80 hover:bg-slate-800 text-sm font-medium text-slate-100 hover:text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 focus:ring-offset-slate-900 transition-all disabled:opacity-70 disabled:cursor-not-allowed"
+                  className="w-full flex items-center justify-center px-4 py-3 border border-[#1e293b] shadow-lg bg-[#0f172a] hover:bg-[#1e293b] text-sm font-medium text-slate-100 hover:text-white rounded-xl focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-all disabled:opacity-70 disabled:cursor-not-allowed"
                 >
                   {isLoggingIn ? (
                     <div className="flex items-center space-x-2">
