@@ -903,7 +903,7 @@
     };
 
     // --- Recursive Task & Subtask Item Component ---
-    const TaskItem = ({ task, depth = 0, expandedTasks, toggleTaskExpand, isDoneMode = false }) => {
+    const TaskItem = ({ task, depth = 0, expandedTasks, toggleTaskExpand, isDoneMode = false, onOpenTimeTrackModal }) => {
       // The tree is now strictly pre-filtered before it reaches the component,
       // so we can blindly trust and render whatever task.subtasks contains!
       const relevantSubtasks = task.subtasks || [];
@@ -940,6 +940,18 @@
             </div>
             
             <div className="flex items-center shrink-0 space-x-3 sm:pl-4 pl-5 overflow-x-auto overflow-y-hidden py-1">
+              {/* Log Time Button */}
+              {onOpenTimeTrackModal && (
+                <button 
+                  onClick={(e) => { e.stopPropagation(); onOpenTimeTrackModal(task); }}
+                  className="flex items-center px-2 py-0.5 rounded bg-emerald-500/10 hover:bg-emerald-500/20 text-[10px] text-emerald-400 font-bold border border-emerald-500/20 transition-colors shrink-0"
+                  title="Track Time"
+                >
+                  <Clock className="h-3 w-3 mr-1" />
+                  Track
+                </button>
+              )}
+
               {/* Expand Subtasks button */}
               {hasSubtasks && (
                 <button 
@@ -1040,6 +1052,7 @@
                   expandedTasks={expandedTasks} 
                   toggleTaskExpand={toggleTaskExpand} 
                   isDoneMode={isDoneMode}
+                  onOpenTimeTrackModal={onOpenTimeTrackModal}
                 />
               ))}
             </div>
@@ -1080,6 +1093,13 @@
       const [expandedTasks, setExpandedTasks] = useState({});
       const [workflowTabs, setWorkflowTabs] = useState({});
       
+      // Time Tracking Modal State
+      const [timeTrackModalTask, setTimeTrackModalTask] = useState(null);
+      const [timeHours, setTimeHours] = useState(0);
+      const [timeMinutes, setTimeMinutes] = useState(0);
+      const [timeDate, setTimeDate] = useState(new Date().toISOString().split('T')[0]);
+      const [timeNotes, setTimeNotes] = useState('');
+
       // Interactive Ticket Modal State
       const [selectedTicketForModal, setSelectedTicketForModal] = useState(null);
       const [commentText, setCommentText] = useState('');
@@ -1408,6 +1428,7 @@
         setMappedWorkflows([{
           id: Date.now().toString(),
           team: teamName,
+          teamId: selectedTeam,
           space: spaceName,
           folder: folderName,
           list: listName,
@@ -1428,6 +1449,56 @@
 
       const removeMapping = (id) => {
         setMappedWorkflows(mappedWorkflows.filter(w => w.id !== id));
+      };
+
+      const handleLogTime = async () => {
+        if ((!timeHours && !timeMinutes) || !timeTrackModalTask) return;
+
+        const durationMs = (Number(timeHours) * 3600000) + (Number(timeMinutes) * 60000);
+        const startMs = new Date(timeDate).getTime();
+
+        const teamId = mappedWorkflows[0]?.teamId || teams.find(t => t.name === mappedWorkflows[0]?.team)?.id;
+
+        if (clickUpToken !== 'mock_token') {
+            if (!teamId) {
+              alert("Workspace ID missing. Please reconnect your ClickUp list.");
+              return;
+            }
+            try {
+              // ClickUp Time Tracking API 2.0
+              await fetchClickUp(`team/${teamId}/time_entries`, clickUpToken, 'POST', {
+                  start: startMs,
+                  duration: durationMs,
+                  tid: timeTrackModalTask.id,
+                  description: timeNotes
+              });
+            } catch (err) {
+              console.error("Failed to log time to ClickUp", err);
+              alert("Failed to sync time with ClickUp. " + err.message);
+              return; // Halt local update if the API fails
+            }
+        }
+
+        // Local Optimistic Update
+        setMappedWorkflows(prev => prev.map(wf => {
+            const updateTree = (tasks) => {
+                return tasks.map(t => {
+                    if (t.id === timeTrackModalTask.id) {
+                        return { ...t, time_spent: (parseInt(t.time_spent) || 0) + durationMs };
+                    }
+                    if (t.subtasks && t.subtasks.length > 0) {
+                        return { ...t, subtasks: updateTree(t.subtasks) };
+                    }
+                    return t;
+                });
+            };
+            return { ...wf, tasks: updateTree(wf.tasks) };
+        }));
+
+        setTimeTrackModalTask(null);
+        setTimeHours(0);
+        setTimeMinutes(0);
+        setTimeNotes('');
       };
 
       // Simulated Auto-Sync Engine
@@ -2551,6 +2622,82 @@
               </div>
             )}
 
+            {/* Time Tracking Modal */}
+            {timeTrackModalTask && (
+              <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[110] flex items-center justify-center p-4 animate-in fade-in duration-200">
+                <div className="bg-slate-900 border border-white/10 rounded-2xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden animate-in slide-in-from-bottom-4">
+                  <div className="flex items-center justify-between p-5 border-b border-white/5 bg-slate-900/50">
+                    <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                       <Clock className="w-5 h-5 text-emerald-400" />
+                       Track Time
+                    </h2>
+                    <button onClick={() => setTimeTrackModalTask(null)} className="p-1.5 rounded-lg text-slate-400 hover:bg-white/5 hover:text-white transition-colors">
+                      <XIcon className="w-5 h-5" />
+                    </button>
+                  </div>
+                  
+                  <div className="p-5 space-y-5">
+                    <div className="bg-slate-950/40 p-3 rounded-xl border border-white/5">
+                      <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-1">Logging time for task</p>
+                      <p className="text-sm font-medium text-slate-200">{timeTrackModalTask.name}</p>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider font-semibold">Hours</label>
+                        <input 
+                          type="number" 
+                          min="0" 
+                          value={timeHours} 
+                          onChange={e => setTimeHours(e.target.value)} 
+                          className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-emerald-500" 
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider font-semibold">Minutes</label>
+                        <input 
+                          type="number" 
+                          min="0"
+                          max="59" 
+                          value={timeMinutes} 
+                          onChange={e => setTimeMinutes(e.target.value)} 
+                          className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-emerald-500" 
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider font-semibold">Date</label>
+                      <input 
+                        type="date" 
+                        value={timeDate} 
+                        onChange={e => setTimeDate(e.target.value)} 
+                        className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 [color-scheme:dark]" 
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider font-semibold">Notes / Description (Optional)</label>
+                      <textarea 
+                        value={timeNotes} 
+                        onChange={e => setTimeNotes(e.target.value)} 
+                        placeholder="What did you work on?"
+                        className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 resize-none h-20" 
+                      />
+                    </div>
+
+                    <button 
+                      onClick={handleLogTime}
+                      disabled={(!timeHours && !timeMinutes)}
+                      className="w-full flex items-center justify-center bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <CheckCircle2 className="w-4 h-4 mr-1.5" /> Save Time Entry
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Modal for Ticket Details & Comments */}
             {selectedTicketForModal && (
               <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
@@ -3581,6 +3728,7 @@
                                       task={task} 
                                       expandedTasks={expandedTasks} 
                                       toggleTaskExpand={toggleTaskExpand} 
+                                      onOpenTimeTrackModal={setTimeTrackModalTask}
                                     />
                                   ))}
                                 </div>
@@ -3637,6 +3785,7 @@
                                     expandedTasks={expandedTasks} 
                                     toggleTaskExpand={toggleTaskExpand}
                                     isDoneMode={true}
+                                    onOpenTimeTrackModal={setTimeTrackModalTask}
                                   />
                                 ))}
                               </div>
