@@ -1099,6 +1099,7 @@
       const [timeMinutes, setTimeMinutes] = useState(0);
       const [timeDate, setTimeDate] = useState(new Date().toISOString().split('T')[0]);
       const [timeNotes, setTimeNotes] = useState('');
+      const [timeAssignee, setTimeAssignee] = useState('me');
 
       // Interactive Ticket Modal State
       const [selectedTicketForModal, setSelectedTicketForModal] = useState(null);
@@ -1199,11 +1200,18 @@
       // Support generic methods including POST for comments
       const fetchClickUp = async (endpoint, token, method = 'GET', body = null) => {
         const targetUrl = `https://api.clickup.com/api/v2/${endpoint}`;
-        const proxies = [
-          `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
-          `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
-          `https://thingproxy.freeboard.io/fetch/${targetUrl}`
-        ];
+        
+        // allorigins only reliably supports GET. For POST/PUT, we filter it out to prevent mangled requests.
+        const proxies = method === 'GET' 
+          ? [
+              `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
+              `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
+              `https://thingproxy.freeboard.io/fetch/${targetUrl}`
+            ]
+          : [
+              `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
+              `https://thingproxy.freeboard.io/fetch/${targetUrl}`
+            ];
 
         for (const proxyUrl of proxies) {
           try {
@@ -1220,7 +1228,14 @@
 
             const res = await fetch(proxyUrl, fetchOptions);
             if (!res.ok) {
-              throw new Error('Invalid Token or unauthorized request. Please verify your token.');
+              // Extract the actual error message from ClickUp instead of a generic one
+              let clickUpError = '';
+              try {
+                 const errData = await res.json();
+                 clickUpError = errData.err || errData.error || '';
+              } catch (e) {}
+              
+              throw new Error(clickUpError ? clickUpError : `HTTP ${res.status} via proxy`);
             }
             return await res.json();
           } catch (err) {
@@ -1451,6 +1466,16 @@
         setMappedWorkflows(mappedWorkflows.filter(w => w.id !== id));
       };
 
+      useEffect(() => {
+        if (timeTrackModalTask) {
+          if (timeTrackModalTask.assignees && timeTrackModalTask.assignees.length > 0) {
+            setTimeAssignee((timeTrackModalTask.assignees[0].id || timeTrackModalTask.assignees[0].username).toString());
+          } else {
+            setTimeAssignee('me');
+          }
+        }
+      }, [timeTrackModalTask]);
+
       const handleLogTime = async () => {
         if ((!timeHours && !timeMinutes) || !timeTrackModalTask) return;
 
@@ -1461,17 +1486,24 @@
 
         if (clickUpToken !== 'mock_token') {
             if (!teamId) {
-              alert("Workspace ID missing. Please reconnect your ClickUp list.");
+              alert("Workspace ID missing. Please click 'Switch Connection' to quickly reconnect your ClickUp list to refresh the mapping data.");
               return;
             }
             try {
-              // ClickUp Time Tracking API 2.0
-              await fetchClickUp(`team/${teamId}/time_entries`, clickUpToken, 'POST', {
+              const payload = {
                   start: startMs,
                   duration: durationMs,
                   tid: timeTrackModalTask.id,
                   description: timeNotes
-              });
+              };
+              if (timeAssignee && timeAssignee !== 'me') {
+                  const parsedAssignee = parseInt(timeAssignee);
+                  if (!isNaN(parsedAssignee)) {
+                      payload.assignee = parsedAssignee;
+                  }
+              }
+              // ClickUp Time Tracking API 2.0
+              await fetchClickUp(`team/${teamId}/time_entries`, clickUpToken, 'POST', payload);
             } catch (err) {
               console.error("Failed to log time to ClickUp", err);
               alert("Failed to sync time with ClickUp. " + err.message);
@@ -1633,6 +1665,19 @@
         // Flatten all nested subtasks for accurate, deep global math metrics
         const allTasksFlattened = flattenTasks(mappedWorkflows.flatMap(wf => wf.tasks || []));
         
+        // Extract global workspace assignees for dropdowns
+        const allWorkspaceAssignees = [];
+        const workspaceAssigneeMap = new Map();
+        allTasksFlattened.forEach(t => {
+           t.assignees?.forEach(a => {
+              const safeId = a.id || a.username;
+              if (safeId && !workspaceAssigneeMap.has(safeId)) {
+                 workspaceAssigneeMap.set(safeId, a);
+                 allWorkspaceAssignees.push({...a, id: safeId});
+              }
+           });
+        });
+
         const uniqueTags = Array.from(new Set(allTasksFlattened.flatMap(t => t.tags?.map(tag => tag.name) || [])));
         const uniqueAssignees = Array.from(new Set(allTasksFlattened.flatMap(t => t.assignees?.map(a => a.username) || [])));
 
@@ -2666,14 +2711,29 @@
                       </div>
                     </div>
 
-                    <div>
-                      <label className="block text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider font-semibold">Date</label>
-                      <input 
-                        type="date" 
-                        value={timeDate} 
-                        onChange={e => setTimeDate(e.target.value)} 
-                        className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 [color-scheme:dark]" 
-                      />
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider font-semibold">Date</label>
+                        <input 
+                          type="date" 
+                          value={timeDate} 
+                          onChange={e => setTimeDate(e.target.value)} 
+                          className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 [color-scheme:dark]" 
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider font-semibold">Team Member</label>
+                        <select 
+                          value={timeAssignee} 
+                          onChange={e => setTimeAssignee(e.target.value)} 
+                          className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer"
+                        >
+                          <option value="me">Myself</option>
+                          {allWorkspaceAssignees.map(a => (
+                            <option key={a.id} value={a.id.toString()}>{a.username}</option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
 
                     <div>
