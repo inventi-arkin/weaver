@@ -620,7 +620,6 @@
       const [clickUpError, setClickUpError] = useState(null);
       const [mappedWorkflows, setMappedWorkflows] = useState([]);
       const [isAutoSyncing, setIsAutoSyncing] = useState(false);
-      const [localTimeLedger, setLocalTimeLedger] = useState({});
       
       const [completionFilterType, setCompletionFilterType] = useState('none');
       const [selectedTagFilter, setSelectedTagFilter] = useState('');
@@ -684,7 +683,6 @@
           setQaHoursPerDay(settingsData.qaHoursPerDay !== undefined ? settingsData.qaHoursPerDay : 7);
           setDateBlockers(settingsData.dateBlockers || []);
           setUserRoles(settingsData.userRoles || {});
-          setLocalTimeLedger(settingsData.localTimeLedger || {});
         };
         fetchSettings();
       }, [mappedWorkflows[0]?.listId, auth.currentUser, user?.isMock]);
@@ -820,6 +818,8 @@
         const folderName = selectedFolder ? (folders.find(f => f.id === selectedFolder)?.name || 'Folder') : 'No Folder';
         const selectedListObj = availableLists.find(l => l.id === selectedList);
         const listName = selectedListObj?.name || 'Task List';
+        const listStartDate = selectedListObj?.start_date || null;
+        const listDueDate = selectedListObj?.due_date || null;
 
         let initialTasks = [];
         if (clickUpToken === 'mock_token') {
@@ -842,6 +842,7 @@
         setMappedWorkflows([{
           id: Date.now().toString(),
           team: teamName, teamId: selectedTeam, space: spaceName, folder: folderName, list: listName, listId: selectedList,
+          listStartDate: listStartDate, listDueDate: listDueDate,
           tasks: initialTasks, lastSynced: Date.now()
         }]);
 
@@ -927,24 +928,7 @@
       // DASHBOARD RENDER LOGIC
       // -----------------------------------------------------------------------
       if (user) {
-        // Overlay the Local Time Ledger onto the workflow data before any math
-        const applyLedger = (tasks) => {
-          return tasks.map(t => {
-            const ledgerEntries = localTimeLedger[t.id];
-            // Added Array.isArray check to prevent reducer crash on corrupted data
-            const addedTime = Array.isArray(ledgerEntries) ? ledgerEntries.reduce((sum, e) => sum + e.duration, 0) : 0;
-            return {
-              ...t,
-              time_spent: (parseInt(t.time_spent) || 0) + addedTime,
-              subtasks: t.subtasks ? applyLedger(t.subtasks) : []
-            };
-          });
-        };
-
-        const activeWorkflows = mappedWorkflows.map(wf => ({
-          ...wf,
-          tasks: applyLedger(wf.tasks || [])
-        }));
+        const activeWorkflows = mappedWorkflows;
 
         const allTasksFlattened = flattenTasks(activeWorkflows.flatMap(wf => wf.tasks || []));
         const uniqueTags = Array.from(new Set(allTasksFlattened.flatMap(t => t.tags?.map(tag => tag.name || '') || [])));
@@ -1009,6 +993,12 @@
         const completedBreakdown = getBreakdown(completedTasks);
         const completedFilteredTasksCount = completedBreakdown.total;
 
+        const parseDateMs = (d) => {
+            if (!d) return 0;
+            const n = Number(d);
+            return !isNaN(n) ? n : new Date(d).getTime() || 0;
+        };
+
         let totalEstimateMs = 0;
         let totalRemainingMs = 0;
         let taskMinDate = Infinity;
@@ -1025,7 +1015,6 @@
           totalRemainingMs += remaining;
         });
 
-        // Fixed Missing Math Variables for Burndown Chart
         const totalEstHours = Math.round(totalEstimateMs / 3600000) || 1;
         const totalRemHours = Math.round(totalRemainingMs / 3600000);
         const totalSpentHours = totalEstHours - totalRemHours;
@@ -1070,6 +1059,7 @@
         });
         if (minDate === Infinity) minDate = taskMinDate;
         if (maxDate === 0) maxDate = taskMaxDate;
+        
         const now = Date.now();
         if (minDate === Infinity) minDate = now - (7 * 86400000);
         if (maxDate === 0) maxDate = now + (7 * 86400000);
@@ -1088,17 +1078,60 @@
             formatDate(maxDate)
         ];
         
-        const currentY = 100 - ((totalRemHours / totalEstHours) * 100);
+        // Realistic Stepped Historical Burndown logic (Arc/Wave spline)
+        let initialBurnedMs = 0;
+        const validEvents = [];
         
-        const burndownPointsData = [
-          [0, 0],
-          [currentX * 0.33, currentY * 0.25],
-          [currentX * 0.66, currentY * 0.60],
-          [currentX, currentY]
-        ];
-        
-        const linePointsString = burndownPointsData.map(p => `${p[0]},${p[1]}`).join(' ');
-        const polygonPointsString = `0,100 ${linePointsString} ${currentX},100 0,100`;
+        filteredTasks.forEach(t => {
+            const isDone = doneStatuses.includes((t.status?.status || '').toLowerCase());
+            if (isDone && t.time_estimate) {
+                let dDate = parseDateMs(t.date_closed) || parseDateMs(t.date_updated) || parseDateMs(t.date_created) || Date.now();
+                if (dDate <= minDate) {
+                    initialBurnedMs += parseInt(t.time_estimate);
+                } else {
+                    validEvents.push({ date: dDate, est: parseInt(t.time_estimate) });
+                }
+            }
+        });
+        validEvents.sort((a,b) => a.date - b.date);
+
+        let historicalBurnedMs = initialBurnedMs;
+        const startY = totalEstimateMs > 0 ? (initialBurnedMs / totalEstimateMs) * 100 : 0;
+        const burndownPointsData = [[0, startY]];
+
+        validEvents.forEach(evt => {
+            if (evt.date <= now && evt.date <= maxDate) {
+                const stepX = ((evt.date - minDate) / totalDurationMs) * 100;
+                historicalBurnedMs += evt.est;
+                const stepY = totalEstimateMs > 0 ? (historicalBurnedMs / totalEstimateMs) * 100 : 0;
+                burndownPointsData.push([stepX, stepY]);
+            }
+        });
+
+        const currentY = totalEstimateMs > 0 ? (historicalBurnedMs / totalEstimateMs) * 100 : 0;
+        if (burndownPointsData[burndownPointsData.length - 1][0] < currentX) {
+            burndownPointsData.push([currentX, currentY]);
+        }
+
+        // Generate a smooth Bezier Curve (Wave) through the points
+        const generateSmoothPath = (points) => {
+            if (points.length === 0) return "";
+            if (points.length === 1) return `M ${points[0][0]},${points[0][1]}`;
+            let d = `M ${points[0][0]},${points[0][1]}`;
+            for (let i = 0; i < points.length - 1; i++) {
+                const [x0, y0] = points[i];
+                const [x1, y1] = points[i+1];
+                const cp1x = x0 + (x1 - x0) / 2;
+                const cp1y = y0;
+                const cp2x = x0 + (x1 - x0) / 2;
+                const cp2y = y1;
+                d += ` C ${cp1x},${cp1y} ${cp2x},${cp2y} ${x1},${y1}`;
+            }
+            return d;
+        };
+
+        const smoothLinePath = generateSmoothPath(burndownPointsData);
+        const areaPath = smoothLinePath ? smoothLinePath + ` L ${currentX},100 L 0,100 Z` : "";
 
         const bucketDurationDays = Math.max(0, 10 - dateBlockers.reduce((s, b) => s + (b.remark !== 'Leave' ? b.days : 0), 0));
         let devLeaveDays = 0, qaLeaveDays = 0;
@@ -1163,12 +1196,6 @@
             }
         });
         const avgQualityRate = evaluatedMotherTasks > 0 ? Math.round(totalQualityScore / evaluatedMotherTasks) : 100;
-
-        const parseDateMs = (d) => {
-            if (!d) return 0;
-            const n = Number(d);
-            return !isNaN(n) ? n : new Date(d).getTime() || 0;
-        };
 
         let fixVelocitySumMs = 0;
         let fixVelocityCount = 0;
@@ -1525,8 +1552,22 @@
                           <line x1="66.6" y1="0" x2="66.6" y2="100" stroke="#111827" strokeWidth="1" vectorEffect="non-scaling-stroke" />
                           <line x1="100" y1="0" x2="100" y2="100" stroke="#111827" strokeWidth="1" vectorEffect="non-scaling-stroke" />
                           <line x1="0" y1="0" x2="100" y2="100" stroke="#475569" strokeWidth="2" strokeDasharray="6 6" vectorEffect="non-scaling-stroke" />
-                          <polygon points={polygonPointsString} fill="url(#burndownGradient)" />
-                          <polyline points={linePointsString} fill="none" stroke="#6366f1" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+                          
+                          {areaPath && (
+                            <path d={areaPath} fill="url(#burndownGradient)" />
+                          )}
+                          
+                          {smoothLinePath && (
+                            <path 
+                              d={smoothLinePath} 
+                              fill="none" 
+                              stroke="#6366f1" 
+                              strokeWidth="3" 
+                              strokeLinecap="round" 
+                              strokeLinejoin="round" 
+                              vectorEffect="non-scaling-stroke" 
+                            />
+                          )}
                         </svg>
                       </div>
 
