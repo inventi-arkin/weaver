@@ -1060,14 +1060,14 @@
         if (minDate === Infinity) minDate = taskMinDate;
         if (maxDate === 0) maxDate = taskMaxDate;
         
-        const now = Date.now();
+        const now = mappedWorkflows[0]?.lastSynced || Date.now();
         if (minDate === Infinity) minDate = now - (7 * 86400000);
         if (maxDate === 0) maxDate = now + (7 * 86400000);
         if (maxDate <= minDate) maxDate = minDate + (14 * 86400000);
 
         const totalDurationMs = maxDate - minDate;
         const elapsedMs = Math.max(0, now - minDate);
-        let currentX = (elapsedMs / totalDurationMs) * 100;
+        let currentX = totalDurationMs > 0 ? (elapsedMs / totalDurationMs) * 100 : 0;
         currentX = Math.max(0, Math.min(100, currentX));
         
         const formatDate = (ms) => new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
@@ -1078,62 +1078,138 @@
             formatDate(maxDate)
         ];
         
-        // Realistic Stepped Historical Burndown logic (Arc/Wave spline)
+        // --- DAILY SMOOTH BURNDOWN LOGIC ---
         let initialBurnedMs = 0;
         const validEvents = [];
         
         filteredTasks.forEach(t => {
+            const est = parseInt(t.time_estimate) || 0;
+            const spent = parseInt(t.time_spent) || 0;
             const isDone = doneStatuses.includes((t.status?.status || '').toLowerCase());
-            if (isDone && t.time_estimate) {
-                let dDate = parseDateMs(t.date_closed) || parseDateMs(t.date_updated) || parseDateMs(t.date_created) || Date.now();
+            
+            if (isDone && est > 0) {
+                let dDate = parseDateMs(t.date_closed) || parseDateMs(t.date_updated) || parseDateMs(t.date_created) || minDate;
                 if (dDate <= minDate) {
-                    initialBurnedMs += parseInt(t.time_estimate);
+                    initialBurnedMs += est;
                 } else {
-                    validEvents.push({ date: dDate, est: parseInt(t.time_estimate) });
+                    validEvents.push({ date: dDate, burned: est });
+                }
+            } else if (!isDone && spent > 0) {
+                let cDate = parseDateMs(t.date_created) || minDate;
+                let uDate = parseDateMs(t.date_updated) || now;
+                if (cDate < minDate) cDate = minDate;
+                if (uDate > now) uDate = now;
+                if (uDate < cDate) uDate = cDate;
+                
+                const duration = Math.max(1, uDate - cDate);
+                const slices = 10; // Finer slices for smoother active task tracking
+                for (let i = 1; i <= slices; i++) {
+                    const sliceDate = cDate + (duration * (i/slices));
+                    if (sliceDate <= minDate) {
+                        initialBurnedMs += (spent / slices);
+                    } else {
+                        validEvents.push({ date: sliceDate, burned: spent / slices });
+                    }
                 }
             }
         });
+        
         validEvents.sort((a,b) => a.date - b.date);
 
+        // Compute exact day-by-day accumulation
         let historicalBurnedMs = initialBurnedMs;
         const startY = totalEstimateMs > 0 ? (initialBurnedMs / totalEstimateMs) * 100 : 0;
-        const burndownPointsData = [[0, startY]];
+        const burndownPointsData = [[0, Math.max(0, Math.min(100, startY))]];
 
-        validEvents.forEach(evt => {
-            if (evt.date <= now && evt.date <= maxDate) {
-                const stepX = ((evt.date - minDate) / totalDurationMs) * 100;
-                historicalBurnedMs += evt.est;
-                const stepY = totalEstimateMs > 0 ? (historicalBurnedMs / totalEstimateMs) * 100 : 0;
-                burndownPointsData.push([stepX, stepY]);
+        const oneDayMs = 86400000;
+        const endChartDate = Math.min(now, maxDate);
+        let currentDayMs = minDate + oneDayMs;
+
+        // Daily Ticks for smooth daily plotting
+        while (currentDayMs <= endChartDate) {
+            while (validEvents.length > 0 && validEvents[0].date <= currentDayMs) {
+                historicalBurnedMs += validEvents.shift().burned;
             }
-        });
-
-        const currentY = totalEstimateMs > 0 ? (historicalBurnedMs / totalEstimateMs) * 100 : 0;
-        if (burndownPointsData[burndownPointsData.length - 1][0] < currentX) {
-            burndownPointsData.push([currentX, currentY]);
+            const stepX = ((currentDayMs - minDate) / totalDurationMs) * 100;
+            const stepY = totalEstimateMs > 0 ? (historicalBurnedMs / totalEstimateMs) * 100 : 0;
+            burndownPointsData.push([Math.max(0, Math.min(100, stepX)), Math.max(0, Math.min(100, stepY))]);
+            currentDayMs += oneDayMs;
         }
 
-        // Generate a smooth Bezier Curve (Wave) through the points
+        // Add final exact "now" point if it's partway through the day
+        if (now > minDate && now < maxDate) {
+            while (validEvents.length > 0 && validEvents[0].date <= now) {
+                historicalBurnedMs += validEvents.shift().burned;
+            }
+            const finalX = ((now - minDate) / totalDurationMs) * 100;
+            const finalY = totalEstimateMs > 0 ? (historicalBurnedMs / totalEstimateMs) * 100 : 0;
+            
+            // Overwrite the last point if it's too close to prevent visual glitches in the curve
+            if (burndownPointsData.length > 0 && (finalX - burndownPointsData[burndownPointsData.length - 1][0]) < 2) {
+                burndownPointsData[burndownPointsData.length - 1][1] = Math.max(0, Math.min(100, finalY));
+                burndownPointsData[burndownPointsData.length - 1][0] = Math.max(0, Math.min(100, finalX));
+            } else {
+                burndownPointsData.push([Math.max(0, Math.min(100, finalX)), Math.max(0, Math.min(100, finalY))]);
+            }
+        }
+
+        // Generate a smooth horizontal Bezier Curve (Monotonic Spline) through the daily points
         const generateSmoothPath = (points) => {
             if (points.length === 0) return "";
             if (points.length === 1) return `M ${points[0][0]},${points[0][1]}`;
+            if (points.length === 2) return `M ${points[0][0]},${points[0][1]} L ${points[1][0]},${points[1][1]}`;
+            
             let d = `M ${points[0][0]},${points[0][1]}`;
+            const tension = 0.25; // Smoothness factor
+            
             for (let i = 0; i < points.length - 1; i++) {
-                const [x0, y0] = points[i];
-                const [x1, y1] = points[i+1];
-                const cp1x = x0 + (x1 - x0) / 2;
-                const cp1y = y0;
-                const cp2x = x0 + (x1 - x0) / 2;
-                const cp2y = y1;
-                d += ` C ${cp1x},${cp1y} ${cp2x},${cp2y} ${x1},${y1}`;
+                const p0 = i > 0 ? points[i - 1] : points[0];
+                const p1 = points[i];
+                const p2 = points[i + 1];
+                const p3 = i !== points.length - 2 ? points[i + 2] : p2;
+                
+                let cp1x = p1[0] + (p2[0] - p0[0]) * tension;
+                let cp1y = p1[1] + (p2[1] - p0[1]) * tension;
+                
+                let cp2x = p2[0] - (p3[0] - p1[0]) * tension;
+                let cp2y = p2[1] - (p3[1] - p1[1]) * tension;
+                
+                // Clamping to enforce monotonic curve (prevents graph from going upwards or dipping)
+                cp1x = Math.max(p1[0], Math.min(p2[0], cp1x));
+                cp2x = Math.max(p1[0], Math.min(p2[0], cp2x));
+                
+                const minY = Math.min(p1[1], p2[1]);
+                const maxY = Math.max(p1[1], p2[1]);
+                cp1y = Math.max(minY, Math.min(maxY, cp1y));
+                cp2y = Math.max(minY, Math.min(maxY, cp2y));
+                
+                d += ` C ${cp1x},${cp1y} ${cp2x},${cp2y} ${p2[0]},${p2[1]}`;
             }
             return d;
         };
 
         const smoothLinePath = generateSmoothPath(burndownPointsData);
-        const areaPath = smoothLinePath ? smoothLinePath + ` L ${currentX},100 L 0,100 Z` : "";
+        const latestX = burndownPointsData.length > 0 ? burndownPointsData[burndownPointsData.length-1][0] : currentX;
+        const areaPath = smoothLinePath ? smoothLinePath + ` L ${latestX},100 L 0,100 Z` : "";
+        // --- END DAILY SMOOTH BURNDOWN LOGIC ---
 
-        const bucketDurationDays = Math.max(0, 10 - dateBlockers.reduce((s, b) => s + (b.remark !== 'Leave' ? b.days : 0), 0));
+        // Dynamically calculate strict working days (Sprint Limits)
+        const sprintStart = new Date(minDate);
+        sprintStart.setHours(0,0,0,0);
+        const sprintEnd = new Date(maxDate);
+        sprintEnd.setHours(0,0,0,0);
+        
+        let sprintWorkingDays = 0;
+        let tempDate = new Date(sprintStart);
+        while (tempDate <= sprintEnd) {
+            const day = tempDate.getDay();
+            if (day !== 0 && day !== 6) sprintWorkingDays++;
+            tempDate.setDate(tempDate.getDate() + 1);
+        }
+        
+        const globalBlockerDays = dateBlockers.reduce((s, b) => s + (b.remark !== 'Leave' ? b.days : 0), 0);
+        const bucketDurationDays = Math.max(0, sprintWorkingDays - globalBlockerDays);
+        
         let devLeaveDays = 0, qaLeaveDays = 0;
         dateBlockers.forEach(b => {
           if (b.remark === 'Leave') {
@@ -1154,7 +1230,7 @@
         const spillOverTasks = filteredMotherTasks.filter(t => {
             const isDone = doneStatuses.includes((t.status?.status || '').toLowerCase());
             if (isDone) return false;
-            if (t.due_date && parseInt(t.due_date) < Date.now()) return true;
+            if (t.due_date && parseInt(t.due_date) < now) return true;
             if (t.tags?.some(tag => (tag.name || '').toLowerCase().includes('spill over'))) return true;
             return false;
         });
@@ -1211,8 +1287,8 @@
                    if (doneStatuses.includes(lastLogStatus)) completedDate = parseDateMs(lastLog.date);
                }
             }
-            if (!completedDate) completedDate = parseDateMs(b.date_updated) || Date.now();
-            const createdDate = parseDateMs(b.date_created);
+            if (!completedDate) completedDate = parseDateMs(b.date_updated) || minDate;
+            const createdDate = parseDateMs(b.date_created) || minDate;
             if (createdDate > 0 && completedDate >= createdDate) {
               fixVelocitySumMs += (completedDate - createdDate);
               fixVelocityCount++;
@@ -1242,9 +1318,12 @@
             const statusName = (t.status?.status || 'open').toLowerCase();
             const isDone = doneStatuses.includes(statusName);
             
+            // Re-anchored to avoid constant Date.now() recalculation drifts
+            const referenceNow = isDone ? parseDateMs(t.date_closed) || now : now;
+
             if (!isDone && !excludedStatusesForAccuracy.includes(statusName)) {
-                const lastUpdated = t.date_updated ? parseDateMs(t.date_updated) : (t.date_created ? parseDateMs(t.date_created) : Date.now());
-                const timeInCurrent = Math.max(0, Date.now() - lastUpdated);
+                const lastUpdated = t.date_updated ? parseDateMs(t.date_updated) : (t.date_created ? parseDateMs(t.date_created) : referenceNow);
+                const timeInCurrent = Math.max(0, referenceNow - lastUpdated);
                 if (timeInCurrent > 0) {
                     if (!timeInStatusStats[statusName]) timeInStatusStats[statusName] = { sum: 0, count: 0 };
                     timeInStatusStats[statusName].sum += timeInCurrent;
@@ -1304,7 +1383,7 @@
                         }
                     });
                 } else {
-                    const end_date = t.date_closed ? parseDateMs(t.date_closed) : (t.date_updated ? parseDateMs(t.date_updated) : Date.now());
+                    const end_date = t.date_closed ? parseDateMs(t.date_closed) : (t.date_updated ? parseDateMs(t.date_updated) : minDate);
                     const start_date = t.start_date ? parseDateMs(t.start_date) : (t.date_created ? parseDateMs(t.date_created) : end_date);
                     actualRunningMs = Math.max(0, end_date - start_date);
                 }
@@ -1338,7 +1417,7 @@
             if (nameLower === 'ui bugs' || nameLower === 'qa bugs' || doneStatuses.includes(statusLower) || statusLower === 'sprint backlog') return false;
             const createdDate = parseInt(t.date_created);
             const estimateMs = parseInt(t.time_estimate);
-            if (createdDate && estimateMs > 0 && (Date.now() - createdDate > estimateMs)) return true;
+            if (createdDate && estimateMs > 0 && (now - createdDate > estimateMs)) return true;
             return false;
         });
 
@@ -1347,7 +1426,7 @@
 
         const stalledTasks = stalledTasksCandidates
           .filter(t => !hasStalledDescendant(t))
-          .sort((a, b) => (Date.now() - (parseInt(b.date_created) || Date.now())) - (Date.now() - (parseInt(a.date_created) || Date.now())))
+          .sort((a, b) => (now - (parseInt(b.date_created) || now)) - (now - (parseInt(a.date_created) || now)))
           .slice(0, 5);
 
         const integrationUI = (
@@ -1396,6 +1475,65 @@
                 </div>
               </div>
             </nav>
+
+            {/* Capacity Settings Blocker Modal */}
+            {isBlockerModalOpen && (
+              <div className="fixed inset-0 bg-[#050810]/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+                <div className="bg-[#0b1120] border border-slate-800 rounded-2xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden animate-in slide-in-from-bottom-4">
+                   <div className="flex items-center justify-between p-5 border-b border-slate-800 bg-[#0f172a]/50">
+                     <h2 className="text-lg font-bold text-white flex items-center gap-2"><Calendar className="w-5 h-5 text-indigo-400" /> Sprint Capacity Settings</h2>
+                     <button onClick={() => setIsBlockerModalOpen(false)} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"><XIcon className="w-5 h-5" /></button>
+                   </div>
+                   <div className="p-5 space-y-6">
+                     <div className="bg-[#0f172a] p-4 rounded-xl border border-slate-800 space-y-4">
+                        <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Daily Working Hours</h3>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div><label className="block text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider font-semibold">Developers</label><input type="number" min="1" max="24" value={devHoursPerDay} onChange={e => { const val = Number(e.target.value); setDevHoursPerDay(val); saveSettings({ devHoursPerDay: val }); }} className="w-full bg-[#0b1120] border border-slate-700 rounded-lg px-3 py-2 text-sm text-white outline-none" /></div>
+                          <div><label className="block text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider font-semibold">QA Resources</label><input type="number" min="1" max="24" value={qaHoursPerDay} onChange={e => { const val = Number(e.target.value); setQaHoursPerDay(val); saveSettings({ qaHoursPerDay: val }); }} className="w-full bg-[#0b1120] border border-slate-700 rounded-lg px-3 py-2 text-sm text-white outline-none" /></div>
+                        </div>
+                     </div>
+                     <div className="space-y-3">
+                       <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider flex items-center justify-between">Active Blockers<span className="text-indigo-400">{dateBlockers.length} Items</span></h3>
+                       {dateBlockers.length === 0 ? (
+                         <div className="text-sm text-slate-400 italic p-4 bg-[#0f172a] rounded-xl text-center border border-slate-800">No blockers added.</div>
+                       ) : (
+                         <ul className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                           {dateBlockers.map(b => (
+                             <li key={b.id} className="flex items-center justify-between bg-[#0f172a] p-3 rounded-xl border border-slate-800">
+                                <div className="flex flex-col"><span className="text-sm font-semibold text-slate-200">{b.remark} <span className="text-slate-400 font-normal">({b.days} day{b.days > 1 ? 's' : ''})</span></span>{b.remark === 'Leave' && <span className="text-xs text-indigo-400 font-medium mt-0.5">{b.assignee}</span>}</div>
+                                <button onClick={() => { const newBlockers = dateBlockers.filter(x => x.id !== b.id); setDateBlockers(newBlockers); saveSettings({ dateBlockers: newBlockers }); }} className="text-slate-500 hover:text-red-400 p-1.5 rounded-md hover:bg-red-500/10 transition-colors"><Trash2 className="w-4 h-4" /></button>
+                             </li>
+                           ))}
+                         </ul>
+                       )}
+                     </div>
+                     <div className="bg-[#0f172a] p-4 rounded-xl border border-slate-800 space-y-4">
+                        <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Add New Blocker</h3>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div><label className="block text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider font-semibold">No. of Days</label><input type="number" min="1" value={newBlockerDays} onChange={e => setNewBlockerDays(e.target.value)} className="w-full bg-[#0b1120] border border-slate-700 rounded-lg px-3 py-2 text-sm text-white outline-none" /></div>
+                          <div>
+                            <label className="block text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider font-semibold">Remarks</label>
+                            <select value={newBlockerRemark} onChange={e => setNewBlockerRemark(e.target.value)} className="w-full bg-[#0b1120] border border-slate-700 rounded-lg px-3 py-2 text-sm text-white outline-none cursor-pointer">
+                              <option value="Holiday">Holiday</option><option value="Company Event">Company Event</option><option value="Leave">Leave</option>
+                            </select>
+                          </div>
+                        </div>
+                        {newBlockerRemark === 'Leave' && (
+                          <div>
+                            <label className="block text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider font-semibold">Team Member</label>
+                            <select value={newBlockerAssignee || (assigneesList[0]?.username || '')} onChange={e => setNewBlockerAssignee(e.target.value)} className="w-full bg-[#0b1120] border border-slate-700 rounded-lg px-3 py-2 text-sm text-white outline-none cursor-pointer">
+                              {assigneesList.map(a => <option key={a.username} value={a.username}>{a.username}</option>)}
+                            </select>
+                          </div>
+                        )}
+                        <button onClick={() => { if (!newBlockerDays || newBlockerDays <= 0) return; const newBlocker = { id: Date.now().toString(), days: parseInt(newBlockerDays), remark: newBlockerRemark, assignee: newBlockerRemark === 'Leave' ? (newBlockerAssignee || assigneesList[0]?.username) : null }; const newBlockers = [...dateBlockers, newBlocker]; setDateBlockers(newBlockers); saveSettings({ dateBlockers: newBlockers }); setNewBlockerDays(1); }} className="w-full flex items-center justify-center bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors">
+                          <Plus className="w-4 h-4 mr-1.5" /> Add Date Blocker
+                        </button>
+                     </div>
+                   </div>
+                </div>
+              </div>
+            )}
 
             {mappedWorkflows.length === 0 ? (
                <main className="relative z-25 max-w-3xl mx-auto px-4 py-16">{integrationUI}</main>
@@ -1798,7 +1936,7 @@
                         <li key={task.id} className="p-4 flex items-center justify-between">
                           <div>
                             <div className="flex items-center gap-2 mb-1"><div className="w-1.5 h-1.5 rounded-full" style={{backgroundColor: task.status?.color || '#94a3b8'}}/><span className="text-sm font-bold text-slate-200">{task.name}</span></div>
-                            <div className="text-xs text-slate-500 ml-3.5"><ClockAlert className="w-3 h-3 inline mr-1 text-amber-500/50" /> Elapsed: {Math.floor((Date.now() - parseInt(task.date_created))/86400000)}d / Est: {Math.round(parseInt(task.time_estimate)/3600000)}h</div>
+                            <div className="text-xs text-slate-500 ml-3.5"><ClockAlert className="w-3 h-3 inline mr-1 text-amber-500/50" /> Elapsed: {Math.floor((now - parseInt(task.date_created))/86400000)}d / Est: {Math.round(parseInt(task.time_estimate)/3600000)}h</div>
                           </div>
                           {task.assignees && task.assignees.length > 0 && <img src={task.assignees[0].profilePicture || `https://ui-avatars.com/api/?name=${task.assignees[0].username}`} className="w-6 h-6 rounded-full border border-slate-700 bg-slate-800" />}
                         </li>
