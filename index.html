@@ -673,31 +673,55 @@
         localStorage.setItem(`weaver_settings_${listId}`, JSON.stringify({ ...currentLocal, ...updates }));
         if (auth.currentUser && !user?.isMock) {
           try {
-            await db.collection('artifacts').doc(appId).collection('users').doc(auth.currentUser.uid).collection('listSettings').doc(listId).set(updates, { merge: true });
-          } catch(err) {}
+            // Updated to save to a shared public workspace document instead of a private user document
+            await db.collection('artifacts').doc(appId).collection('public').doc('data').collection('listSettings').doc(listId).set(updates, { merge: true });
+          } catch(err) {
+             console.error("Error saving public settings", err);
+          }
         }
       };
 
       useEffect(() => {
         const listId = mappedWorkflows[0]?.listId;
         if (!listId) return;
-        const fetchSettings = async () => {
-          let settingsData = null;
-          if (auth.currentUser && !user?.isMock) {
-            try {
-              const snapshot = await db.collection('artifacts').doc(appId).collection('users').doc(auth.currentUser.uid).collection('listSettings').doc(listId).get();
-              if (snapshot.exists) settingsData = snapshot.data();
-            } catch(e) {}
-          }
-          if (!settingsData) settingsData = JSON.parse(localStorage.getItem(`weaver_settings_${listId}`) || '{}');
+        
+        let unsubscribe = () => {};
+
+        if (auth.currentUser && !user?.isMock) {
+          const docRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('listSettings').doc(listId);
           
+          // Upgraded to a real-time listener so changes from other users reflect instantly
+          unsubscribe = docRef.onSnapshot((snapshot) => {
+            if (snapshot.exists) {
+              const settingsData = snapshot.data();
+              setDevHoursPerDay(settingsData.devHoursPerDay !== undefined ? settingsData.devHoursPerDay : 7);
+              setQaHoursPerDay(settingsData.qaHoursPerDay !== undefined ? settingsData.qaHoursPerDay : 7);
+              setDateBlockers(settingsData.dateBlockers || []);
+              setUserRoles(settingsData.userRoles || {});
+              setLocalTimeLedger(settingsData.localTimeLedger || {});
+            } else {
+              // Fallback to local storage if public document hasn't been created yet
+              const settingsData = JSON.parse(localStorage.getItem(`weaver_settings_${listId}`) || '{}');
+              setDevHoursPerDay(settingsData.devHoursPerDay !== undefined ? settingsData.devHoursPerDay : 7);
+              setQaHoursPerDay(settingsData.qaHoursPerDay !== undefined ? settingsData.qaHoursPerDay : 7);
+              setDateBlockers(settingsData.dateBlockers || []);
+              setUserRoles(settingsData.userRoles || {});
+              setLocalTimeLedger(settingsData.localTimeLedger || {});
+            }
+          }, (error) => {
+            console.error("Error syncing shared settings:", error);
+          });
+        } else {
+          // Offline/Mock mode fallback
+          const settingsData = JSON.parse(localStorage.getItem(`weaver_settings_${listId}`) || '{}');
           setDevHoursPerDay(settingsData.devHoursPerDay !== undefined ? settingsData.devHoursPerDay : 7);
           setQaHoursPerDay(settingsData.qaHoursPerDay !== undefined ? settingsData.qaHoursPerDay : 7);
           setDateBlockers(settingsData.dateBlockers || []);
           setUserRoles(settingsData.userRoles || {});
           setLocalTimeLedger(settingsData.localTimeLedger || {});
-        };
-        fetchSettings();
+        }
+
+        return () => unsubscribe();
       }, [mappedWorkflows[0]?.listId, auth.currentUser, user?.isMock]);
 
       const handleMockClickUpData = () => {
