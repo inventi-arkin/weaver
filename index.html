@@ -980,12 +980,20 @@
         // Overlay the Local Time Ledger onto the workflow data before any math
         const applyLedger = (tasks) => {
           return tasks.map(t => {
+            const processedSubtasks = t.subtasks ? applyLedger(t.subtasks) : [];
+            
             const ledgerEntries = localTimeLedger[t.id];
-            const addedTime = Array.isArray(ledgerEntries) ? ledgerEntries.reduce((sum, e) => Number(sum) + Number(e.duration || 0), 0) : 0;
+            const directAddedTime = Array.isArray(ledgerEntries) ? ledgerEntries.reduce((sum, e) => Number(sum) + Number(e.duration || 0), 0) : 0;
+            
+            const rolledUpAddedTime = processedSubtasks.reduce((sum, sub) => sum + Number(sub._totalLocalAdded || 0), 0);
+            const totalLocalAdded = directAddedTime + rolledUpAddedTime;
+
             return {
               ...t,
-              time_spent: Number(t.time_spent || 0) + addedTime,
-              subtasks: t.subtasks ? applyLedger(t.subtasks) : []
+              _totalLocalAdded: totalLocalAdded,
+              time_spent: Number(t.time_spent || 0) + totalLocalAdded,
+              _direct_time_spent: Number(t.time_spent || 0) + directAddedTime,
+              subtasks: processedSubtasks
             };
           });
         };
@@ -1099,7 +1107,7 @@
               assigneeStats[key].statusCounts[statusName].count++;
               const est = task.time_estimate ? parseInt(task.time_estimate) : 0;
               const isDone = doneStatuses.includes(statusName.toLowerCase());
-              let spent = task.time_spent ? parseInt(task.time_spent) : (isDone ? est : 0);
+              let spent = task._direct_time_spent ? parseInt(task._direct_time_spent) : (isDone ? est : 0);
               assigneeStats[key].totalEstMs += est;
               assigneeStats[key].totalSpentMs += spent;
             });
@@ -1211,7 +1219,9 @@
         
         independentTasks.forEach(t => {
             const est = Number(t.time_estimate) || 0;
-            const spent = Number(t.time_spent) || 0;
+            const totalSpent = Number(t.time_spent) || 0;
+            const localAdded = Number(t._totalLocalAdded) || 0;
+            const nativeSpent = Math.max(0, totalSpent - localAdded);
             const isDone = doneStatuses.includes((t.status?.status || '').toLowerCase());
             
             if (isDone && est > 0) {
@@ -1221,7 +1231,7 @@
                 } else {
                     validEvents.push({ date: dDate, burned: est });
                 }
-            } else if (!isDone && spent > 0) {
+            } else if (!isDone && nativeSpent > 0) {
                 let cDate = parseDateMs(t.date_created) || minDate;
                 let uDate = parseDateMs(t.date_updated) || now;
                 if (cDate < minDate) cDate = minDate;
@@ -1233,13 +1243,32 @@
                 for (let i = 1; i <= slices; i++) {
                     const sliceDate = cDate + (duration * (i/slices));
                     if (sliceDate <= minDate) {
-                        initialBurnedMs += (spent / slices);
+                        initialBurnedMs += (nativeSpent / slices);
                     } else {
-                        validEvents.push({ date: sliceDate, burned: spent / slices });
+                        validEvents.push({ date: sliceDate, burned: nativeSpent / slices });
                     }
                 }
             }
         });
+
+        const extractBurndownLedgerEntries = (tasks) => {
+            tasks.forEach(t => {
+                const isDone = doneStatuses.includes((t.status?.status || '').toLowerCase());
+                if (!isDone) {
+                    const entries = localTimeLedger[t.id] || [];
+                    entries.forEach(entry => {
+                        const eDate = parseDateMs(entry.date);
+                        if (eDate <= minDate) {
+                            initialBurnedMs += Number(entry.duration);
+                        } else {
+                            validEvents.push({ date: eDate, burned: Number(entry.duration) });
+                        }
+                    });
+                }
+                if (t.subtasks) extractBurndownLedgerEntries(t.subtasks);
+            });
+        };
+        extractBurndownLedgerEntries(independentTasks);
         
         validEvents.sort((a,b) => a.date - b.date);
 
@@ -1317,8 +1346,11 @@
         const logEvents = [];
         
         independentTasks.forEach(t => {
-            const spent = Number(t.time_spent) || 0;
-            if (spent > 0) {
+            const totalSpent = Number(t.time_spent) || 0;
+            const localAdded = Number(t._totalLocalAdded) || 0;
+            const nativeSpent = Math.max(0, totalSpent - localAdded);
+            
+            if (nativeSpent > 0) {
                 let cDate = parseDateMs(t.date_created) || minDate;
                 let uDate = parseDateMs(t.date_updated) || now;
                 if (cDate < minDate) cDate = minDate;
@@ -1330,13 +1362,29 @@
                 for (let i = 1; i <= slices; i++) {
                     const sliceDate = cDate + (duration * (i/slices));
                     if (sliceDate <= minDate) {
-                        initialLoggedMs += (spent / slices);
+                        initialLoggedMs += (nativeSpent / slices);
                     } else {
-                        logEvents.push({ date: sliceDate, logged: spent / slices });
+                        logEvents.push({ date: sliceDate, logged: nativeSpent / slices });
                     }
                 }
             }
         });
+
+        const extractLedgerEntries = (tasks) => {
+            tasks.forEach(t => {
+               const entries = localTimeLedger[t.id] || [];
+               entries.forEach(entry => {
+                   const eDate = parseDateMs(entry.date);
+                   if (eDate <= minDate) {
+                       initialLoggedMs += Number(entry.duration);
+                   } else {
+                       logEvents.push({ date: eDate, logged: Number(entry.duration) });
+                   }
+               });
+               if (t.subtasks) extractLedgerEntries(t.subtasks);
+            });
+        };
+        extractLedgerEntries(independentTasks);
         
         logEvents.sort((a,b) => a.date - b.date);
 
