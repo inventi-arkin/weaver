@@ -12,9 +12,9 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  
+  <!-- Configure Babel to use the classic JSX runtime (React.createElement) natively -->
   <script>
-    // Explicitly configure Babel to use the classic JSX runtime (React.createElement)
-    // This prevents "react/jsx-runtime" module import errors in the browser.
     Babel.registerPreset("react-classic", {
       presets: [
         [Babel.availablePresets["react"], { runtime: "classic" }]
@@ -673,7 +673,6 @@
         localStorage.setItem(`weaver_settings_${listId}`, JSON.stringify({ ...currentLocal, ...updates }));
         if (auth.currentUser && !user?.isMock) {
           try {
-            // Updated to save to a shared public workspace document instead of a private user document
             await db.collection('artifacts').doc(appId).collection('public').doc('data').collection('listSettings').doc(listId).set(updates, { merge: true });
           } catch(err) {
              console.error("Error saving public settings", err);
@@ -690,7 +689,6 @@
         if (auth.currentUser && !user?.isMock) {
           const docRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('listSettings').doc(listId);
           
-          // Upgraded to a real-time listener so changes from other users reflect instantly
           unsubscribe = docRef.onSnapshot((snapshot) => {
             if (snapshot.exists) {
               const settingsData = snapshot.data();
@@ -700,7 +698,6 @@
               setUserRoles(settingsData.userRoles || {});
               setLocalTimeLedger(settingsData.localTimeLedger || {});
             } else {
-              // Fallback to local storage if public document hasn't been created yet
               const settingsData = JSON.parse(localStorage.getItem(`weaver_settings_${listId}`) || '{}');
               setDevHoursPerDay(settingsData.devHoursPerDay !== undefined ? settingsData.devHoursPerDay : 7);
               setQaHoursPerDay(settingsData.qaHoursPerDay !== undefined ? settingsData.qaHoursPerDay : 7);
@@ -712,7 +709,6 @@
             console.error("Error syncing shared settings:", error);
           });
         } else {
-          // Offline/Mock mode fallback
           const settingsData = JSON.parse(localStorage.getItem(`weaver_settings_${listId}`) || '{}');
           setDevHoursPerDay(settingsData.devHoursPerDay !== undefined ? settingsData.devHoursPerDay : 7);
           setQaHoursPerDay(settingsData.qaHoursPerDay !== undefined ? settingsData.qaHoursPerDay : 7);
@@ -1006,17 +1002,21 @@
           return tasks.map(t => {
             const processedSubtasks = t.subtasks ? applyLedger(t.subtasks) : [];
             
-            const ledgerEntries = localTimeLedger[t.id];
-            const directAddedTime = Array.isArray(ledgerEntries) ? ledgerEntries.reduce((sum, e) => Number(sum) + Number(e.duration || 0), 0) : 0;
+            const ledgerEntries = localTimeLedger[t.id] || [];
+            const directAddedTime = ledgerEntries.reduce((sum, e) => Number(sum) + Number(e.duration || 0), 0);
             
             const rolledUpAddedTime = processedSubtasks.reduce((sum, sub) => sum + Number(sub._totalLocalAdded || 0), 0);
             const totalLocalAdded = directAddedTime + rolledUpAddedTime;
 
+            const rawNativeSpent = Number(t.time_spent || 0);
+
             return {
               ...t,
+              rawNativeSpent,
+              localLedger: ledgerEntries,
               _totalLocalAdded: totalLocalAdded,
-              time_spent: Number(t.time_spent || 0) + totalLocalAdded,
-              _direct_time_spent: Number(t.time_spent || 0) + directAddedTime,
+              time_spent: rawNativeSpent + totalLocalAdded,
+              _direct_time_spent: rawNativeSpent + directAddedTime,
               subtasks: processedSubtasks
             };
           });
@@ -1029,23 +1029,30 @@
 
         const allTasksFlattened = flattenTasks(activeWorkflows.flatMap(wf => wf.tasks || []));
         const uniqueTags = Array.from(new Set(allTasksFlattened.flatMap(t => t.tags?.map(tag => tag.name || '') || [])));
-        const uniqueAssignees = Array.from(new Set(allTasksFlattened.flatMap(t => t.assignees?.map(a => a.username || '') || [])));
+        
+        // Extract assignees from both Native ClickUp assignments AND Local Ledger logs
+        const uniqueAssignees = Array.from(new Set(allTasksFlattened.flatMap(t => [
+            ...(t.assignees?.map(a => a.username || '') || []),
+            ...(t.localLedger?.map(l => l.assignee || '') || [])
+        ]).filter(Boolean)));
 
         const workspaceUsers = Array.from(new Set([
            user?.name,
            ...uniqueAssignees
         ])).filter(Boolean);
 
-        let filteredTasks = allTasksFlattened;
-        if (completionFilterType === 'tags' && selectedTagFilter) filteredTasks = allTasksFlattened.filter(t => t.tags?.some(tag => (tag.name || '') === selectedTagFilter));
-        else if (completionFilterType === 'assignees' && selectedAssigneeFilter) filteredTasks = allTasksFlattened.filter(t => t.assignees?.some(a => (a.username || '') === selectedAssigneeFilter));
-
         const checkGlobalFilter = (t) => {
             if (completionFilterType === 'none') return true;
             if (completionFilterType === 'tags' && selectedTagFilter) return t.tags?.some(tag => (tag.name || '') === selectedTagFilter);
-            if (completionFilterType === 'assignees' && selectedAssigneeFilter) return t.assignees?.some(a => (a.username || '') === selectedAssigneeFilter);
+            if (completionFilterType === 'assignees' && selectedAssigneeFilter) {
+                const nativelyAssigned = t.assignees?.some(a => (a.username || '') === selectedAssigneeFilter);
+                const locallyAssigned = t.localLedger?.some(l => (l.assignee || '') === selectedAssigneeFilter);
+                return nativelyAssigned || locallyAssigned;
+            }
             return true;
         };
+        
+        let filteredTasks = allTasksFlattened.filter(checkGlobalFilter);
 
         const doneStatuses = ['closed', 'complete', 'done', 'resolved'];
         const backlogStatuses = ['open', 'backlog', 'sprint backlog', 'todo', 'to do', 'new', 'pending'];
@@ -1113,11 +1120,26 @@
 
         // Workload Map and Base Values needed for Capacity calculations
         const assigneeStats = {};
+        workspaceUsers.forEach(u => {
+            assigneeStats[u] = {
+                username: u,
+                profilePicture: `https://ui-avatars.com/api/?name=${encodeURIComponent(u)}&background=random`,
+                statusCounts: {}, totalEstMs: 0, totalSpentMs: 0
+            };
+        });
+
         filteredTasks.forEach(task => {
+          const statusName = task.status?.status || 'Open';
+          const statusColor = task.status?.color || '#94a3b8';
+          const isDone = doneStatuses.includes(statusName.toLowerCase());
+          let est = task.time_estimate ? parseInt(task.time_estimate) : 0;
+          const nativeSpent = task.rawNativeSpent ? parseInt(task.rawNativeSpent) : (isDone ? est : 0);
+
           if (task.assignees && task.assignees.length > 0) {
             task.assignees.forEach(assignee => {
-              if (completionFilterType === 'assignees' && selectedAssigneeFilter && assignee.username !== selectedAssigneeFilter) return;
               const key = assignee.username || `User_${assignee.id}`;
+              if (completionFilterType === 'assignees' && selectedAssigneeFilter && key !== selectedAssigneeFilter) return;
+              
               if (!assigneeStats[key]) {
                 assigneeStats[key] = {
                   username: key,
@@ -1125,19 +1147,27 @@
                   statusCounts: {}, totalEstMs: 0, totalSpentMs: 0
                 };
               }
-              const statusName = task.status?.status || 'Open';
-              const statusColor = task.status?.color || '#94a3b8';
               if (!assigneeStats[key].statusCounts[statusName]) assigneeStats[key].statusCounts[statusName] = { count: 0, color: statusColor };
               assigneeStats[key].statusCounts[statusName].count++;
-              const est = task.time_estimate ? parseInt(task.time_estimate) : 0;
-              const isDone = doneStatuses.includes(statusName.toLowerCase());
-              let spent = task._direct_time_spent ? parseInt(task._direct_time_spent) : (isDone ? est : 0);
               assigneeStats[key].totalEstMs += est;
-              assigneeStats[key].totalSpentMs += spent;
+              assigneeStats[key].totalSpentMs += nativeSpent;
             });
           }
+
+          // Explicitly add explicitly logged local time to the assigned user's workload card
+          if (task.localLedger && task.localLedger.length > 0) {
+              task.localLedger.forEach(entry => {
+                  const key = entry.assignee;
+                  if (completionFilterType === 'assignees' && selectedAssigneeFilter && key !== selectedAssigneeFilter) return;
+                  if (assigneeStats[key]) {
+                      assigneeStats[key].totalSpentMs += Number(entry.duration);
+                  }
+              });
+          }
         });
-        const assigneesList = Object.values(assigneeStats).sort((a,b) => b.totalEstMs - a.totalEstMs);
+        
+        // Remove empty templates
+        const assigneesList = Object.values(assigneeStats).filter(a => a.totalEstMs > 0 || a.totalSpentMs > 0 || Object.keys(a.statusCounts).length > 0).sort((a,b) => b.totalEstMs - a.totalEstMs);
         const devCount = assigneesList.filter(a => (userRoles[a.username] || 'Developer') === 'Developer').length;
         const qaCount = assigneesList.filter(a => (userRoles[a.username] || 'Developer') === 'QA').length;
 
@@ -1199,8 +1229,15 @@
 
         independentTasks.forEach(t => {
           const isDone = doneStatuses.includes((t.status?.status || '').toLowerCase());
-          const estimate = t.time_estimate ? Number(t.time_estimate) : 0; 
+          let estimate = t.time_estimate ? Number(t.time_estimate) : 0; 
           let spent = t.time_spent ? Number(t.time_spent) : (isDone ? estimate : 0);
+          
+          // Auto-adjust Effective Estimate: If time tracked exceeds the initial estimate (or there was NO estimate),
+          // dynamically scale the estimate up so that logged hours appropriately calculate into the progress bar.
+          if (spent > estimate) {
+              estimate = spent;
+          }
+          
           const remaining = isDone ? 0 : Math.max(0, estimate - spent);
           
           totalEstimateMs += estimate;
@@ -1242,8 +1279,10 @@
         const validEvents = [];
         
         independentTasks.forEach(t => {
-            const est = Number(t.time_estimate) || 0;
+            let est = Number(t.time_estimate) || 0;
             const totalSpent = Number(t.time_spent) || 0;
+            if (totalSpent > est) est = totalSpent; // Auto-scale chart estimates 
+            
             const localAdded = Number(t._totalLocalAdded) || 0;
             const nativeSpent = Math.max(0, totalSpent - localAdded);
             const isDone = doneStatuses.includes((t.status?.status || '').toLowerCase());
@@ -1279,7 +1318,7 @@
             tasks.forEach(t => {
                 const isDone = doneStatuses.includes((t.status?.status || '').toLowerCase());
                 if (!isDone) {
-                    const entries = localTimeLedger[t.id] || [];
+                    const entries = t.localLedger || [];
                     entries.forEach(entry => {
                         const eDate = parseDateMs(entry.date);
                         if (eDate <= minDate) {
@@ -1396,7 +1435,7 @@
 
         const extractLedgerEntries = (tasks) => {
             tasks.forEach(t => {
-               const entries = localTimeLedger[t.id] || [];
+               const entries = t.localLedger || [];
                entries.forEach(entry => {
                    const eDate = parseDateMs(entry.date);
                    if (eDate <= minDate) {
@@ -1467,7 +1506,13 @@
         const allMotherTasks = activeWorkflows.flatMap(wf => wf.tasks || []).filter(t => !(t.name || '').toLowerCase().includes('qa bugs'));
         let filteredMotherTasks = allMotherTasks.filter(checkGlobalFilter);
         const plottedScopeCount = filteredMotherTasks.length;
-        const plottedScopeEstHours = Math.round(filteredMotherTasks.reduce((sum, t) => sum + (parseInt(t.time_estimate) || 0), 0) / 3600000);
+        
+        // Ensure plotted scope dynamically grows with tracked hours
+        const plottedScopeEstHours = Math.round(filteredMotherTasks.reduce((sum, t) => {
+            const est = parseInt(t.time_estimate) || 0;
+            const spent = parseInt(t.time_spent) || 0;
+            return sum + Math.max(est, spent);
+        }, 0) / 3600000);
         
         const completedMotherTasks = filteredMotherTasks.filter(t => doneStatuses.includes((t.status?.status || '').toLowerCase()));
         const completedMotherCount = completedMotherTasks.length;
@@ -1969,16 +2014,42 @@
                   </div>
                   <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
                     <button 
+                      onClick={() => setIntegrationStep(clickUpToken ? 'selecting' : 'entering_token')}
+                      className="flex items-center px-4 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white text-sm font-medium rounded-lg shadow-lg shrink-0 transition-colors"
+                    >
+                      <RefreshCw className="h-4 w-4 mr-2" /> Change Connection
+                    </button>
+                    <button 
                       onClick={() => setIsTaskMgmtModalOpen(true)}
                       className="flex items-center px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg shadow-lg shrink-0 transition-colors"
                     >
                       <ListTodo className="h-4 w-4 mr-2" /> Manage Tasks
                     </button>
                     <div className="flex items-center bg-[#0b1120] p-1.5 rounded-lg border border-slate-800">
-                      <span className="text-sm text-slate-400 font-medium px-2">Global Filter:</span>
-                      <select value={completionFilterType} onChange={(e) => setCompletionFilterType(e.target.value)} className="bg-[#0f172a] border border-slate-700 rounded-md px-3 py-1.5 text-sm text-white outline-none">
+                      <span className="text-sm text-slate-400 font-medium px-2 shrink-0">Global Filter:</span>
+                      <select 
+                        value={completionFilterType} 
+                        onChange={(e) => {
+                          setCompletionFilterType(e.target.value);
+                          if (e.target.value === 'tags' && uniqueTags.length > 0) setSelectedTagFilter(uniqueTags[0]);
+                          if (e.target.value === 'assignees' && uniqueAssignees.length > 0) setSelectedAssigneeFilter(uniqueAssignees[0]);
+                        }} 
+                        className={`bg-[#0f172a] border border-slate-700 rounded-md px-3 py-1.5 text-sm text-white outline-none ${completionFilterType !== 'none' ? 'mr-2' : ''}`}
+                      >
                         <option value="none">All Data</option><option value="tags">By Tag</option><option value="assignees">By Assignee</option>
                       </select>
+                      {completionFilterType === 'tags' && (
+                        <select value={selectedTagFilter} onChange={(e) => setSelectedTagFilter(e.target.value)} className="bg-indigo-950/30 border border-indigo-500/30 rounded-md px-3 py-1.5 text-sm text-indigo-100 outline-none max-w-[150px]">
+                          {uniqueTags.length === 0 && <option value="">No tags</option>}
+                          {uniqueTags.map(tag => <option key={tag} value={tag}>{tag}</option>)}
+                        </select>
+                      )}
+                      {completionFilterType === 'assignees' && (
+                        <select value={selectedAssigneeFilter} onChange={(e) => setSelectedAssigneeFilter(e.target.value)} className="bg-indigo-950/30 border border-indigo-500/30 rounded-md px-3 py-1.5 text-sm text-indigo-100 outline-none max-w-[150px]">
+                          {uniqueAssignees.length === 0 && <option value="">No assignees</option>}
+                          {uniqueAssignees.map(a => <option key={a} value={a}>{a}</option>)}
+                        </select>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1993,7 +2064,7 @@
                   <div className="bg-[#0b1120] rounded-2xl border border-slate-800 shadow-lg overflow-hidden">
                     <div className="flex flex-col lg:flex-row">
                       
-                      {/* Left Pane - Task Distribution / Overall Progress */}
+                      {/* Left Pane - Task Distribution */}
                       <div className="lg:w-1/2 flex flex-col justify-center border-b lg:border-b-0 lg:border-r border-slate-800 p-6 md:p-8">
                         <div className="flex items-center flex-wrap space-x-2 mb-4">
                           <Target className="h-5 w-5 text-indigo-400 shrink-0" />
@@ -2033,7 +2104,7 @@
                       </div>
 
                       {/* Right Pane - Metric Cards */}
-                      <div className="flex-1 p-6 md:p-8 flex flex-col gap-4 justify-center">
+                      <div className="lg:w-1/2 p-6 md:p-8 flex flex-col gap-4 justify-center">
                         <div className="bg-[#0f172a] p-4 rounded-xl border border-slate-800 flex items-center justify-between shadow-sm">
                           <div className="flex items-start space-x-4">
                             <div className="bg-blue-500/10 p-2.5 rounded-lg border border-blue-500/20"><Box className="h-5 w-5 text-blue-400" /></div>
@@ -2362,9 +2433,11 @@
                     <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2"><Users className="h-5 w-5 text-indigo-400" /> Team Workload & Roles</h2>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                       {assigneesList.map(assignee => {
-                        const estHours = Math.round(assignee.totalEstMs / 3600000);
+                        let estHours = Math.round(assignee.totalEstMs / 3600000);
                         const spentHours = Math.round(assignee.totalSpentMs / 3600000);
-                        const progressPct = estHours > 0 ? Math.min(100, Math.round((spentHours / estHours) * 100)) : (spentHours > 0 ? 100 : 0);
+                        if (spentHours > estHours) estHours = spentHours; // Auto-adjust to show true volume processed
+                        
+                        const progressPct = estHours > 0 ? Math.round((spentHours / estHours) * 100) : 0;
                         const totalAssigned = Object.values(assignee.statusCounts).reduce((s, c) => s + c.count, 0);
 
                         return (
