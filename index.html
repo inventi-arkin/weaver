@@ -674,11 +674,15 @@
       const saveSettings = async (updates) => {
         const listId = mappedWorkflows[0]?.listId;
         if (!listId) return;
+        
         const currentLocal = JSON.parse(localStorage.getItem(`weaver_settings_${listId}`) || '{}');
-        localStorage.setItem(`weaver_settings_${listId}`, JSON.stringify({ ...currentLocal, ...updates }));
+        const newSettings = { ...currentLocal, ...updates }; // Fully merge all active state
+        
+        localStorage.setItem(`weaver_settings_${listId}`, JSON.stringify(newSettings));
+        
         if (auth.currentUser && !user?.isMock) {
           try {
-            await db.collection('artifacts').doc(appId).collection('public').doc('data').collection('listSettings').doc(listId).set(updates, { merge: true });
+            await db.collection('artifacts').doc(appId).collection('public').doc('data').collection('listSettings').doc(listId).set(newSettings, { merge: true });
           } catch(err) {
              console.error("Error saving public settings", err);
           }
@@ -702,11 +706,15 @@
           unsubscribe = docRef.onSnapshot((snapshot) => {
             if (snapshot.exists) {
               const settingsData = snapshot.data();
-              setDevHoursPerDay(settingsData.devHoursPerDay !== undefined ? settingsData.devHoursPerDay : 7);
-              setQaHoursPerDay(settingsData.qaHoursPerDay !== undefined ? settingsData.qaHoursPerDay : 7);
-              setDateBlockers(settingsData.dateBlockers || []);
-              setUserRoles(settingsData.userRoles || {});
-              setLocalTimeLedger(settingsData.localTimeLedger || fallbackLedger);
+              // Prevent missing fields from Firestore initial payload from wiping out complete localStorage data
+              const localData = JSON.parse(localStorage.getItem(`weaver_settings_${listId}`) || '{}');
+              const mergedData = { ...localData, ...settingsData };
+              
+              setDevHoursPerDay(mergedData.devHoursPerDay !== undefined ? mergedData.devHoursPerDay : 7);
+              setQaHoursPerDay(mergedData.qaHoursPerDay !== undefined ? mergedData.qaHoursPerDay : 7);
+              setDateBlockers(mergedData.dateBlockers || []);
+              setUserRoles(mergedData.userRoles || {});
+              setLocalTimeLedger(mergedData.localTimeLedger || fallbackLedger);
             } else {
               const settingsData = JSON.parse(localStorage.getItem(`weaver_settings_${listId}`) || '{}');
               setDevHoursPerDay(settingsData.devHoursPerDay !== undefined ? settingsData.devHoursPerDay : 7);
@@ -1039,11 +1047,11 @@
           tasks: applyLedger(wf.tasks || [])
         }));
 
-        const allFlatTasks = flattenTasks(activeWorkflows.flatMap(wf => wf.tasks || []));
-        const uniqueTags = Array.from(new Set(allFlatTasks.flatMap(t => t.tags?.map(tag => tag.name || '') || [])));
+        const allTasksFlattened = flattenTasks(activeWorkflows.flatMap(wf => wf.tasks || []));
+        const uniqueTags = Array.from(new Set(allTasksFlattened.flatMap(t => t.tags?.map(tag => tag.name || '') || [])));
         
         // Extract assignees from both Native ClickUp assignments AND Local Ledger logs
-        const uniqueAssignees = Array.from(new Set(allFlatTasks.flatMap(t => [
+        const uniqueAssignees = Array.from(new Set(allTasksFlattened.flatMap(t => [
             ...(t.assignees?.map(a => a.username || '') || []),
             ...(t.localLedger?.map(l => l.assignee || '') || [])
         ]).filter(Boolean)));
@@ -1064,7 +1072,7 @@
             return true;
         };
         
-        let filteredTasks = allFlatTasks.filter(checkGlobalFilter);
+        let filteredTasks = allTasksFlattened.filter(checkGlobalFilter);
 
         const doneStatuses = ['closed', 'complete', 'done', 'resolved'];
         const backlogStatuses = ['open', 'backlog', 'sprint backlog', 'todo', 'to do', 'new', 'pending'];
@@ -1130,17 +1138,6 @@
         const filteredTaskIds = new Set(filteredTasks.map(t => t.id));
         const independentTasks = filteredTasks.filter(t => !t.parent || !filteredTaskIds.has(t.parent));
 
-        const allLocalLedgerEntries = Object.entries(localTimeLedger).flatMap(([taskId, entries]) => 
-            entries.map(e => ({ ...e, taskId, ms: e.duration, timestamp: e.date, userId: e.assignee, note: e.note || 'Manual Entry' }))
-        ).sort((a, b) => a.timestamp - b.timestamp);
-
-        const totalGlobalHours = allLocalLedgerEntries.reduce((sum, entry) => sum + entry.ms, 0) / 3600000;
-        const getLoggedMsForTask = (taskId) => {
-            const entries = localTimeLedger[taskId] || [];
-            return entries.reduce((sum, e) => sum + Number(e.duration || 0), 0);
-        };
-        const totalNativeMs = allFlatTasks.filter(t => !t.subtasks || t.subtasks.length === 0).reduce((sum, t) => sum + (Number(t.rawNativeSpent) || 0), 0);
-
         // Workload Map and Base Values needed for Capacity calculations
         const assigneeStats = {};
         workspaceUsers.forEach(u => {
@@ -1155,9 +1152,8 @@
           const statusName = task.status?.status || 'Open';
           const statusColor = task.status?.color || '#94a3b8';
           const isDone = doneStatuses.includes(statusName.toLowerCase());
-          
-          let est = task.directEstimate !== undefined ? task.directEstimate : (task.time_estimate ? parseInt(task.time_estimate) : 0);
-          const nativeSpent = task.directNativeSpent !== undefined ? task.directNativeSpent : (task.rawNativeSpent ? parseInt(task.rawNativeSpent) : (isDone ? est : 0));
+          let est = task.time_estimate ? parseInt(task.time_estimate) : 0;
+          const nativeSpent = task.rawNativeSpent ? parseInt(task.rawNativeSpent) : (isDone ? est : 0);
 
           if (task.assignees && task.assignees.length > 0) {
             task.assignees.forEach(assignee => {
@@ -1853,8 +1849,14 @@
                      <div className="bg-[#0f172a] p-4 rounded-xl border border-slate-800 space-y-4">
                         <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Daily Working Hours</h3>
                         <div className="grid grid-cols-2 gap-4">
-                          <div><label className="block text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider font-semibold">Developers</label><input type="number" min="1" max="24" value={devHoursPerDay} onChange={e => { const val = Number(e.target.value); setDevHoursPerDay(val); saveSettings({ devHoursPerDay: val }); }} className="w-full bg-[#0b1120] border border-slate-700 rounded-lg px-3 py-2 text-sm text-white outline-none" /></div>
-                          <div><label className="block text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider font-semibold">QA Resources</label><input type="number" min="1" max="24" value={qaHoursPerDay} onChange={e => { const val = Number(e.target.value); setQaHoursPerDay(val); saveSettings({ qaHoursPerDay: val }); }} className="w-full bg-[#0b1120] border border-slate-700 rounded-lg px-3 py-2 text-sm text-white outline-none" /></div>
+                          <div>
+                             <label className="block text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider font-semibold">Developers</label>
+                             <input type="number" min="1" max="24" value={devHoursPerDay} onChange={e => { const val = e.target.value; setDevHoursPerDay(val); const num = Number(val); if(!isNaN(num) && val !== '') saveSettings({ devHoursPerDay: num }); }} className="w-full bg-[#0b1120] border border-slate-700 rounded-lg px-3 py-2 text-sm text-white outline-none" />
+                          </div>
+                          <div>
+                             <label className="block text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider font-semibold">QA Resources</label>
+                             <input type="number" min="1" max="24" value={qaHoursPerDay} onChange={e => { const val = e.target.value; setQaHoursPerDay(val); const num = Number(val); if(!isNaN(num) && val !== '') saveSettings({ qaHoursPerDay: num }); }} className="w-full bg-[#0b1120] border border-slate-700 rounded-lg px-3 py-2 text-sm text-white outline-none" />
+                          </div>
                         </div>
                      </div>
                      <div className="space-y-3">
@@ -1911,7 +1913,7 @@
                    <div className="p-5 overflow-y-auto flex-1 space-y-4">
                      <div className="flex flex-col sm:flex-row justify-between sm:items-center mb-4 border-b border-slate-800 pb-3 gap-3">
                         <h3 className="text-sm font-semibold text-slate-300">Workspace Tasks</h3>
-                        <div className="flex items-center gap-3 w-full sm:w-auto">
+                        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full sm:w-auto">
                            <div className="relative w-full sm:w-64">
                              <SearchIcon className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-500" />
                              <input 
@@ -1919,7 +1921,7 @@
                                placeholder="Search tasks..." 
                                value={taskSearchQuery}
                                onChange={(e) => setTaskSearchQuery(e.target.value)}
-                               className="w-full bg-[#0b1120] border border-slate-700 rounded-lg pl-9 pr-3 py-1.5 text-sm text-white outline-none focus:border-indigo-500 transition-colors"
+                               className="w-full bg-[#0b1120] border border-slate-700 rounded-lg pl-9 pr-3 py-1.5 text-sm text-white outline-none focus:border-indigo-500 transition-colors shadow-inner"
                              />
                            </div>
                            <label className="flex items-center space-x-2 text-sm text-indigo-300 hover:text-indigo-200 cursor-pointer bg-indigo-500/10 px-3 py-1.5 rounded-lg border border-indigo-500/20 transition-colors font-medium shrink-0">
