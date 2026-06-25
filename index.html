@@ -1431,11 +1431,28 @@
         const logEvents = [];
         
         independentTasks.forEach(t => {
-            const totalSpent = Number(t.time_spent) || 0;
+            const isDone = doneStatuses.includes((t.status?.status || '').toLowerCase());
+            let est = t.time_estimate ? Number(t.time_estimate) : 0;
+            let totalSpent = Number(t.time_spent) || 0;
+            
+            // Mirror the core math: if done with no logged time, assume estimate was fully spent
+            if (isDone && totalSpent === 0) totalSpent = est;
+            // Auto-scale estimate if exceeded
+            if (totalSpent > est) est = totalSpent;
+
             const localAdded = Number(t._totalLocalAdded) || 0;
             const nativeSpent = Math.max(0, totalSpent - localAdded);
             
-            if (nativeSpent > 0) {
+            if (isDone && nativeSpent > 0) {
+                // If done, log the totality of the remaining native hours exactly on the completion date
+                let dDate = parseDateMs(t.date_closed) || parseDateMs(t.date_updated) || parseDateMs(t.date_created) || minDate;
+                if (dDate <= minDate) {
+                    initialLoggedMs += nativeSpent;
+                } else {
+                    logEvents.push({ date: dDate, logged: nativeSpent });
+                }
+            } else if (!isDone && nativeSpent > 0) {
+                // If active, distribute the time linearly across its open duration
                 let cDate = parseDateMs(t.date_created) || minDate;
                 let uDate = parseDateMs(t.date_updated) || now;
                 if (cDate < minDate) cDate = minDate;
