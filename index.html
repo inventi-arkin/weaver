@@ -420,13 +420,21 @@
       const [completionFilterType, setCompletionFilterType] = useState('none');
       const [selectedTagFilter, setSelectedTagFilter] = useState('');
       const [selectedAssigneeFilter, setSelectedAssigneeFilter] = useState('');
-      const [userRoles, setUserRoles] = useState({});
-      const [devHoursPerDay, setDevHoursPerDay] = useState(7);
-      const [qaHoursPerDay, setQaHoursPerDay] = useState(7);
+      const [userRoles, setUserRoles] = useState(() => {
+        try { return JSON.parse(localStorage.getItem(`weaver_settings_${appId}`) || '{}').userRoles || {}; } catch(e) { return {}; }
+      });
+      const [devHoursPerDay, setDevHoursPerDay] = useState(() => {
+        try { const val = JSON.parse(localStorage.getItem(`weaver_settings_${appId}`) || '{}').devHoursPerDay; return val !== undefined ? val : 7; } catch(e) { return 7; }
+      });
+      const [qaHoursPerDay, setQaHoursPerDay] = useState(() => {
+        try { const val = JSON.parse(localStorage.getItem(`weaver_settings_${appId}`) || '{}').qaHoursPerDay; return val !== undefined ? val : 7; } catch(e) { return 7; }
+      });
       
       // Blocker State
       const [isBlockerModalOpen, setIsBlockerModalOpen] = useState(false);
-      const [dateBlockers, setDateBlockers] = useState([]);
+      const [dateBlockers, setDateBlockers] = useState(() => {
+        try { return JSON.parse(localStorage.getItem(`weaver_settings_${appId}`) || '{}').dateBlockers || []; } catch(e) { return []; }
+      });
       const [newBlockerDays, setNewBlockerDays] = useState(1);
       const [newBlockerRemark, setNewBlockerRemark] = useState('Holiday');
       const [newBlockerAssignee, setNewBlockerAssignee] = useState('');
