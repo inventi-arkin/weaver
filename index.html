@@ -408,7 +408,12 @@
       const [clickUpToken, setClickUpToken] = useState('');
       const [tempToken, setTempToken] = useState('');
       const [clickUpError, setClickUpError] = useState(null);
-      const [mappedWorkflows, setMappedWorkflows] = useState([]);
+      const [mappedWorkflows, setMappedWorkflows] = useState(() => {
+        try {
+          const saved = localStorage.getItem(`weaver_workflows_${appId}`);
+          return saved ? JSON.parse(saved) : [];
+        } catch (e) { return []; }
+      });
       const [isAutoSyncing, setIsAutoSyncing] = useState(false);
       
       // Filtering & Settings State
@@ -433,7 +438,12 @@
       const toggleTaskExpand = (taskId) => setExpandedTasks(prev => ({ ...prev, [taskId]: !prev[taskId] }));
       
       // Time Ledger State
-      const [globalTimeLedger, setGlobalTimeLedger] = useState([]);
+      const [globalTimeLedger, setGlobalTimeLedger] = useState(() => {
+        try {
+          const saved = localStorage.getItem(`weaver_ledger_${appId}`);
+          return saved ? JSON.parse(saved) : [];
+        } catch(e) { return []; }
+      });
       const [timeEntryNote, setTimeEntryNote] = useState('');
       const [timeEntryHours, setTimeEntryHours] = useState('');
       const [selectedTaskIdForTime, setSelectedTaskIdForTime] = useState('');
@@ -599,13 +609,15 @@
 
         let initialTasks = [];
         if (clickUpToken === 'mock_token') {
-          initialTasks = buildTaskTree(MOCK_CLICKUP_DATA.tasks[selectedList] || []);
+          // Fallback to mock_list_1 so widgets always have rich dummy data to display
+          initialTasks = buildTaskTree(MOCK_CLICKUP_DATA.tasks[selectedList] || MOCK_CLICKUP_DATA.tasks['mock_list_1']);
         }
         
         const newWorkflows = [...mappedWorkflows, {
           id: Date.now().toString(), team: teamName, space: spaceName, folder: folderName, list: listName, listId: selectedList, tasks: initialTasks, lastSynced: Date.now()
         }];
         setMappedWorkflows(newWorkflows);
+        localStorage.setItem(`weaver_workflows_${appId}`, JSON.stringify(newWorkflows));
         
         if (user && !user.isMock) {
           const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
@@ -623,6 +635,7 @@
       const removeMapping = async (id) => {
         const newWorkflows = mappedWorkflows.filter(w => w.id !== id);
         setMappedWorkflows(newWorkflows);
+        localStorage.setItem(`weaver_workflows_${appId}`, JSON.stringify(newWorkflows));
         
         if (user && !user.isMock) {
           const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
@@ -760,7 +773,11 @@
           note: timeEntryNote || 'Manual entry'
         };
         
-        setGlobalTimeLedger(prev => [...prev, newEntry]);
+        setGlobalTimeLedger(prev => {
+          const updated = [...prev, newEntry];
+          localStorage.setItem(`weaver_ledger_${appId}`, JSON.stringify(updated));
+          return updated;
+        });
         
         if (user && !user.isMock) {
           const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'ledgers', 'global');
@@ -777,7 +794,11 @@
       };
 
       const handleDeleteTimeEntry = async (entry) => {
-        setGlobalTimeLedger(prev => prev.filter(e => e.id !== entry.id));
+        setGlobalTimeLedger(prev => {
+          const updated = prev.filter(e => e.id !== entry.id);
+          localStorage.setItem(`weaver_ledger_${appId}`, JSON.stringify(updated));
+          return updated;
+        });
         if (user && !user.isMock) {
           const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'ledgers', 'global');
           try {
