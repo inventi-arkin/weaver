@@ -154,7 +154,7 @@
       const isDoneStatus = ['closed', 'complete', 'done', 'resolved'].includes((task.status?.status || '').toLowerCase());
       
       const estimateMs = task.time_estimate ? parseInt(task.time_estimate) : 0;
-      const spentMs = task.time_spent ? parseInt(task.time_spent) : (isDoneStatus ? estimateMs : 0);
+      const spentMs = task.time_spent ? parseInt(task.time_spent) : 0;
       const hasTimeData = estimateMs > 0 || spentMs > 0;
       const displayHours = hasTimeData ? `${Math.round(spentMs / 3600000)}h / ${Math.round(estimateMs / 3600000)}h` : null;
       
@@ -1032,7 +1032,7 @@
           const isDone = doneStatuses.includes(statusName.toLowerCase());
           
           let est = task.directEstimate !== undefined ? task.directEstimate : (task.time_estimate ? parseInt(task.time_estimate) : 0);
-          const nativeSpent = task.directNativeSpent !== undefined ? task.directNativeSpent : (task.rawNativeSpent ? parseInt(task.rawNativeSpent) : (isDone ? est : 0));
+          const nativeSpent = task.directNativeSpent !== undefined ? task.directNativeSpent : (task.rawNativeSpent ? parseInt(task.rawNativeSpent) : 0);
 
           if (task.assignees && task.assignees.length > 0) {
             task.assignees.forEach(assignee => {
@@ -1113,30 +1113,29 @@
         const qaCapacityHours = Math.max(0, (qaCount * bucketDurationDays * qaHoursPerDay) - (qaLeaveDays * qaHoursPerDay));
 
         let totalEstimateMs = 0;
-        let totalRemainingMs = 0;
-        let totalSpentMs = 0;
+        let totalBurnedMs = 0;
+        let totalLoggedMs = 0;
 
         independentTasks.forEach(t => {
           const isDone = doneStatuses.includes((t.status?.status || '').toLowerCase());
-          let estimate = t.time_estimate ? Number(t.time_estimate) : 0; 
-          let spent = t.time_spent ? Number(t.time_spent) : (isDone ? estimate : 0);
+          let est = t.time_estimate ? Number(t.time_estimate) : 0; 
+          let literalLogged = t.time_spent ? Number(t.time_spent) : 0;
           
-          if (spent > estimate) {
-              estimate = spent;
+          if (literalLogged > est) {
+              est = literalLogged;
           }
           
-          const remaining = isDone ? 0 : Math.max(0, estimate - spent);
+          let burned = isDone ? est : literalLogged;
           
-          totalEstimateMs += estimate;
-          totalRemainingMs += remaining;
-          totalSpentMs += spent;
+          totalEstimateMs += est;
+          totalBurnedMs += burned;
+          totalLoggedMs += literalLogged;
         });
 
         const totalEstHours = Math.round(totalEstimateMs / 3600000) || 1;
-        const totalRemHours = Math.round(totalRemainingMs / 3600000);
+        const totalBurnedHours = Math.round(totalBurnedMs / 3600000);
         
-        const burnedHours = totalEstHours - totalRemHours;
-        const completionPercentage = Math.min(100, Math.round((burnedHours / totalEstHours) * 100));
+        const completionPercentage = Math.min(100, Math.round((totalBurnedHours / totalEstHours) * 100));
 
         const formatDuration = (ms) => {
             const hrs = Math.floor(ms / 3600000);
@@ -1299,7 +1298,6 @@
             let est = t.time_estimate ? Number(t.time_estimate) : 0;
             let totalSpent = Number(t.time_spent) || 0;
             
-            if (isDone && totalSpent === 0) totalSpent = est;
             if (totalSpent > est) est = totalSpent;
 
             const localAdded = Number(t._totalLocalAddedMs) || 0;
@@ -1350,7 +1348,7 @@
         
         logEvents.sort((a,b) => a.date - b.date);
 
-        const maxBurnupMs = Math.max(totalEstimateMs, devCapacityHours * 3600000, totalSpentMs, 3600000);
+        const maxBurnupMs = Math.max(totalEstimateMs, devCapacityHours * 3600000, totalLoggedMs, 3600000);
         const maxBurnupHours = Math.round(maxBurnupMs / 3600000);
 
         let cumulativeLoggedMs = initialLoggedMs;
@@ -2045,8 +2043,8 @@
                             <div className="flex items-center justify-between text-xs text-slate-400 bg-slate-900/60 px-2.5 py-1 rounded-md border border-white/5" title="Completed vs Total Items">
                               <div className="flex items-center"><CheckCircle2 className="h-3.5 w-3.5 mr-1.5 text-emerald-400 shrink-0" /> <span className="text-white font-medium mr-1">{completedBreakdown.total}</span> / {totalDistTasks} Items</div>
                             </div>
-                            <div className="flex items-center justify-between text-[11px] text-slate-400 bg-slate-900/60 px-2.5 py-1 rounded-md border border-white/5 whitespace-nowrap" title="Logged vs Estimated Hours">
-                              <div className="flex items-center"><Clock className="h-3.5 w-3.5 mr-1.5 text-indigo-400 shrink-0" /> <span className="text-white font-medium mr-1">{formatDuration(totalSpentMs)}</span> / {formatDuration(totalEstimateMs)} Logged</div>
+                            <div className="flex items-center justify-between text-[11px] text-slate-400 bg-slate-900/60 px-2.5 py-1 rounded-md border border-white/5 whitespace-nowrap" title="Actual Logged Time vs Estimated Effort">
+                              <div className="flex items-center"><Clock className="h-3.5 w-3.5 mr-1.5 text-indigo-400 shrink-0" /> <span className="text-white font-medium mr-1">{formatDuration(totalLoggedMs)}</span> Logged / {formatDuration(totalEstimateMs)} Est</div>
                             </div>
                           </div>
                         </div>
@@ -2507,7 +2505,7 @@
             {/* Active Explorer */}
             <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl overflow-hidden mb-8">
               <div className="px-6 py-4 border-b border-white/5 bg-slate-900/30"><h2 className="text-sm font-bold text-white flex items-center gap-2"><ListTodo className="h-4 w-4 text-indigo-400" /> Active Tasks Explorer</h2></div>
-              <div className="p-6">
+              <div className="p-6 max-h-[500px] overflow-y-auto">
                 {activeWorkflows.map(workflow => {
                   const mainTasksOnly = (workflow.tasks || []).filter(t => !(t.name || '').toLowerCase().includes('qa bugs'));
                   const rootTasksByTags = buildFilteredTree(mainTasksOnly, false);
@@ -2528,7 +2526,7 @@
                 <h2 className="text-sm font-bold text-white flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-emerald-400" /> Completed Tasks Explorer</h2>
                 <span className="text-xs font-medium text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20">{completedFilteredTasksCount} Resolved</span>
               </div>
-              <div className="p-6">
+              <div className="p-6 max-h-[500px] overflow-y-auto">
                 {activeWorkflows.map(workflow => {
                   const mainTasksOnly = (workflow.tasks || []).filter(t => !(t.name || '').toLowerCase().includes('qa bugs'));
                   const completedTasksTree = buildFilteredTree(mainTasksOnly, true);
