@@ -461,8 +461,38 @@
         setIntegrationStep('selecting');
       };
 
-      const fetchClickUp = async (endpoint, token) => {
+      const fetchClickUp = async (endpoint, token, method = 'GET', body = null) => {
         if (token === 'mock_token') return {};
+        
+        const targetUrl = `https://api.clickup.com/api/v2/${endpoint}`;
+        // Proxies help bypass browser CORS policies when making client-side API requests
+        const proxies = [
+          `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`, 
+          `https://thingproxy.freeboard.io/fetch/${targetUrl}`
+        ];
+
+        for (const proxyUrl of proxies) {
+          try {
+            const fetchOptions = { 
+              method, 
+              headers: { 'Authorization': token, 'Content-Type': 'application/json' } 
+            };
+            if (body) fetchOptions.body = JSON.stringify(body);
+            
+            const res = await fetch(proxyUrl, fetchOptions);
+            if (!res.ok) {
+              let errText = '';
+              try { const d = await res.json(); errText = d.err || d.error || ''; } catch(e){}
+              throw new Error(errText || `HTTP ${res.status}`);
+            }
+            return await res.json();
+          } catch (err) {
+            // If it's a network error (like a proxy being down), try the next proxy in the array
+            if (err.message === 'Failed to fetch' || err.name === 'TypeError') continue;
+            // Real API errors (like 401 Unauthorized) should surface immediately
+            throw err; 
+          }
+        }
         throw new Error('Connection blocked by CORS. Please use the Mock Data bypass to preview the UI.');
       };
 
