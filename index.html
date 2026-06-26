@@ -499,6 +499,13 @@
       useEffect(() => {
         if (!selectedTeam || !clickUpToken) return;
         if (clickUpToken === 'mock_token') { setSpaces(MOCK_CLICKUP_DATA.spaces[selectedTeam] || []); return; }
+        const fetchSpaces = async () => {
+          try {
+            const data = await fetchClickUp(`team/${selectedTeam}/space`, clickUpToken);
+            setSpaces(data.spaces || []);
+          } catch (err) { setClickUpError(err.message); }
+        };
+        fetchSpaces();
       }, [selectedTeam, clickUpToken]);
 
       useEffect(() => {
@@ -506,7 +513,17 @@
         if (clickUpToken === 'mock_token') {
           setFolders(MOCK_CLICKUP_DATA.folders[selectedSpace] || []);
           setFolderlessLists(MOCK_CLICKUP_DATA.folderlessLists[selectedSpace] || []);
+          return;
         }
+        const fetchSpaceData = async () => {
+          try {
+            const dataFolders = await fetchClickUp(`space/${selectedSpace}/folder`, clickUpToken);
+            setFolders(dataFolders.folders || []);
+            const dataLists = await fetchClickUp(`space/${selectedSpace}/list`, clickUpToken);
+            setFolderlessLists(dataLists.lists || []);
+          } catch (err) { setClickUpError(err.message); }
+        };
+        fetchSpaceData();
       }, [selectedSpace, clickUpToken]);
 
       useEffect(() => {
@@ -515,6 +532,13 @@
             setLists(MOCK_CLICKUP_DATA.lists[selectedFolder] || []);
             return;
         }
+        const fetchLists = async () => {
+          try {
+            const data = await fetchClickUp(`folder/${selectedFolder}/list`, clickUpToken);
+            setLists(data.lists || []);
+          } catch (err) { setClickUpError(err.message); }
+        };
+        fetchLists();
       }, [selectedFolder, clickUpToken]);
 
       const availableLists = selectedFolder ? lists : folderlessLists;
