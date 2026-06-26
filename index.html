@@ -1730,47 +1730,81 @@
                    <div className="flex flex-col lg:flex-row flex-1 overflow-hidden">
                       
                       {/* Left Pane: Task Tree */}
-                      <div className="w-full lg:w-1/2 border-r border-slate-700/80 p-6 flex flex-col bg-slate-900/50">
-                         <h3 className="text-sm font-semibold text-slate-400 mb-4 uppercase tracking-wider flex items-center"><FolderOpen className="h-4 w-4 mr-2"/> Active Hierarchy</h3>
-                         <div className="mb-4">
-                            <input type="text" placeholder="Search tasks..." value={taskSearchQuery} onChange={e => setTaskSearchQuery(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
-                         </div>
-                         <div className="overflow-y-auto flex-1 pr-2 space-y-6">
-                            {mappedWorkflows.map(wf => {
-                               const flatTasks = flattenTasksDeep(wf.tasks || []);
-                               const filteredTasks = taskSearchQuery.trim() === '' 
-                                 ? flatTasks 
-                                 : flatTasks.filter(t => (t.name || '').toLowerCase().includes(taskSearchQuery.toLowerCase()));
-                                 
-                               if (filteredTasks.length === 0) return null;
+                  <div className="w-full lg:w-1/2 border-r border-slate-700/80 p-6 flex flex-col bg-slate-900/50">
+                     <h3 className="text-sm font-semibold text-slate-400 mb-4 uppercase tracking-wider flex items-center"><FolderOpen className="h-4 w-4 mr-2"/> Active Hierarchy</h3>
+                     <div className="mb-4">
+                        <input type="text" placeholder="Search tasks..." value={taskSearchQuery} onChange={e => setTaskSearchQuery(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
+                     </div>
+                     <div className="overflow-y-auto flex-1 pr-2 space-y-6">
+                        {mappedWorkflows.map(wf => {
+                           const filterNodeForLedger = (node) => {
+                             const matchesSearch = taskSearchQuery.trim() === '' || (node.name || '').toLowerCase().includes(taskSearchQuery.toLowerCase());
+                             const validSubtasks = (node.subtasks || []).map(filterNodeForLedger).filter(Boolean);
+                             if (matchesSearch || validSubtasks.length > 0) {
+                                 return { ...node, subtasks: validSubtasks };
+                             }
+                             return null;
+                           };
+                           
+                           const rootTasks = (wf.tasks || []).map(filterNodeForLedger).filter(Boolean);
 
-                               return (
-                                  <div key={wf.id} className="mb-2">
-                                     <div className="text-indigo-400 font-semibold mb-3 flex items-center bg-indigo-500/10 px-3 py-1.5 rounded-lg border border-indigo-500/20 w-max"><Box className="w-4 h-4 mr-2"/> {wf.list}</div>
-                                     <div className="space-y-2.5 pl-4 border-l-2 border-slate-800 ml-2">
-                                        {filteredTasks.map(task => {
-                                           const loggedMs = getLoggedMsForTask(task.id);
-                                           const isSelected = selectedTaskIdForTime === task.id;
-                                           return (
-                                              <div key={task.id} onClick={() => setSelectedTaskIdForTime(task.id)} className={`p-3 rounded-lg border flex justify-between items-center cursor-pointer transition-all ${isSelected ? 'bg-indigo-600/20 border-indigo-500 shadow-[0_0_15px_rgba(99,102,241,0.2)]' : 'bg-slate-800/40 border-slate-700/50 hover:border-slate-500'}`}>
-                                                 <div className="flex items-center space-x-3 truncate mr-4">
-                                                    <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: task.status?.color || '#cbd5e1' }} />
-                                                    <div className={`text-sm font-medium truncate ${isSelected ? 'text-indigo-100' : 'text-slate-200'}`}>{task.name}</div>
-                                                 </div>
-                                                 <div className="text-xs font-medium bg-slate-950/60 px-2 py-1 rounded-md text-slate-400 shrink-0 border border-white/5">
-                                                    {loggedMs > 0 ? `${(loggedMs / 3600000).toFixed(1)}h` : '0h'}
-                                                 </div>
-                                              </div>
-                                           );
-                                        })}
-                                     </div>
-                                  </div>
-                               );
-                            })}
-                         </div>
-                      </div>
+                           if (rootTasks.length === 0) return null;
 
-                      {/* Right Pane: Time Logging & Feed */}
+                           const renderLedgerNode = (task, depth = 0) => {
+                              const loggedMs = getLoggedMsForTask(task.id);
+                              const isSelected = selectedTaskIdForTime === task.id;
+                              const hasSubtasks = task.subtasks && task.subtasks.length > 0;
+                              const isExpanded = !!expandedTasks[task.id] || (taskSearchQuery.trim() !== '' && hasSubtasks);
+                              
+                              return (
+                                 <div key={task.id} className="mb-2">
+                                    <div onClick={() => setSelectedTaskIdForTime(task.id)} className={`p-3 rounded-lg border flex justify-between items-center cursor-pointer transition-all ${isSelected ? 'bg-indigo-600/20 border-indigo-500 shadow-[0_0_15px_rgba(99,102,241,0.2)]' : 'bg-slate-800/40 border-slate-700/50 hover:border-slate-500'}`}>
+                                       <div className="flex items-center space-x-3 truncate mr-4">
+                                          {hasSubtasks ? (
+                                            <button onClick={(e) => { e.stopPropagation(); toggleTaskExpand(task.id); }} className="p-0.5 text-slate-400 hover:text-white rounded flex-shrink-0">
+                                               <ChevronRight className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                                            </button>
+                                          ) : (
+                                            <div className="w-5 h-4 flex-shrink-0" />
+                                          )}
+                                          <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: task.status?.color || '#cbd5e1' }} />
+                                          <div className={`text-sm font-medium truncate ${isSelected ? 'text-indigo-100' : 'text-slate-200'}`}>{task.name}</div>
+                                       </div>
+                                       <div className="text-xs font-medium bg-slate-950/60 px-2 py-1 rounded-md text-slate-400 shrink-0 border border-white/5">
+                                          {loggedMs > 0 ? `${(loggedMs / 3600000).toFixed(1)}h` : '0h'}
+                                       </div>
+                                    </div>
+                                    {isExpanded && hasSubtasks && (
+                                       <div className="mt-2 border-l border-slate-700/50 ml-5 pl-4 border-dashed">
+                                          {task.subtasks.map(sub => renderLedgerNode(sub, depth + 1))}
+                                       </div>
+                                    )}
+                                 </div>
+                              );
+                           };
+
+                           return (
+                              <div key={wf.id} className="mb-6">
+                                 <div className="text-indigo-400 font-semibold mb-3 flex items-center bg-indigo-500/10 px-3 py-1.5 rounded-lg border border-indigo-500/20 w-max"><Box className="w-4 h-4 mr-2"/> {wf.list}</div>
+                                 <div className="space-y-2">
+                                    {rootTasks.map(task => renderLedgerNode(task, 0))}
+                                 </div>
+                              </div>
+                           );
+                        })}
+                        {mappedWorkflows.every(wf => {
+                           const filterNodeForLedger = (node) => {
+                             const matchesSearch = taskSearchQuery.trim() === '' || (node.name || '').toLowerCase().includes(taskSearchQuery.toLowerCase());
+                             const validSubtasks = (node.subtasks || []).map(filterNodeForLedger).filter(Boolean);
+                             if (matchesSearch || validSubtasks.length > 0) return { ...node, subtasks: validSubtasks };
+                             return null;
+                           };
+                           return (wf.tasks || []).map(filterNodeForLedger).filter(Boolean).length === 0;
+                        }) && <div className="text-slate-500 italic text-sm text-center mt-6">No tasks match your search.</div>}
+                     </div>
+                  </div>
+
+                  {/* Right Pane: Time Logging & Feed */}
                       <div className="w-full lg:w-1/2 flex flex-col bg-slate-950/30">
                          <div className="p-6 border-b border-slate-700/80">
                             <h3 className="text-sm font-semibold text-slate-400 mb-4 uppercase tracking-wider flex items-center"><Activity className="h-4 w-4 mr-2"/> Log Activity</h3>
