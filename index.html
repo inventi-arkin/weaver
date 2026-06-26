@@ -611,6 +611,19 @@
         if (clickUpToken === 'mock_token') {
           // Fallback to mock_list_1 so widgets always have rich dummy data to display
           initialTasks = buildTaskTree(MOCK_CLICKUP_DATA.tasks[selectedList] || MOCK_CLICKUP_DATA.tasks['mock_list_1']);
+        } else {
+          try {
+            let page = 0;
+            let hasMore = true;
+            let allFetchedTasks = [];
+            while (hasMore) {
+                const data = await fetchClickUp(`list/${selectedList}/task?subtasks=true&include_closed=true&page=${page}`, clickUpToken);
+                const tasksChunk = data.tasks || [];
+                allFetchedTasks.push(...tasksChunk);
+                if (tasksChunk.length === 100) page++; else hasMore = false;
+            }
+            initialTasks = buildTaskTree(allFetchedTasks);
+          } catch (err) { console.error("Error fetching tasks:", err); }
         }
         
         const newWorkflows = [...mappedWorkflows, {
@@ -646,6 +659,39 @@
           }
         }
       };
+
+      // Background synchronization loop
+      useEffect(() => {
+        if (mappedWorkflows.length === 0 || !clickUpToken) return;
+        const syncInterval = setInterval(async () => {
+          setIsAutoSyncing(true);
+          const updatedWorkflows = await Promise.all(mappedWorkflowsRef.current.map(async (workflow) => {
+            let updatedTasks = workflow.tasks;
+            if (clickUpToken === 'mock_token') {
+              updatedTasks = buildTaskTree(MOCK_CLICKUP_DATA.tasks[workflow.listId] || MOCK_CLICKUP_DATA.tasks['mock_list_1']);
+            } else {
+              try {
+                let page = 0, hasMore = true, allFetchedTasks = [];
+                while (hasMore) {
+                    const data = await fetchClickUp(`list/${workflow.listId}/task?subtasks=true&include_closed=true&page=${page}`, clickUpToken);
+                    const tasksChunk = data.tasks || [];
+                    allFetchedTasks.push(...tasksChunk);
+                    if (tasksChunk.length === 100) page++; else hasMore = false;
+                }
+                if (allFetchedTasks.length > 0) {
+                    updatedTasks = buildTaskTree(allFetchedTasks);
+                }
+              } catch (err) { console.error("Sync error:", err); }
+            }
+            return { ...workflow, tasks: updatedTasks, lastSynced: Date.now() };
+          }));
+          
+          setMappedWorkflows(updatedWorkflows);
+          localStorage.setItem(`weaver_workflows_${appId}`, JSON.stringify(updatedWorkflows));
+          setIsAutoSyncing(false);
+        }, 20000); // Sync every 20 seconds
+        return () => clearInterval(syncInterval);
+      }, [mappedWorkflows.length, clickUpToken]);
 
       const saveSettings = async (updates) => {
         const currentLocal = JSON.parse(localStorage.getItem(`weaver_settings_${appId}`) || '{}');
