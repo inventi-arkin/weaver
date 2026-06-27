@@ -493,13 +493,19 @@
 
         for (const proxyUrl of proxies) {
           try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout prevents hanging
+            
             const fetchOptions = { 
               method, 
-              headers: { 'Authorization': token, 'Content-Type': 'application/json' } 
+              headers: { 'Authorization': token, 'Content-Type': 'application/json' },
+              signal: controller.signal
             };
             if (body) fetchOptions.body = JSON.stringify(body);
             
             const res = await fetch(proxyUrl, fetchOptions);
+            clearTimeout(timeoutId);
+            
             if (!res.ok) {
               let errText = '';
               try { const d = await res.json(); errText = d.err || d.error || ''; } catch(e){}
@@ -507,13 +513,13 @@
             }
             return await res.json();
           } catch (err) {
-            // If it's a network error (like a proxy being down), try the next proxy in the array
-            if (err.message === 'Failed to fetch' || err.name === 'TypeError') continue;
+            // If it's a network error/timeout, try the next proxy in the array
+            if (err.name === 'AbortError' || err.message === 'Failed to fetch' || err.name === 'TypeError') continue;
             // Real API errors (like 401 Unauthorized) should surface immediately
             throw err; 
           }
         }
-        throw new Error('Connection blocked by CORS. Please use the Mock Data bypass to preview the UI.');
+        throw new Error('Connection blocked by CORS or timed out.');
       };
 
       useEffect(() => {
@@ -671,47 +677,48 @@
         }
       };
 
+      const runSyncSequence = async () => {
+        if (mappedWorkflowsRef.current.length === 0 || !clickUpToken) return;
+        setIsAutoSyncing(true);
+        const updatedWorkflows = await Promise.all(mappedWorkflowsRef.current.map(async (workflow) => {
+          let updatedTasks = workflow.tasks;
+          if (clickUpToken === 'mock_token') {
+            updatedTasks = buildTaskTree(MOCK_CLICKUP_DATA.tasks[workflow.listId] || MOCK_CLICKUP_DATA.tasks['mock_list_1']);
+          } else {
+            try {
+              let page = 0, hasMore = true, allFetchedTasks = [];
+              while (hasMore) {
+                  const data = await fetchClickUp(`list/${workflow.listId}/task?subtasks=true&include_closed=true&page=${page}`, clickUpToken);
+                  const tasksChunk = data.tasks || [];
+                  allFetchedTasks.push(...tasksChunk);
+                  if (tasksChunk.length === 100) page++; else hasMore = false;
+              }
+              if (allFetchedTasks.length > 0) {
+                  updatedTasks = buildTaskTree(allFetchedTasks);
+              }
+            } catch (err) { console.error("Sync error:", err); }
+          }
+          return { ...workflow, tasks: updatedTasks, lastSynced: Date.now() };
+        }));
+        
+        setMappedWorkflows(updatedWorkflows);
+        localStorage.setItem(`weaver_workflows_${appId}`, JSON.stringify(updatedWorkflows));
+        
+        if (user && !user.isMock) {
+          const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
+          try {
+            await setDoc(docRef, { mappedWorkflows: updatedWorkflows }, { merge: true });
+          } catch(err) {
+            console.error("Error saving synced workflows to Firestore", err);
+          }
+        }
+        setIsAutoSyncing(false);
+      };
+
       // Background synchronization loop
       useEffect(() => {
         if (mappedWorkflows.length === 0 || !clickUpToken) return;
-        const syncInterval = setInterval(async () => {
-          setIsAutoSyncing(true);
-          const updatedWorkflows = await Promise.all(mappedWorkflowsRef.current.map(async (workflow) => {
-            let updatedTasks = workflow.tasks;
-            if (clickUpToken === 'mock_token') {
-              // Fallback to mock_list_1 so widgets always have rich dummy data to display
-              updatedTasks = buildTaskTree(MOCK_CLICKUP_DATA.tasks[workflow.listId] || MOCK_CLICKUP_DATA.tasks['mock_list_1']);
-            } else {
-              try {
-                let page = 0, hasMore = true, allFetchedTasks = [];
-                while (hasMore) {
-                    const data = await fetchClickUp(`list/${workflow.listId}/task?subtasks=true&include_closed=true&page=${page}`, clickUpToken);
-                    const tasksChunk = data.tasks || [];
-                    allFetchedTasks.push(...tasksChunk);
-                    if (tasksChunk.length === 100) page++; else hasMore = false;
-                }
-                if (allFetchedTasks.length > 0) {
-                    updatedTasks = buildTaskTree(allFetchedTasks);
-                }
-              } catch (err) { console.error("Sync error:", err); }
-            }
-            return { ...workflow, tasks: updatedTasks, lastSynced: Date.now() };
-          }));
-          
-          setMappedWorkflows(updatedWorkflows);
-          localStorage.setItem(`weaver_workflows_${appId}`, JSON.stringify(updatedWorkflows));
-          
-          if (user && !user.isMock) {
-            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
-            try {
-              await setDoc(docRef, { mappedWorkflows: updatedWorkflows }, { merge: true });
-            } catch(err) {
-              console.error("Error saving synced workflows to Firestore", err);
-            }
-          }
-
-          setIsAutoSyncing(false);
-        }, 20000); // Sync every 20 seconds
+        const syncInterval = setInterval(runSyncSequence, 30000); // 30 seconds
         return () => clearInterval(syncInterval);
       }, [mappedWorkflows.length, clickUpToken, user]);
 
@@ -2014,14 +2021,25 @@
                 <h1 className="text-2xl font-bold text-white flex items-center gap-3">
                   {mappedWorkflows[0]?.list || 'Your Workspace'}
                   <div className="flex items-center px-3 py-1 rounded-full border bg-emerald-900/30 border-emerald-500/30 text-emerald-400 text-xs font-medium">
-                    <div className="h-2 w-2 rounded-full bg-emerald-400 mr-2 animate-pulse"></div> Synced: {new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: 'numeric', second: 'numeric' }).format(new Date(mappedWorkflows[0].lastSynced))}
+                    <div className={`h-2 w-2 rounded-full mr-2 ${isAutoSyncing ? 'bg-emerald-400 animate-pulse' : 'bg-emerald-500/50'}`}></div> 
+                    Synced: {new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: 'numeric', second: 'numeric' }).format(new Date(mappedWorkflows[0].lastSynced))}
+                    {clickUpToken && (
+                      <button onClick={runSyncSequence} disabled={isAutoSyncing} className="ml-2 pl-2 border-l border-emerald-500/30 text-emerald-500 hover:text-emerald-300 transition-colors disabled:opacity-50" title="Sync Now">
+                        <RefreshCw className={`h-3.5 w-3.5 ${isAutoSyncing ? 'animate-spin' : ''}`} />
+                      </button>
+                    )}
                   </div>
+                  {!clickUpToken && mappedWorkflows.length > 0 && (
+                    <button onClick={() => setIsSwitchModalOpen(true)} className="flex items-center px-3 py-1 rounded-full border bg-rose-900/30 border-rose-500/30 text-rose-400 hover:bg-rose-900/50 hover:text-rose-300 text-xs font-medium cursor-pointer transition-colors" title="Your API token was lost from memory. Please reconnect to resume syncing.">
+                      <AlertTriangle className="h-3 w-3 mr-1.5" /> Reconnect
+                    </button>
+                  )}
                 </h1>
                 <p className="text-slate-400 text-sm mt-1">Dashboard metrics are dynamically synced and globally filtered.</p>
               </div>
               <div className="flex flex-col sm:flex-row gap-3">
-                <button onClick={handleConnectClickUp} className="flex items-center justify-center px-4 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white text-sm font-medium rounded-lg shadow-lg transition-colors">
-                  <RefreshCw className="h-4 w-4 mr-2" /> Change Connection
+                <button onClick={() => setIsSwitchModalOpen(true)} className="flex items-center justify-center px-4 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white text-sm font-medium rounded-lg shadow-lg transition-colors">
+                  <Settings className="h-4 w-4 mr-2" /> Connection
                 </button>
                 <button onClick={() => setIsUnifiedModalOpen(true)} className="flex items-center justify-center px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg shadow-lg transition-colors">
                   <ListTodo className="h-4 w-4 mr-2" /> Manage Tasks & Time
