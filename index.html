@@ -405,7 +405,7 @@
 
       // Core App State
       const [integrationStep, setIntegrationStep] = useState('idle');
-      const [clickUpToken, setClickUpToken] = useState('');
+      const [clickUpToken, setClickUpToken] = useState(() => localStorage.getItem(`weaver_clickup_token_${appId}`) || '');
       const [tempToken, setTempToken] = useState('');
       const [clickUpError, setClickUpError] = useState(null);
       const [mappedWorkflows, setMappedWorkflows] = useState(() => {
@@ -476,6 +476,7 @@
       const handleMockClickUpData = () => {
         setTeams(MOCK_CLICKUP_DATA.teams);
         setClickUpToken('mock_token');
+        localStorage.setItem(`weaver_clickup_token_${appId}`, 'mock_token');
         setClickUpError(null);
         setIntegrationStep('selecting');
       };
@@ -586,6 +587,7 @@
           const data = await fetchClickUp('team', tempToken);
           setTeams(data.teams || []);
           setClickUpToken(tempToken);
+          localStorage.setItem(`weaver_clickup_token_${appId}`, tempToken);
           setIntegrationStep('selecting');
         } catch (err) {
           setClickUpError(err.message);
@@ -677,6 +679,7 @@
           const updatedWorkflows = await Promise.all(mappedWorkflowsRef.current.map(async (workflow) => {
             let updatedTasks = workflow.tasks;
             if (clickUpToken === 'mock_token') {
+              // Fallback to mock_list_1 so widgets always have rich dummy data to display
               updatedTasks = buildTaskTree(MOCK_CLICKUP_DATA.tasks[workflow.listId] || MOCK_CLICKUP_DATA.tasks['mock_list_1']);
             } else {
               try {
@@ -697,10 +700,20 @@
           
           setMappedWorkflows(updatedWorkflows);
           localStorage.setItem(`weaver_workflows_${appId}`, JSON.stringify(updatedWorkflows));
+          
+          if (user && !user.isMock) {
+            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
+            try {
+              await setDoc(docRef, { mappedWorkflows: updatedWorkflows }, { merge: true });
+            } catch(err) {
+              console.error("Error saving synced workflows to Firestore", err);
+            }
+          }
+
           setIsAutoSyncing(false);
         }, 20000); // Sync every 20 seconds
         return () => clearInterval(syncInterval);
-      }, [mappedWorkflows.length, clickUpToken]);
+      }, [mappedWorkflows.length, clickUpToken, user]);
 
       const saveSettings = async (updates) => {
         const currentLocal = JSON.parse(localStorage.getItem(`weaver_settings_${appId}`) || '{}');
@@ -814,6 +827,7 @@
       const handleLogout = () => {
         if (auth.currentUser) firebaseSignOut(auth);
         else setUser(null);
+        localStorage.removeItem(`weaver_clickup_token_${appId}`);
       };
 
       const handleLogTime = async () => {
