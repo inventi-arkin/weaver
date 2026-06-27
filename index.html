@@ -2030,7 +2030,7 @@
                     )}
                   </div>
                   {!clickUpToken && mappedWorkflows.length > 0 && (
-                    <button onClick={() => setIsSwitchModalOpen(true)} className="flex items-center px-3 py-1 rounded-full border bg-rose-900/30 border-rose-500/30 text-rose-400 hover:bg-rose-900/50 hover:text-rose-300 text-xs font-medium cursor-pointer transition-colors" title="Your API token was lost from memory. Please reconnect to resume syncing.">
+                    <button onClick={handleConnectClickUp} className="flex items-center px-3 py-1 rounded-full border bg-rose-900/30 border-rose-500/30 text-rose-400 hover:bg-rose-900/50 hover:text-rose-300 text-xs font-medium cursor-pointer transition-colors" title="Your API token was lost from memory. Please reconnect to resume syncing.">
                       <AlertTriangle className="h-3 w-3 mr-1.5" /> Reconnect
                     </button>
                   )}
@@ -2038,7 +2038,7 @@
                 <p className="text-slate-400 text-sm mt-1">Dashboard metrics are dynamically synced and globally filtered.</p>
               </div>
               <div className="flex flex-col sm:flex-row gap-3">
-                <button onClick={() => setIsSwitchModalOpen(true)} className="flex items-center justify-center px-4 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white text-sm font-medium rounded-lg shadow-lg transition-colors">
+                <button onClick={handleConnectClickUp} className="flex items-center justify-center px-4 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white text-sm font-medium rounded-lg shadow-lg transition-colors">
                   <Settings className="h-4 w-4 mr-2" /> Connection
                 </button>
                 <button onClick={() => setIsUnifiedModalOpen(true)} className="flex items-center justify-center px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg shadow-lg transition-colors">
