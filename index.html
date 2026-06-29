@@ -627,11 +627,22 @@
         const listName = availableLists.find(l => l.id === selectedList)?.name || 'Task List';
 
         let initialTasks = [];
+        let listStartDate = null;
+        let listDueDate = null;
+
         if (clickUpToken === 'mock_token') {
           // Fallback to mock_list_1 so widgets always have rich dummy data to display
           initialTasks = buildTaskTree(MOCK_CLICKUP_DATA.tasks[selectedList] || MOCK_CLICKUP_DATA.tasks['mock_list_1']);
+          listStartDate = (Date.now() - 3 * 86400000).toString(); // Mock start
+          listDueDate = (Date.now() + 11 * 86400000).toString(); // Mock due
         } else {
           try {
+            // 1. Fetch official list dates
+            const listDetail = await fetchClickUp(`list/${selectedList}`, clickUpToken);
+            if (listDetail.start_date) listStartDate = listDetail.start_date;
+            if (listDetail.due_date) listDueDate = listDetail.due_date;
+
+            // 2. Fetch all tasks inside the list
             let page = 0;
             let hasMore = true;
             let allFetchedTasks = [];
@@ -642,11 +653,11 @@
                 if (tasksChunk.length === 100) page++; else hasMore = false;
             }
             initialTasks = buildTaskTree(allFetchedTasks);
-          } catch (err) { console.error("Error fetching tasks:", err); }
+          } catch (err) { console.error("Error fetching tasks or list details:", err); }
         }
         
         const newWorkflows = [...mappedWorkflows, {
-          id: Date.now().toString(), team: teamName, space: spaceName, folder: folderName, list: listName, listId: selectedList, tasks: initialTasks, lastSynced: Date.now()
+          id: Date.now().toString(), team: teamName, space: spaceName, folder: folderName, list: listName, listId: selectedList, tasks: initialTasks, lastSynced: Date.now(), listStartDate, listDueDate
         }];
         setMappedWorkflows(newWorkflows);
         localStorage.setItem(`weaver_workflows_${appId}`, JSON.stringify(newWorkflows));
@@ -684,10 +695,19 @@
         setIsAutoSyncing(true);
         const updatedWorkflows = await Promise.all(mappedWorkflowsRef.current.map(async (workflow) => {
           let updatedTasks = workflow.tasks;
+          let listStartDate = workflow.listStartDate || null;
+          let listDueDate = workflow.listDueDate || null;
+
           if (clickUpToken === 'mock_token') {
             updatedTasks = buildTaskTree(MOCK_CLICKUP_DATA.tasks[workflow.listId] || MOCK_CLICKUP_DATA.tasks['mock_list_1']);
           } else {
             try {
+              // 1. Refresh official list dates
+              const listDetail = await fetchClickUp(`list/${workflow.listId}`, clickUpToken);
+              if (listDetail.start_date) listStartDate = listDetail.start_date;
+              if (listDetail.due_date) listDueDate = listDetail.due_date;
+
+              // 2. Refresh all tasks
               let page = 0, hasMore = true, allFetchedTasks = [];
               while (hasMore) {
                   const data = await fetchClickUp(`list/${workflow.listId}/task?subtasks=true&include_closed=true&page=${page}`, clickUpToken);
@@ -700,7 +720,7 @@
               }
             } catch (err) { console.error("Sync error:", err); }
           }
-          return { ...workflow, tasks: updatedTasks, lastSynced: Date.now() };
+          return { ...workflow, tasks: updatedTasks, lastSynced: Date.now(), listStartDate, listDueDate };
         }));
         
         setMappedWorkflows(updatedWorkflows);
@@ -1096,21 +1116,24 @@
         const devCount = assigneesList.filter(a => (userRoles[a.username] || 'Developer') === 'Developer').length;
         const qaCount = assigneesList.filter(a => (userRoles[a.username] || 'Developer') === 'QA').length;
 
-        let taskMinDate = Infinity;
-        let taskMaxDate = 0;
-        independentTasks.forEach(t => {
-            if (t.start_date) taskMinDate = Math.min(taskMinDate, parseInt(t.start_date));
-            if (t.due_date) taskMaxDate = Math.max(taskMaxDate, parseInt(t.due_date));
-        });
-
         let minDate = Infinity;
         let maxDate = 0;
         activeWorkflows.forEach(wf => {
           if (wf.listStartDate) minDate = Math.min(minDate, parseInt(wf.listStartDate));
           if (wf.listDueDate) maxDate = Math.max(maxDate, parseInt(wf.listDueDate));
         });
-        if (minDate === Infinity) minDate = taskMinDate;
-        if (maxDate === 0) maxDate = taskMaxDate;
+
+        // Fallback to tasks if List dates are missing
+        if (minDate === Infinity || maxDate === 0) {
+            let taskMinDate = Infinity;
+            let taskMaxDate = 0;
+            independentTasks.forEach(t => {
+                if (t.start_date) taskMinDate = Math.min(taskMinDate, parseInt(t.start_date));
+                if (t.due_date) taskMaxDate = Math.max(taskMaxDate, parseInt(t.due_date));
+            });
+            if (minDate === Infinity) minDate = taskMinDate;
+            if (maxDate === 0) maxDate = taskMaxDate;
+        }
         
         const now = Date.now();
         if (minDate === Infinity) minDate = now - (7 * 86400000);
