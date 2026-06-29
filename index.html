@@ -376,7 +376,7 @@
         };
       }, []);
 
-      return <canvas ref={canvasRef} className="absolute inset-0 w-full h-full block z-0 transition-opacity duration-1000" style={{ opacity }} />;
+      return <canvas ref={canvasRef} className="fixed inset-0 w-full h-full block z-0 transition-opacity duration-1000 pointer-events-none" style={{ opacity }} />;
     };
 
     // --- MOCK DATA ---
