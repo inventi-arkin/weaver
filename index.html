@@ -487,7 +487,6 @@
         if (token === 'mock_token') return {};
         
         const targetUrl = `https://api.clickup.com/api/v2/${endpoint}`;
-        // Proxies help bypass browser CORS policies when making client-side API requests
         const proxies = [
           `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`, 
           `https://thingproxy.freeboard.io/fetch/${targetUrl}`
@@ -496,7 +495,7 @@
         for (const proxyUrl of proxies) {
           try {
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout prevents hanging
+            const timeoutId = setTimeout(() => controller.abort(), 15000);
             
             const fetchOptions = { 
               method, 
@@ -515,9 +514,7 @@
             }
             return await res.json();
           } catch (err) {
-            // If it's a network error/timeout, try the next proxy in the array
             if (err.name === 'AbortError' || err.message === 'Failed to fetch' || err.name === 'TypeError') continue;
-            // Real API errors (like 401 Unauthorized) should surface immediately
             throw err; 
           }
         }
@@ -631,21 +628,16 @@
         let listDueDate = null;
 
         if (clickUpToken === 'mock_token') {
-          // Fallback to mock_list_1 so widgets always have rich dummy data to display
           initialTasks = buildTaskTree(MOCK_CLICKUP_DATA.tasks[selectedList] || MOCK_CLICKUP_DATA.tasks['mock_list_1']);
-          listStartDate = (Date.now() - 3 * 86400000).toString(); // Mock start
-          listDueDate = (Date.now() + 11 * 86400000).toString(); // Mock due
+          listStartDate = (Date.now() - 3 * 86400000).toString();
+          listDueDate = (Date.now() + 11 * 86400000).toString();
         } else {
           try {
-            // 1. Fetch official list dates
             const listDetail = await fetchClickUp(`list/${selectedList}`, clickUpToken);
             if (listDetail.start_date) listStartDate = listDetail.start_date;
             if (listDetail.due_date) listDueDate = listDetail.due_date;
 
-            // 2. Fetch all tasks inside the list
-            let page = 0;
-            let hasMore = true;
-            let allFetchedTasks = [];
+            let page = 0, hasMore = true, allFetchedTasks = [];
             while (hasMore) {
                 const data = await fetchClickUp(`list/${selectedList}/task?subtasks=true&include_closed=true&page=${page}`, clickUpToken);
                 const tasksChunk = data.tasks || [];
@@ -702,12 +694,10 @@
             updatedTasks = buildTaskTree(MOCK_CLICKUP_DATA.tasks[workflow.listId] || MOCK_CLICKUP_DATA.tasks['mock_list_1']);
           } else {
             try {
-              // 1. Refresh official list dates
               const listDetail = await fetchClickUp(`list/${workflow.listId}`, clickUpToken);
               if (listDetail.start_date) listStartDate = listDetail.start_date;
               if (listDetail.due_date) listDueDate = listDetail.due_date;
 
-              // 2. Refresh all tasks
               let page = 0, hasMore = true, allFetchedTasks = [];
               while (hasMore) {
                   const data = await fetchClickUp(`list/${workflow.listId}/task?subtasks=true&include_closed=true&page=${page}`, clickUpToken);
@@ -758,15 +748,27 @@
         }
       };
 
-      // Auth Initialization
+      // --- GUARANTEED FIREBASE AUTHENTICATION (Solves cross-user Sync bug) ---
       useEffect(() => {
         const initAuth = async () => {
           if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
             try {
               await signInWithCustomToken(auth, __initial_auth_token);
             } catch(err) {
-              if (err.code !== 'auth/custom-token-mismatch') console.warn("Custom token sign in failed", err);
+              console.warn("Custom token sign in failed", err);
+              try {
+                await signInAnonymously(auth); // Fallback to allow Firestore usage
+              } catch(fallbackErr) {
+                console.warn("Anonymous auth restricted:", fallbackErr);
+              }
             }
+          } else {
+             // Essential fallback to ensure Firestore hooks connect for everyone
+             try {
+               await signInAnonymously(auth); 
+             } catch(fallbackErr) {
+               console.warn("Anonymous auth restricted:", fallbackErr);
+             }
           }
         };
         initAuth();
@@ -1321,22 +1323,22 @@
             currentDayMs += oneDayMs;
         }
 
-        if (now > minDate && now < maxDate) {
-            while (validEvents.length > 0 && validEvents[0].date <= now) {
-                historicalBurnedMs += validEvents.shift().burned;
-            }
-            const finalX = ((now - minDate) / totalDurationMs) * 100;
-            const finalY = totalEstimateMs > 0 ? (historicalBurnedMs / totalEstimateMs) * 100 : 0;
-            
-            if (burndownPointsData.length > 0 && (finalX - burndownPointsData[burndownPointsData.length - 1].x) < 2) {
-                burndownPointsData[burndownPointsData.length - 1].y = Math.max(0, Math.min(100, finalY));
-                burndownPointsData[burndownPointsData.length - 1].x = Math.max(0, Math.min(100, finalX));
-                burndownPointsData[burndownPointsData.length - 1].date = now;
-                burndownPointsData[burndownPointsData.length - 1].value = totalEstimateMs - historicalBurnedMs;
-            } else {
-                burndownPointsData.push({ x: Math.max(0, Math.min(100, finalX)), y: Math.max(0, Math.min(100, finalY)), date: now, value: totalEstimateMs - historicalBurnedMs });
-            }
+        // --- CHART FLUSH (Ensures final point matches 100% true total) ---
+        while (validEvents.length > 0) {
+            historicalBurnedMs += validEvents.shift().burned;
         }
+        const burndownFinalX = now >= maxDate ? 100 : ((now - minDate) / totalDurationMs) * 100;
+        const burndownFinalY = totalEstimateMs > 0 ? (historicalBurnedMs / totalEstimateMs) * 100 : 0;
+
+        if (burndownPointsData.length > 0 && (burndownFinalX - burndownPointsData[burndownPointsData.length - 1].x) < 2) {
+            burndownPointsData[burndownPointsData.length - 1].y = Math.max(0, Math.min(100, burndownFinalY));
+            burndownPointsData[burndownPointsData.length - 1].x = Math.max(0, Math.min(100, burndownFinalX));
+            burndownPointsData[burndownPointsData.length - 1].date = now;
+            burndownPointsData[burndownPointsData.length - 1].value = totalEstimateMs - historicalBurnedMs;
+        } else {
+            burndownPointsData.push({ x: Math.max(0, Math.min(100, burndownFinalX)), y: Math.max(0, Math.min(100, burndownFinalY)), date: now, value: totalEstimateMs - historicalBurnedMs });
+        }
+
 
         const generateSmoothPath = (points) => {
             if (points.length === 0) return "";
@@ -1454,22 +1456,21 @@
             currentBurnupDayMs += oneDayMs;
         }
 
-        if (now > minDate && now < maxDate) {
-            while (logEventIdx < logEvents.length && logEvents[logEventIdx].date <= now) {
-                cumulativeLoggedMs += logEvents[logEventIdx].logged;
-                logEventIdx++;
-            }
-            const finalX = ((now - minDate) / totalDurationMs) * 100;
-            const finalY = 100 - (cumulativeLoggedMs / maxBurnupMs) * 100;
-            
-            if (burnupPointsData.length > 0 && (finalX - burnupPointsData[burnupPointsData.length - 1].x) < 2) {
-                burnupPointsData[burnupPointsData.length - 1].y = Math.max(0, Math.min(100, finalY));
-                burnupPointsData[burnupPointsData.length - 1].x = Math.max(0, Math.min(100, finalX));
-                burnupPointsData[burnupPointsData.length - 1].date = now;
-                burnupPointsData[burnupPointsData.length - 1].value = cumulativeLoggedMs;
-            } else {
-                burnupPointsData.push({ x: Math.max(0, Math.min(100, finalX)), y: Math.max(0, Math.min(100, finalY)), date: now, value: cumulativeLoggedMs });
-            }
+        // --- CHART FLUSH (Ensures final point matches 100% true total) ---
+        while (logEventIdx < logEvents.length) {
+            cumulativeLoggedMs += logEvents[logEventIdx].logged;
+            logEventIdx++;
+        }
+        const burnupFinalX = now >= maxDate ? 100 : ((now - minDate) / totalDurationMs) * 100;
+        const burnupFinalY = 100 - (cumulativeLoggedMs / maxBurnupMs) * 100;
+
+        if (burnupPointsData.length > 0 && (burnupFinalX - burnupPointsData[burnupPointsData.length - 1].x) < 2) {
+            burnupPointsData[burnupPointsData.length - 1].y = Math.max(0, Math.min(100, burnupFinalY));
+            burnupPointsData[burnupPointsData.length - 1].x = Math.max(0, Math.min(100, burnupFinalX));
+            burnupPointsData[burnupPointsData.length - 1].date = now;
+            burnupPointsData[burnupPointsData.length - 1].value = cumulativeLoggedMs;
+        } else {
+            burnupPointsData.push({ x: Math.max(0, Math.min(100, burnupFinalX)), y: Math.max(0, Math.min(100, burnupFinalY)), date: now, value: cumulativeLoggedMs });
         }
 
         const smoothBurnupLinePath = generateSmoothPath(burnupPointsData);
@@ -2130,6 +2131,22 @@
                   </div>
                 </div>
 
+                {/* Overview Metric Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                  <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl flex items-start space-x-4">
+                    <div className="bg-blue-500/10 p-3 rounded-lg border border-blue-500/20"><Ticket className="h-6 w-6 text-blue-400" /></div>
+                    <div><p className="text-sm font-medium text-slate-400">Open Tickets</p><p className="text-2xl font-bold text-white mt-1">{backlogTasksCount}</p></div>
+                  </div>
+                  <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl flex items-start space-x-4">
+                    <div className="bg-indigo-500/10 p-3 rounded-lg border border-indigo-500/20"><CheckSquare className="h-6 w-6 text-indigo-400" /></div>
+                    <div><p className="text-sm font-medium text-slate-400">Active Tasks</p><p className="text-2xl font-bold text-white mt-1">{activeTasksCount}</p></div>
+                  </div>
+                  <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl flex items-start space-x-4">
+                    <div className="bg-emerald-500/10 p-3 rounded-lg border border-emerald-500/20"><CheckCircle2 className="h-6 w-6 text-emerald-400" /></div>
+                    <div><p className="text-sm font-medium text-slate-400">Resolved</p><p className="text-2xl font-bold text-white mt-1">{completedFilteredTasksCount}</p></div>
+                  </div>
+                </div>
+
                 {/* 1. Overall Progress & Distribution Section */}
                 <div className="mb-8">
                   <div className="flex items-center space-x-2 mb-4">
@@ -2768,6 +2785,6 @@
 
 const root = createRoot(document.getElementById('root'));
 root.render(<App />);
-</script>
+  </script>
 </body>
 </html>
