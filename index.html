@@ -1906,27 +1906,36 @@
                          </div>
 
                          <div className="p-6 flex-1 overflow-y-auto">
-                            <h3 className="text-sm font-semibold text-slate-400 mb-4 uppercase tracking-wider flex items-center"><Clock className="h-4 w-4 mr-2"/> Global Live Feed</h3>
+                            <h3 className="text-sm font-semibold text-slate-400 mb-4 uppercase tracking-wider flex items-center"><Clock className="h-4 w-4 mr-2"/> {selectedTaskIdForTime ? "Task Time Entries" : "Global Live Feed"}</h3>
                             <div className="space-y-3">
-                               {[...globalTimeLedger].reverse().map(entry => {
-                                  const task = allFlatTasks.find(t => t.id === entry.taskId);
-                                  return (
-                                     <div key={entry.id} className="bg-slate-800/40 p-4 rounded-xl border border-slate-700/50 shadow-sm animate-in fade-in slide-in-from-top-2">
-                                        <div className="flex justify-between items-start mb-2">
-                                           <div className="pr-4">
-                                              <span className="font-semibold text-indigo-300 text-sm leading-tight block mb-0.5">{task?.name || 'Unknown Task'}</span>
-                                              <span className="text-slate-400 text-xs flex items-center"><Users className="h-3 w-3 mr-1"/> {entry.userId}</span>
+                               {(() => {
+                                  const feedEntries = selectedTaskIdForTime 
+                                    ? globalTimeLedger.filter(e => e.taskId === selectedTaskIdForTime)
+                                    : globalTimeLedger;
+                                    
+                                  if (feedEntries.length === 0) {
+                                     return <div className="text-slate-500 text-sm italic text-center py-8">No time entries recorded yet.</div>;
+                                  }
+
+                                  return [...feedEntries].sort((a,b) => b.timestamp - a.timestamp).map(entry => {
+                                     const task = allFlatTasks.find(t => t.id === entry.taskId);
+                                     return (
+                                        <div key={entry.id} className="bg-slate-800/40 p-4 rounded-xl border border-slate-700/50 shadow-sm animate-in fade-in slide-in-from-top-2">
+                                           <div className="flex justify-between items-start mb-2">
+                                              <div className="pr-4">
+                                                 <span className="font-semibold text-indigo-300 text-sm leading-tight block mb-0.5">{task?.name || 'Unknown Task'}</span>
+                                                 <span className="text-slate-400 text-xs flex items-center"><Users className="h-3 w-3 mr-1"/> {entry.userId}</span>
+                                              </div>
+                                              <div className="flex items-center gap-2">
+                                                <span className="text-emerald-400 font-bold bg-emerald-500/10 px-2 py-1 rounded text-sm border border-emerald-500/20 shrink-0">+{entry.ms / 3600000}h</span>
+                                                <button onClick={() => handleDeleteTimeEntry(entry)} className="text-slate-500 hover:text-red-400 p-1.5 rounded-md hover:bg-red-500/10 transition-colors"><Trash2 className="w-4 h-4" /></button>
+                                              </div>
                                            </div>
-                                           <div className="flex items-center gap-2">
-                                             <span className="text-emerald-400 font-bold bg-emerald-500/10 px-2 py-1 rounded text-sm border border-emerald-500/20 shrink-0">+{entry.ms / 3600000}h</span>
-                                             <button onClick={() => handleDeleteTimeEntry(entry)} className="text-slate-500 hover:text-red-400 p-1.5 rounded-md hover:bg-red-500/10 transition-colors"><Trash2 className="w-4 h-4" /></button>
-                                           </div>
+                                           {entry.note && <div className="text-slate-300 bg-slate-900/80 p-2.5 rounded-lg text-sm border border-white/5 italic mt-2">"{entry.note}"</div>}
                                         </div>
-                                        <div className="text-slate-300 bg-slate-900/80 p-2.5 rounded-lg text-sm border border-white/5 italic">"{entry.note}"</div>
-                                     </div>
-                                  )
-                               })}
-                               {globalTimeLedger.length === 0 && <div className="text-slate-500 text-sm italic text-center py-8">No time entries recorded yet.</div>}
+                                     )
+                                  });
+                               })()}
                             </div>
                          </div>
                       </div>
