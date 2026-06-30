@@ -483,9 +483,42 @@
         setIntegrationStep('selecting');
       };
 
-      const fetchClickUp = async (endpoint, token) => {
+      const fetchClickUp = async (endpoint, token, method = 'GET', body = null) => {
         if (token === 'mock_token') return {};
-        throw new Error('Connection blocked by CORS. Please use the Mock Data bypass to preview the UI.');
+        
+        const targetUrl = `https://api.clickup.com/api/v2/${endpoint}`;
+        const proxies = [
+          `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`, 
+          `https://thingproxy.freeboard.io/fetch/${targetUrl}`
+        ];
+
+        for (const proxyUrl of proxies) {
+          try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 15000);
+            
+            const fetchOptions = { 
+              method, 
+              headers: { 'Authorization': token, 'Content-Type': 'application/json' },
+              signal: controller.signal
+            };
+            if (body) fetchOptions.body = JSON.stringify(body);
+            
+            const res = await fetch(proxyUrl, fetchOptions);
+            clearTimeout(timeoutId);
+            
+            if (!res.ok) {
+              let errText = '';
+              try { const d = await res.json(); errText = d.err || d.error || ''; } catch(e){}
+              throw new Error(errText || `HTTP ${res.status}`);
+            }
+            return await res.json();
+          } catch (err) {
+            if (err.name === 'AbortError' || err.message === 'Failed to fetch' || err.name === 'TypeError') continue;
+            throw err; 
+          }
+        }
+        throw new Error('Connection blocked by CORS or timed out.');
       };
 
       useEffect(() => {
