@@ -1822,7 +1822,11 @@
                                      {selectedTaskIdForTime ? allFlatTasks.find(t => t.id === selectedTaskIdForTime)?.name : <span className="italic text-slate-500">← Select a task from the hierarchy</span>}
                                   </div>
                                </div>
-                               <div className="mb-4 grid grid-cols-2 gap-4">
+                               <div className="mb-4 grid grid-cols-1 sm:grid-cols-3 gap-4">
+                                  <div>
+                                     <label className="text-xs text-slate-400 font-medium mb-1.5 block">Date</label>
+                                     <input type="date" value={timeEntryDate} onChange={e => setTimeEntryDate(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-shadow" />
+                                  </div>
                                   <div>
                                      <label className="text-xs text-slate-400 font-medium mb-1.5 block">Hours</label>
                                      <input type="number" step="0.1" value={timeEntryHours} onChange={e => setTimeEntryHours(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-shadow" placeholder="e.g. 2.5" />
