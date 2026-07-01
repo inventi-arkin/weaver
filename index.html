@@ -623,48 +623,68 @@
         const listName = availableLists.find(l => l.id === selectedList)?.name || 'Task List';
 
         let initialTasks = [];
+        let listStartDate = null;
+        let listDueDate = null;
+
         if (clickUpToken === 'mock_token') {
-          initialTasks = buildTaskTree(MOCK_CLICKUP_DATA.tasks[selectedList] || []);
-        }
-        
-        const newWorkflows = [...mappedWorkflows, {
-          id: Date.now().toString(), team: teamName, space: spaceName, folder: folderName, list: listName, listId: selectedList, tasks: initialTasks, lastSynced: Date.now()
-        }];
-        setMappedWorkflows(newWorkflows);
-        localStorage.setItem(`weaver_workflows_${appId}`, JSON.stringify(newWorkflows));
-        
-        if (user && !user.isMock) {
-          const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
+          initialTasks = buildTaskTree(MOCK_CLICKUP_DATA.tasks[selectedList] || MOCK_CLICKUP_DATA.tasks['mock_list_1']);
+          listStartDate = (Date.now() - 3 * 86400000).toString();
+          listDueDate = (Date.now() + 11 * 86400000).toString();
+        } else {
           try {
-            await setDoc(docRef, { mappedWorkflows: newWorkflows }, { merge: true });
-          } catch(err) {
-            console.error("Error saving workflows to Firestore", err);
-          }
+            const listDetail = await fetchClickUp(`list/${selectedList}`, clickUpToken);
+            if (listDetail.start_date) listStartDate = listDetail.start_date;
+            if (listDetail.due_date) listDueDate = listDetail.due_date;
+
+            let page = 0, hasMore = true, allFetchedTasks = [];
+            while (hasMore) {
+                const data = await fetchClickUp(`list/${selectedList}/task?subtasks=true&include_closed=true&page=${page}`, clickUpToken);
+                const tasksChunk = data.tasks || [];
+                allFetchedTasks.push(...tasksChunk);
+                if (tasksChunk.length === 100) page++; else hasMore = false;
+            }
+            if (allFetchedTasks.length > 0) {
+                initialTasks = buildTaskTree(allFetchedTasks);
+            }
+          } catch (err) { console.error("Error fetching tasks or list details:", err); }
         }
+        
+        const newWorkflow = {
+          id: Date.now().toString(), team: teamName, space: spaceName, folder: folderName, list: listName, listId: selectedList, tasks: initialTasks, lastSynced: Date.now(), listStartDate, listDueDate
+        };
+
+        setMappedWorkflows(prev => {
+          const nextWorkflows = [...prev, newWorkflow];
+          localStorage.setItem(`weaver_workflows_${appId}`, JSON.stringify(nextWorkflows));
+          if (user && !user.isMock) {
+            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
+            setDoc(docRef, { mappedWorkflows: nextWorkflows }, { merge: true }).catch(err => console.error("Error saving workflows:", err));
+          }
+          return nextWorkflows;
+        });
 
         setSelectedTeam(''); setSelectedSpace(''); setSelectedFolder(''); setSelectedList('');
         handleCancelIntegration();
       };
 
       const removeMapping = async (id) => {
-        const newWorkflows = mappedWorkflows.filter(w => w.id !== id);
-        setMappedWorkflows(newWorkflows);
-        localStorage.setItem(`weaver_workflows_${appId}`, JSON.stringify(newWorkflows));
-        
-        if (user && !user.isMock) {
-          const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
-          try {
-            await setDoc(docRef, { mappedWorkflows: newWorkflows }, { merge: true });
-          } catch(err) {
-            console.error("Error deleting workflow from Firestore", err);
+        setMappedWorkflows(prev => {
+          const newWorkflows = prev.filter(w => w.id !== id);
+          localStorage.setItem(`weaver_workflows_${appId}`, JSON.stringify(newWorkflows));
+          if (user && !user.isMock) {
+            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
+            setDoc(docRef, { mappedWorkflows: newWorkflows }, { merge: true }).catch(err => console.error("Error deleting workflow:", err));
           }
-        }
+          return newWorkflows;
+        });
       };
 
       const runSyncSequence = async () => {
-        if (mappedWorkflowsRef.current.length === 0 || !clickUpToken) return;
+        const workflowsToSync = mappedWorkflowsRef.current;
+        if (workflowsToSync.length === 0 || !clickUpToken) return;
         setIsAutoSyncing(true);
-        const updatedWorkflows = await Promise.all(mappedWorkflowsRef.current.map(async (workflow) => {
+        
+        const updatedWorkflows = await Promise.all(workflowsToSync.map(async (workflow) => {
           let updatedTasks = workflow.tasks;
           let listStartDate = workflow.listStartDate || null;
           let listDueDate = workflow.listDueDate || null;
@@ -692,17 +712,21 @@
           return { ...workflow, tasks: updatedTasks, lastSynced: Date.now(), listStartDate, listDueDate };
         }));
         
-        setMappedWorkflows(updatedWorkflows);
-        localStorage.setItem(`weaver_workflows_${appId}`, JSON.stringify(updatedWorkflows));
-        
-        if (user && !user.isMock) {
-          const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
-          try {
-            await setDoc(docRef, { mappedWorkflows: updatedWorkflows }, { merge: true });
-          } catch(err) {
-            console.error("Error saving synced workflows to Firestore", err);
+        setMappedWorkflows(prev => {
+          const nextWorkflows = [...prev];
+          updatedWorkflows.forEach(updatedWf => {
+             const idx = nextWorkflows.findIndex(w => w.id === updatedWf.id);
+             if (idx !== -1) nextWorkflows[idx] = updatedWf;
+          });
+          
+          localStorage.setItem(`weaver_workflows_${appId}`, JSON.stringify(nextWorkflows));
+          if (user && !user.isMock) {
+            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
+            setDoc(docRef, { mappedWorkflows: nextWorkflows }, { merge: true }).catch(err => console.error("Error saving synced workflows:", err));
           }
-        }
+          return nextWorkflows;
+        });
+        
         setIsAutoSyncing(false);
       };
 
@@ -2041,7 +2065,7 @@
             <div className="mb-8 flex flex-col md:flex-row md:items-end justify-between gap-4">
               <div>
                 <h1 className="text-2xl font-bold text-white flex items-center gap-3">
-                  {mappedWorkflows[0]?.list || 'Your Workspace'}
+                  {mappedWorkflows.length > 1 ? `${mappedWorkflows.length} Active Workflows` : (mappedWorkflows[0]?.list || 'Your Workspace')}
                   <div className="flex items-center px-3 py-1 rounded-full border bg-emerald-900/30 border-emerald-500/30 text-emerald-400 text-xs font-medium">
                     <div className={`h-2 w-2 rounded-full mr-2 ${isAutoSyncing ? 'bg-emerald-400 animate-pulse' : 'bg-emerald-500/50'}`}></div> 
                     Synced: {new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: 'numeric', second: 'numeric' }).format(new Date(mappedWorkflows[0].lastSynced))}
