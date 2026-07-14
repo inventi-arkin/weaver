@@ -445,6 +445,9 @@
       const [expandedTasks, setExpandedTasks] = useState({});
       const toggleTaskExpand = (taskId) => setExpandedTasks(prev => ({ ...prev, [taskId]: !prev[taskId] }));
       
+      // New Drill-Down State
+      const [selectedDrillDownAssignee, setSelectedDrillDownAssignee] = useState(null);
+
       // Time Ledger State
       const [globalTimeLedger, setGlobalTimeLedger] = useState(() => {
         try {
@@ -592,6 +595,7 @@
           const data = await fetchClickUp('team', tempToken);
           setTeams(data.teams || []);
           setClickUpToken(tempToken);
+          localStorage.setItem(`weaver_clickup_token_${appId}`, tempToken);
           setIntegrationStep('selecting');
         } catch (err) {
           setClickUpError(err.message);
@@ -759,7 +763,19 @@
               await signInWithCustomToken(auth, __initial_auth_token);
             } catch(err) {
               if (err.code !== 'auth/custom-token-mismatch') console.warn("Custom token sign in failed", err);
+              try {
+                await signInAnonymously(auth); // Fallback to allow Firestore usage
+              } catch(fallbackErr) {
+                console.warn("Anonymous auth restricted:", fallbackErr);
+              }
             }
+          } else {
+             // Essential fallback to ensure Firestore hooks connect for everyone
+             try {
+               await signInAnonymously(auth); 
+             } catch(fallbackErr) {
+               console.warn("Anonymous auth restricted:", fallbackErr);
+             }
           }
         };
         initAuth();
@@ -836,6 +852,7 @@
           await signInWithPopup(auth, googleProvider);
         } catch (error) {
           if (error.code === 'auth/unauthorized-domain' || error.message.includes('iframe') || error.code === 'auth/popup-closed-by-user') {
+            setErrorMessage("Domain unauthorized. Falling back to Local Offline mode. To enable cross-device sync, please replace the firebaseConfig in the HTML with your own Firebase project credentials.");
             handleMockLogin();
           } else { 
             setErrorMessage(error.message); 
@@ -849,6 +866,7 @@
       const handleLogout = () => {
         if (auth.currentUser) firebaseSignOut(auth);
         else setUser(null);
+        localStorage.removeItem(`weaver_clickup_token_${appId}`);
       };
 
       const handleLogTime = async () => {
@@ -1470,6 +1488,192 @@
         const plottedPath = `M 0,${clampedPlottedY} L 100,${clampedPlottedY}`;
         // --- END DAILY SMOOTH BURNUP LOGIC ---
 
+        const renderAssigneeDrillDown = (assigneeUsername) => {
+           const assigneeTasks = allFlatTasks.filter(t => t.assignees?.some(a => a.username === assigneeUsername));
+           if (!assigneeTasks || assigneeTasks.length === 0) return null;
+
+           let estMs = 0;
+           let spentMs = 0;
+           let initialDrillLoggedMs = 0;
+           const drillLogEvents = [];
+
+           assigneeTasks.forEach(t => {
+              const isDone = doneStatuses.includes((t.status?.status || '').toLowerCase());
+              let tEst = t.directEstimate !== undefined ? t.directEstimate : (t.time_estimate ? parseInt(t.time_estimate) : 0);
+              let tSpent = t.directNativeSpent !== undefined ? t.directNativeSpent : (t.rawNativeSpent ? parseInt(t.rawNativeSpent) : (isDone ? tEst : 0));
+              
+              estMs += tEst;
+              spentMs += tSpent;
+
+              if (isDone && tSpent > 0) {
+                 let dDate = parseDateMs(t.date_closed) || parseDateMs(t.date_updated) || parseDateMs(t.date_created) || minDate;
+                 if (dDate <= minDate) initialDrillLoggedMs += tSpent;
+                 else drillLogEvents.push({ date: dDate, logged: tSpent });
+              } else if (!isDone && tSpent > 0) {
+                 let cDate = parseDateMs(t.date_created) || minDate;
+                 let uDate = parseDateMs(t.date_updated) || now;
+                 if (cDate < minDate) cDate = minDate;
+                 if (uDate > now) uDate = now;
+                 if (uDate < cDate) uDate = cDate;
+                 
+                 const duration = Math.max(1, uDate - cDate);
+                 const slices = 10;
+                 for (let i = 1; i <= slices; i++) {
+                     const sliceDate = cDate + (duration * (i/slices));
+                     if (sliceDate <= minDate) initialDrillLoggedMs += (tSpent / slices);
+                     else drillLogEvents.push({ date: sliceDate, logged: tSpent / slices });
+                 }
+              }
+
+              const entries = t.localLedger || [];
+              entries.forEach(entry => {
+                 if(entry.userId === assigneeUsername) {
+                     const eDate = parseDateMs(entry.timestamp);
+                     spentMs += Number(entry.ms);
+                     if (eDate <= minDate) initialDrillLoggedMs += Number(entry.ms);
+                     else drillLogEvents.push({ date: eDate, logged: Number(entry.ms) });
+                 }
+              });
+           });
+
+           drillLogEvents.sort((a,b) => a.date - b.date);
+
+           const userRole = userRoles[assigneeUsername] || 'Developer';
+           const dailyHours = userRole === 'Developer' ? devHoursPerDay : qaHoursPerDay;
+           let leaveDays = 0;
+           dateBlockers.forEach(b => { if (b.remark === 'Leave' && b.assignee === assigneeUsername) leaveDays += b.days; });
+           const individualCapacityMs = Math.max(0, ((bucketDurationDays * dailyHours) - (leaveDays * dailyHours)) * 3600000);
+
+           const drillMaxBurnupMs = Math.max(estMs, individualCapacityMs, spentMs, 3600000);
+           const drillMaxBurnupHours = Math.round(drillMaxBurnupMs / 3600000);
+
+           let cumulativeMs = initialDrillLoggedMs;
+           const drillStartY = 100 - (initialDrillLoggedMs / drillMaxBurnupMs) * 100;
+           const drillPoints = [[0, Math.max(0, Math.min(100, drillStartY))]];
+
+           let currentDayMs = minDate + oneDayMs;
+           let eventIdx = 0;
+
+           while (currentDayMs <= endChartDate) {
+               while (eventIdx < drillLogEvents.length && drillLogEvents[eventIdx].date <= currentDayMs) {
+                   cumulativeMs += drillLogEvents[eventIdx].logged;
+                   eventIdx++;
+               }
+               const stepX = ((currentDayMs - minDate) / totalDurationMs) * 100;
+               const stepY = 100 - (cumulativeMs / drillMaxBurnupMs) * 100;
+               drillPoints.push([Math.max(0, Math.min(100, stepX)), Math.max(0, Math.min(100, stepY))]);
+               currentDayMs += oneDayMs;
+           }
+
+           if (now > minDate && now < maxDate) {
+               while (eventIdx < drillLogEvents.length && drillLogEvents[eventIdx].date <= now) {
+                   cumulativeMs += drillLogEvents[eventIdx].logged;
+                   eventIdx++;
+               }
+               const finalX = ((now - minDate) / totalDurationMs) * 100;
+               const finalY = 100 - (cumulativeMs / drillMaxBurnupMs) * 100;
+               if (drillPoints.length > 0 && (finalX - drillPoints[drillPoints.length - 1][0]) < 2) {
+                   drillPoints[drillPoints.length - 1][1] = Math.max(0, Math.min(100, finalY));
+                   drillPoints[drillPoints.length - 1][0] = Math.max(0, Math.min(100, finalX));
+               } else {
+                   drillPoints.push([Math.max(0, Math.min(100, finalX)), Math.max(0, Math.min(100, finalY))]);
+               }
+           }
+
+           const smoothDrillPath = generateSmoothPath(drillPoints);
+           const latestDrillX = drillPoints.length > 0 ? drillPoints[drillPoints.length-1][0] : currentX;
+           const drillAreaPath = smoothDrillPath ? smoothDrillPath + ` L ${latestDrillX},100 L 0,100 Z` : "";
+           
+           const drillIdealY = 100 - (individualCapacityMs / drillMaxBurnupMs) * 100;
+           const drillIdealPath = `M 0,${Math.max(0, Math.min(100, drillIdealY))} L 100,${Math.max(0, Math.min(100, drillIdealY))}`;
+           
+           const drillPlottedY = 100 - (estMs / drillMaxBurnupMs) * 100;
+           const drillPlottedPath = `M 0,${Math.max(0, Math.min(100, drillPlottedY))} L 100,${Math.max(0, Math.min(100, drillPlottedY))}`;
+
+           return (
+              <div className="flex flex-col h-[85vh] bg-slate-900 border border-slate-700/80 rounded-2xl overflow-hidden shadow-2xl relative w-full max-w-5xl animate-in zoom-in-95 duration-200">
+                 <div className="p-6 border-b border-slate-700 bg-slate-800/50 flex items-center justify-between shrink-0">
+                     <div className="flex items-center space-x-4">
+                       <img src={`https://ui-avatars.com/api/?name=${encodeURIComponent(assigneeUsername)}&background=random`} className="w-12 h-12 rounded-full border-2 border-indigo-500 shadow-[0_0_15px_rgba(99,102,241,0.4)]" />
+                       <div>
+                           <h2 className="text-xl font-bold text-white">{assigneeUsername}'s Workload Drill-Down</h2>
+                           <p className="text-sm text-indigo-300 font-medium uppercase tracking-wider">{userRole}</p>
+                       </div>
+                     </div>
+                     <button onClick={() => setSelectedDrillDownAssignee(null)} className="text-slate-400 hover:text-white p-2 hover:bg-slate-800 rounded transition-colors"><X className="w-6 h-6"/></button>
+                 </div>
+                 
+                 <div className="flex flex-col lg:flex-row flex-1 overflow-hidden">
+                    <div className="lg:w-1/2 p-6 border-r border-slate-700/80 bg-slate-900/40 overflow-y-auto space-y-6">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                         <div className="bg-slate-800/60 p-4 rounded-xl border border-slate-700">
+                            <div className="text-xs text-slate-400 font-semibold uppercase tracking-wider mb-1">Capacity</div>
+                            <div className="text-xl font-bold text-white">{Math.round(individualCapacityMs/3600000)}h</div>
+                         </div>
+                         <div className="bg-slate-800/60 p-4 rounded-xl border border-slate-700">
+                            <div className="text-xs text-slate-400 font-semibold uppercase tracking-wider mb-1">Assigned Scope</div>
+                            <div className="text-xl font-bold text-white">{Math.round(estMs/3600000)}h</div>
+                         </div>
+                         <div className="bg-emerald-500/10 p-4 rounded-xl border border-emerald-500/20 col-span-2 sm:col-span-1">
+                            <div className="text-xs text-emerald-400 font-semibold uppercase tracking-wider mb-1">Logged Time</div>
+                            <div className="text-xl font-bold text-emerald-300">{Math.round(spentMs/3600000)}h</div>
+                         </div>
+                      </div>
+
+                      <div className="bg-slate-800/40 p-6 rounded-2xl border border-slate-700 shadow-inner">
+                          <div className="flex items-center justify-between mb-4">
+                            <h3 className="text-md font-semibold text-white flex items-center gap-2"><TrendingUp className="w-4 h-4 text-emerald-400" /> Individual Effort Burnup</h3>
+                          </div>
+                          <div className="flex gap-4 text-xs font-medium text-slate-400 mb-6">
+                               <span className="flex items-center"><div className="w-3 h-0 border-t-2 border-dashed border-slate-500 mr-1.5"></div> Capacity</span>
+                               <span className="flex items-center"><div className="w-3 h-0 border-t-2 border-dotted border-blue-400 mr-1.5"></div> Scope</span>
+                               <span className="flex items-center text-emerald-400"><div className="w-2 h-2 bg-emerald-500 rounded-full mr-1.5"></div> Logged</span>
+                          </div>
+                          <div className="relative h-48 w-full mt-2">
+                            <div className="absolute left-0 top-0 bottom-6 w-8 flex flex-col justify-between text-xs font-medium text-slate-500 text-right pr-2">
+                              <span>{drillMaxBurnupHours}h</span>
+                              <span>{Math.round(drillMaxBurnupHours * 0.5)}h</span>
+                              <span>0h</span>
+                            </div>
+                            <div className="absolute left-10 right-2 top-2 bottom-6">
+                                <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="w-full h-full overflow-visible">
+                                    <defs>
+                                      <linearGradient id="drillGradient" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="0%" stopColor="#10b981" stopOpacity="0.3" />
+                                        <stop offset="100%" stopColor="#10b981" stopOpacity="0" />
+                                      </linearGradient>
+                                    </defs>
+                                    <line x1="0" y1="50" x2="100" y2="50" stroke="#1e293b" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+                                    <line x1="0" y1="100" x2="100" y2="100" stroke="#334155" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+                                    <line x1="0" y1="0" x2="0" y2="100" stroke="#334155" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+                                    
+                                    <path d={drillIdealPath} stroke="#475569" strokeWidth="2" strokeDasharray="6 6" vectorEffect="non-scaling-stroke" fill="none" />
+                                    <path d={drillPlottedPath} stroke="#60a5fa" strokeWidth="2" strokeDasharray="2 4" vectorEffect="non-scaling-stroke" fill="none" />
+                                    
+                                    {drillAreaPath && <path d={drillAreaPath} fill="url(#drillGradient)" />}
+                                    {smoothDrillPath && <path d={smoothDrillPath} fill="none" stroke="#10b981" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />}
+                                </svg>
+                            </div>
+                            <div className="absolute left-10 right-2 bottom-0 h-6 flex justify-between text-xs font-medium text-slate-500">
+                              <span className="-ml-3">{dayLabels[0]}</span>
+                              <span>{dayLabels[2]}</span>
+                              <span className="-mr-4">{dayLabels[3]}</span>
+                            </div>
+                          </div>
+                      </div>
+                    </div>
+
+                    <div className="lg:w-1/2 p-6 overflow-y-auto bg-slate-900/20">
+                       <h3 className="text-md font-semibold text-white flex items-center gap-2 mb-4"><ListTodo className="w-4 h-4 text-indigo-400" /> Assigned Task List</h3>
+                       <div className="space-y-2">
+                          {assigneeTasks.map(task => <TaskItem key={task.id} task={task} expandedTasks={expandedTasks} toggleTaskExpand={toggleTaskExpand} />)}
+                       </div>
+                    </div>
+                 </div>
+              </div>
+           );
+        };
+
         const allMotherTasks = activeWorkflows.flatMap(wf => wf.tasks || []).filter(t => !(t.name || '').toLowerCase().includes('qa bugs'));
         let filteredMotherTasks = allMotherTasks.filter(checkGlobalFilter);
         const plottedScopeCount = filteredMotherTasks.length;
@@ -1797,6 +2001,13 @@
               </div>
             )}
 
+            {/* Drill Down Modal */}
+            {selectedDrillDownAssignee && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+                 {renderAssigneeDrillDown(selectedDrillDownAssignee)}
+              </div>
+            )}
+
             {/* Unified Tasks & Time Modal */}
             {isUnifiedModalOpen && (
               <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
@@ -1930,7 +2141,7 @@
                          </div>
 
                          <div className="p-6 flex-1 overflow-y-auto">
-                            <h3 className="text-sm font-semibold text-slate-400 mb-4 uppercase tracking-wider flex items-center"><Clock className="h-4 w-4 mr-2"/> {selectedTaskIdForTime ? "Task Time Entries" : "Global Live Feed"}</h3>
+                            <h3 className="text-sm font-semibold text-slate-400 mb-4 uppercase tracking-wider flex items-center"><Clock className="h-4 w-4 mr-2"/> {selectedTaskIdForTime ? "Task Time Entries" : (user?.isMock ? "Local Live Feed (Offline)" : "Global Live Feed")}</h3>
                             <div className="space-y-3">
                                {(() => {
                                   const feedEntries = selectedTaskIdForTime 
@@ -1947,12 +2158,18 @@
                                         <div key={entry.id} className="bg-slate-800/40 p-4 rounded-xl border border-slate-700/50 shadow-sm animate-in fade-in slide-in-from-top-2">
                                            <div className="flex justify-between items-start mb-2">
                                               <div className="pr-4">
-                                                 <span className="font-semibold text-indigo-300 text-sm leading-tight block mb-0.5">{task?.name || 'Unknown Task'}</span>
-                                                 <span className="text-slate-400 text-xs flex items-center"><Users className="h-3 w-3 mr-1"/> {entry.userId}</span>
+                                                 <span className="font-semibold text-indigo-300 text-sm leading-tight block mb-1">{task?.name || 'Unknown Task'}</span>
+                                                 <div className="text-xs text-slate-400 flex items-center mb-0.5">
+                                                    <Calendar className="w-3 h-3 mr-1.5 opacity-70" />
+                                                    {new Date(entry.timestamp).toLocaleDateString()}
+                                                    <span className="mx-2 text-slate-600">|</span>
+                                                    <Users className="w-3 h-3 mr-1.5 opacity-70" />
+                                                    {entry.userId}
+                                                 </div>
                                               </div>
-                                              <div className="flex items-center gap-2">
-                                                <span className="text-emerald-400 font-bold bg-emerald-500/10 px-2 py-1 rounded text-sm border border-emerald-500/20 shrink-0">+{entry.ms / 3600000}h</span>
-                                                <button onClick={() => handleDeleteTimeEntry(entry)} className="text-slate-500 hover:text-red-400 p-1.5 rounded-md hover:bg-red-500/10 transition-colors"><Trash2 className="w-4 h-4" /></button>
+                                              <div className="flex items-center gap-2 shrink-0">
+                                                <span className="text-emerald-400 font-bold bg-emerald-500/10 px-2 py-1 rounded text-sm border border-emerald-500/20">+{entry.ms / 3600000}h</span>
+                                                <button onClick={(e) => { e.stopPropagation(); handleDeleteTimeEntry(entry); }} className="text-slate-500 hover:text-red-400 p-1.5 rounded-md hover:bg-red-500/10 transition-colors"><Trash2 className="w-4 h-4" /></button>
                                               </div>
                                            </div>
                                            {entry.note && <div className="text-slate-300 bg-slate-900/80 p-2.5 rounded-lg text-sm border border-white/5 italic mt-2">"{entry.note}"</div>}
@@ -2555,17 +2772,17 @@
                         const totalAssigned = Object.values(assignee.statusCounts).reduce((s, c) => s + c.count, 0);
 
                         return (
-                          <div key={assignee.username} className="bg-slate-900/40 backdrop-blur-md p-5 rounded-2xl border border-white/5 flex flex-col justify-between shadow-xl">
+                          <div key={assignee.username} onClick={() => setSelectedDrillDownAssignee(assignee.username)} className="bg-slate-900/40 backdrop-blur-md p-5 rounded-2xl border border-white/5 flex flex-col justify-between shadow-xl cursor-pointer hover:border-indigo-500/50 hover:bg-slate-800/60 transition-all group">
                             <div>
                               <div className="flex justify-between items-start mb-4">
                                 <div className="flex items-center gap-3">
-                                  <img src={assignee.profilePicture} className="w-10 h-10 rounded-full border border-slate-700 object-cover bg-slate-800" />
+                                  <img src={assignee.profilePicture} className="w-10 h-10 rounded-full border border-slate-700 group-hover:border-indigo-500 object-cover bg-slate-800 transition-colors" />
                                   <div>
-                                    <h3 className="text-sm font-bold text-white">{assignee.username}</h3>
+                                    <h3 className="text-sm font-bold text-white group-hover:text-indigo-300 transition-colors">{assignee.username}</h3>
                                     <p className="text-xs text-slate-500">{totalAssigned} Assigned Items</p>
                                   </div>
                                 </div>
-                                <select value={userRoles[assignee.username] || 'Developer'} onChange={(e) => { const val = e.target.value; setUserRoles(p => { const n = {...p, [assignee.username]: val}; saveSettings({userRoles: n}); return n;}); }} className="bg-slate-900/60 border border-white/10 text-indigo-300 text-[10px] font-bold uppercase rounded px-2 py-1 outline-none">
+                                <select value={userRoles[assignee.username] || 'Developer'} onClick={e => e.stopPropagation()} onChange={(e) => { const val = e.target.value; setUserRoles(p => { const n = {...p, [assignee.username]: val}; saveSettings({userRoles: n}); return n;}); }} className="bg-slate-900/60 border border-white/10 text-indigo-300 text-[10px] font-bold uppercase rounded px-2 py-1 outline-none">
                                   <option value="Developer">Developer</option><option value="QA">QA</option>
                                 </select>
                               </div>
@@ -2579,7 +2796,7 @@
                             </div>
                             <div>
                               <div className="flex justify-between text-xs mb-1.5 font-medium"><span className="text-slate-500 flex items-center"><Clock className="w-3 h-3 mr-1" /> Logged Time</span><span className="text-white">{spentHours}h <span className="text-slate-600">/ {estHours}h</span></span></div>
-                              <div className="w-full bg-slate-900/60 border border-white/5 rounded-full h-1.5"><div className="bg-indigo-500 h-full rounded-full" style={{ width: `${progressPct}%` }}></div></div>
+                              <div className="w-full bg-slate-900/60 border border-white/5 rounded-full h-1.5"><div className="bg-indigo-500 h-full rounded-full transition-all" style={{ width: `${progressPct}%` }}></div></div>
                             </div>
                           </div>
                         );
