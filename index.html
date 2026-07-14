@@ -160,13 +160,14 @@
       
       return (
         <div className={`transition-all overflow-hidden ${isParent ? 'bg-slate-900/60 border border-white/5 rounded-xl' : 'bg-slate-900/40 rounded-r-lg border-l-2'}`} style={!isParent ? { borderLeftColor: `${themeColor}40` } : {}}>
-          <div className={`flex flex-col lg:flex-row lg:items-center justify-between p-3 gap-3 ${!isParent ? 'pl-4' : ''}`}>
-            <div className="flex items-center space-x-3 overflow-hidden min-w-0">
-              <div className="w-2.5 h-2.5 rounded-full shrink-0 shadow-lg" style={{ backgroundColor: themeColor, boxShadow: `0 0 8px ${themeColor}` }} />
-              <span className={`font-medium truncate ${isParent ? 'text-slate-200 text-sm' : 'text-slate-300 text-xs'}`}>{task.name || 'Unnamed Task'}</span>
+          <div className={`flex flex-col p-3 gap-2 ${!isParent ? 'pl-4' : ''}`}>
+            
+            <div className="flex items-start space-x-3 overflow-hidden min-w-0" title={task.name || 'Unnamed Task'}>
+              <div className="w-2.5 h-2.5 rounded-full shrink-0 shadow-lg mt-1.5" style={{ backgroundColor: themeColor, boxShadow: `0 0 8px ${themeColor}` }} />
+              <span className={`font-semibold truncate ${isParent ? 'text-slate-100 text-[15px]' : 'text-slate-300 text-sm'}`}>{task.name || 'Unnamed Task'}</span>
             </div>
             
-            <div className="flex items-center shrink-0 space-x-3 sm:pl-4 pl-5 overflow-x-auto overflow-y-hidden py-1">
+            <div className="flex items-center shrink-0 space-x-3 pl-5 overflow-x-auto overflow-y-hidden py-0.5">
               {hasSubtasks && (
                 <button onClick={() => toggleTaskExpand(task.id)} className="flex items-center space-x-1.5 px-2 py-0.5 rounded bg-indigo-500/10 hover:bg-indigo-500/20 text-[10px] text-indigo-300 font-bold border border-indigo-500/20 transition-colors shrink-0">
                   <span>Subtasks ({relevantSubtasks.length})</span>
@@ -193,13 +194,13 @@
               )}
               {isParent && (
                 task.assignees && task.assignees.length > 0 ? (
-                  <div className="flex -space-x-1.5 shrink-0">
+                  <div className="flex -space-x-1.5 shrink-0 ml-auto">
                     {task.assignees.map((assignee, i) => (
-                      <img key={i} src={assignee.profilePicture || `https://ui-avatars.com/api/?name=${encodeURIComponent(assignee.username || 'U')}&background=random`} alt={assignee.username} className="w-6 h-6 rounded-full border border-slate-900 bg-slate-800 object-cover" />
+                      <img key={i} src={assignee.profilePicture || `https://ui-avatars.com/api/?name=${encodeURIComponent(assignee.username || 'U')}&background=random`} alt={assignee.username} title={assignee.username} className="w-6 h-6 rounded-full border border-slate-900 bg-slate-800 object-cover relative hover:z-10 hover:scale-110 transition-transform cursor-help" />
                     ))}
                   </div>
                 ) : (
-                  <div className="flex items-center justify-center w-6 h-6 rounded-full border border-slate-800 bg-slate-900 text-slate-500 shrink-0"><Users className="h-3 w-3" /></div>
+                  <div className="flex items-center justify-center w-6 h-6 rounded-full border border-slate-800 bg-slate-900 text-slate-500 shrink-0 ml-auto" title="Unassigned"><Users className="h-3 w-3" /></div>
                 )
               )}
             </div>
