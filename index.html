@@ -477,8 +477,44 @@
       const [selectedFolder, setSelectedFolder] = useState('');
       const [selectedList, setSelectedList] = useState('');
 
+      // Notifications State
+      const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+      const [transactions, setTransactions] = useState(() => {
+        try {
+          const saved = localStorage.getItem(`weaver_transactions_${appId}`);
+          return saved ? JSON.parse(saved) : [];
+        } catch(e) { return []; }
+      });
+
       const mappedWorkflowsRef = useRef(mappedWorkflows);
       useEffect(() => { mappedWorkflowsRef.current = mappedWorkflows; }, [mappedWorkflows]);
+
+      const logTransaction = async (action, details, iconType = 'info') => {
+        const newTx = {
+          id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+          action,
+          details,
+          iconType,
+          timestamp: Date.now(),
+          user: user?.name || 'Anonymous'
+        };
+
+        setTransactions(prev => {
+          const updated = [newTx, ...prev].slice(0, 10); // Keep last 10
+          localStorage.setItem(`weaver_transactions_${appId}`, JSON.stringify(updated));
+          return updated;
+        });
+
+        if (user && !user.isMock) {
+          const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'ledgers', 'transactions');
+          try {
+            await updateDoc(docRef, { entries: arrayUnion(newTx) });
+          } catch (error) {
+            if (error.code === 'not-found') await setDoc(docRef, { entries: [newTx] });
+            else console.error("Error saving transaction:", error);
+          }
+        }
+      };
 
       const handleMockClickUpData = () => {
         setTeams(MOCK_CLICKUP_DATA.teams);
@@ -667,6 +703,8 @@
           }
           return nextWorkflows;
         });
+        
+        logTransaction('Connection Added', `Mapped ClickUp list: ${listName}`, 'link');
 
         setSelectedTeam(''); setSelectedSpace(''); setSelectedFolder(''); setSelectedList('');
         handleCancelIntegration();
@@ -674,6 +712,9 @@
 
       const removeMapping = async (id) => {
         setMappedWorkflows(prev => {
+          const wfToRemove = prev.find(w => w.id === id);
+          if (wfToRemove) logTransaction('Connection Removed', `Unmapped ClickUp list: ${wfToRemove.list}`, 'unlink');
+          
           const newWorkflows = prev.filter(w => w.id !== id);
           localStorage.setItem(`weaver_workflows_${appId}`, JSON.stringify(newWorkflows));
           if (user && !user.isMock) {
@@ -830,7 +871,19 @@
           }
         }, (error) => console.error("Error fetching capacity settings:", error));
 
-        return () => { unsubLedger(); unsubWf(); unsubCap(); };
+        const txRef = doc(db, 'artifacts', appId, 'public', 'data', 'ledgers', 'transactions');
+        const unsubTx = onSnapshot(txRef, (snapshot) => {
+          if (snapshot.exists()) {
+            const data = snapshot.data();
+            if (data.entries) {
+                // Ensure we only keep the latest 10 items globally
+                const sorted = data.entries.sort((a,b) => b.timestamp - a.timestamp).slice(0, 10);
+                setTransactions(sorted);
+            }
+          }
+        }, (error) => console.error("Error fetching transactions:", error));
+
+        return () => { unsubLedger(); unsubWf(); unsubCap(); unsubTx(); };
       }, [user]);
 
       const handleMockLogin = async () => {
@@ -905,6 +958,9 @@
             else console.error("Error saving time entry:", error);
           }
         }
+        
+        const taskObj = flattenTasksDeep(activeWorkflows.flatMap(wf => wf.tasks || [])).find(t => t.id === selectedTaskIdForTime);
+        logTransaction('Time Logged', `${timeEntryHours}h logged on "${taskObj?.name || 'Task'}" by ${timeAssignee || user?.name}`, 'clock');
 
         setTimeEntryHours('');
         setTimeEntryNote('');
@@ -916,6 +972,7 @@
           localStorage.setItem(`weaver_ledger_${appId}`, JSON.stringify(updated));
           return updated;
         });
+        
         if (user && !user.isMock) {
           const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'ledgers', 'global');
           try {
@@ -924,6 +981,8 @@
             console.error("Error deleting time entry:", error);
           }
         }
+        
+        logTransaction('Time Entry Deleted', `Removed time log for ${entry.userId}`, 'trash');
       };
 
       if (!authInitialized) {
@@ -2085,6 +2144,46 @@
           <div className="min-h-screen bg-slate-950 font-sans text-slate-100 relative">
             <WebNestBackground opacity={0.35} />
 
+            {/* Notifications Panel */}
+            {isNotificationsOpen && (
+              <div className="absolute top-16 right-4 sm:right-6 lg:right-8 w-80 bg-slate-900 border border-slate-700/80 rounded-xl shadow-2xl z-50 overflow-hidden animate-in slide-in-from-top-4 duration-200">
+                <div className="p-4 border-b border-slate-700/80 bg-slate-800/50 flex items-center justify-between">
+                  <h3 className="text-sm font-bold text-white flex items-center"><Bell className="w-4 h-4 mr-2 text-indigo-400" /> Recent Activity</h3>
+                  {transactions.length > 0 && <span className="text-xs text-slate-500">{transactions.length} entries</span>}
+                </div>
+                <div className="max-h-96 overflow-y-auto">
+                  {transactions.length === 0 ? (
+                    <div className="p-6 text-center text-sm text-slate-500 italic">No recent activity.</div>
+                  ) : (
+                    <div className="divide-y divide-white/5">
+                      {transactions.map(tx => (
+                        <div key={tx.id} className="p-4 hover:bg-white/5 transition-colors">
+                          <div className="flex items-start gap-3">
+                            <div className="mt-0.5 shrink-0">
+                              {tx.iconType === 'clock' && <div className="p-1.5 bg-emerald-500/10 rounded border border-emerald-500/20"><Clock className="w-3.5 h-3.5 text-emerald-400" /></div>}
+                              {tx.iconType === 'link' && <div className="p-1.5 bg-indigo-500/10 rounded border border-indigo-500/20"><Box className="w-3.5 h-3.5 text-indigo-400" /></div>}
+                              {tx.iconType === 'unlink' && <div className="p-1.5 bg-rose-500/10 rounded border border-rose-500/20"><Trash2 className="w-3.5 h-3.5 text-rose-400" /></div>}
+                              {tx.iconType === 'trash' && <div className="p-1.5 bg-rose-500/10 rounded border border-rose-500/20"><Trash2 className="w-3.5 h-3.5 text-rose-400" /></div>}
+                              {tx.iconType === 'info' && <div className="p-1.5 bg-blue-500/10 rounded border border-blue-500/20"><InfoIcon className="w-3.5 h-3.5 text-blue-400" /></div>}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium text-slate-200">{tx.action}</p>
+                              <p className="text-xs text-slate-400 mt-0.5 truncate">{tx.details}</p>
+                              <div className="flex items-center gap-2 mt-1.5 text-[10px] font-medium text-slate-500">
+                                <span>{new Date(tx.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                <span>•</span>
+                                <span>{tx.user}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Change Connection / Onboarding Modal */}
             {isSwitchModalOpen && mappedWorkflows.length > 0 && (
               <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
@@ -2313,7 +2412,7 @@
                            {dateBlockers.map(b => (
                              <li key={b.id} className="flex items-center justify-between bg-slate-900/60 p-3 rounded-xl border border-white/5">
                                 <div className="flex flex-col"><span className="text-sm font-semibold text-slate-200">{b.remark} <span className="text-slate-400 font-normal">({b.days} day{b.days > 1 ? 's' : ''})</span></span>{b.remark === 'Leave' && <span className="text-xs text-indigo-400 font-medium mt-0.5">{b.assignee}</span>}</div>
-                                <button onClick={() => { const newBlockers = dateBlockers.filter(x => x.id !== b.id); setDateBlockers(newBlockers); saveSettings({ dateBlockers: newBlockers }); }} className="text-slate-500 hover:text-red-400 p-1.5 rounded-md hover:bg-red-500/10 transition-colors"><Trash2 className="w-4 h-4" /></button>
+                                <button onClick={() => { const newBlockers = dateBlockers.filter(x => x.id !== b.id); setDateBlockers(newBlockers); saveSettings({ dateBlockers: newBlockers }); logTransaction('Blocker Removed', `Removed ${b.remark} blocker`, 'trash'); }} className="text-slate-500 hover:text-red-400 p-1.5 rounded-md hover:bg-red-500/10 transition-colors"><Trash2 className="w-4 h-4" /></button>
                              </li>
                            ))}
                          </ul>
@@ -2338,7 +2437,7 @@
                             </select>
                           </div>
                         )}
-                        <button onClick={() => { if (!newBlockerDays || newBlockerDays <= 0) return; const newBlocker = { id: Date.now().toString(), days: parseInt(newBlockerDays), remark: newBlockerRemark, assignee: newBlockerRemark === 'Leave' ? (newBlockerAssignee || assigneesList[0]?.username) : null }; const newBlockers = [...dateBlockers, newBlocker]; setDateBlockers(newBlockers); saveSettings({ dateBlockers: newBlockers }); setNewBlockerDays(1); }} className="w-full flex items-center justify-center bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors">
+                        <button onClick={() => { if (!newBlockerDays || newBlockerDays <= 0) return; const assigneeName = newBlockerRemark === 'Leave' ? (newBlockerAssignee || assigneesList[0]?.username) : null; const newBlocker = { id: Date.now().toString(), days: parseInt(newBlockerDays), remark: newBlockerRemark, assignee: assigneeName }; const newBlockers = [...dateBlockers, newBlocker]; setDateBlockers(newBlockers); saveSettings({ dateBlockers: newBlockers }); logTransaction('Blocker Added', `${newBlockerDays} day(s) for ${newBlockerRemark}${assigneeName ? ` (${assigneeName})` : ''}`, 'info'); setNewBlockerDays(1); }} className="w-full flex items-center justify-center bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors">
                           <Plus className="w-4 h-4 mr-1.5" /> Add Date Blocker
                         </button>
                      </div>
@@ -2355,7 +2454,10 @@
                     <span className="ml-2 text-xl font-bold tracking-tight text-white">Weaver</span>
                   </div>
                   <div className="flex items-center space-x-4">
-                    <button className="text-slate-400 hover:text-white transition-colors"><Bell className="h-5 w-5" /></button>
+                    <button onClick={() => setIsNotificationsOpen(!isNotificationsOpen)} className={`text-slate-400 hover:text-white transition-colors relative ${isNotificationsOpen ? 'text-white' : ''}`}>
+                      <Bell className="h-5 w-5" />
+                      {transactions.length > 0 && <span className="absolute -top-1 -right-1 flex h-3 w-3"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span><span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500 border border-slate-950"></span></span>}
+                    </button>
                     <div className="h-8 w-8 rounded-full bg-indigo-950/50 flex items-center justify-center overflow-hidden border border-white/10 cursor-pointer">
                       <img src={user.avatar} alt={user.name} className="h-full w-full object-cover" />
                     </div>
