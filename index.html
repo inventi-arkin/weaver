@@ -1887,6 +1887,73 @@
           .sort((a, b) => (now - (parseInt(b.date_created) || now)) - (now - (parseInt(a.date_created) || now)))
           .slice(0, 5);
 
+        // --- CSV EXPORT LOGIC ---
+        const handleExportCSV = () => {
+            const escapeCSV = (str) => {
+                if (str === null || str === undefined) return '""';
+                const s = String(str).replace(/"/g, '""');
+                return `"${s}"`;
+            };
+
+            const formatHours = (ms) => {
+                if (!ms || isNaN(ms)) return '0.00';
+                return (ms / 3600000).toFixed(2);
+            };
+
+            // Define headers
+            const headers = [
+                'Task Name', 'List/Workflow', 'Status', 'Priority', 
+                'Estimated Hours', 'Logged Hours (ClickUp)', 'Logged Hours (Weaver)', 'Total Logged Hours',
+                'Assignees', 'Tags', 'Date Created', 'Date Closed'
+            ];
+
+            const rows = [headers.join(',')];
+
+            // Build rows from filtered tasks
+            filteredTasks.forEach(task => {
+                // Find parent workflow for context
+                const parentWf = activeWorkflows.find(wf => 
+                   flattenTasksDeep(wf.tasks).some(t => t.id === task.id)
+                ) || { list: 'Unknown' };
+
+                const name = escapeCSV(task.name);
+                const list = escapeCSV(parentWf.list);
+                const status = escapeCSV(task.status?.status || 'Open');
+                const priority = escapeCSV(task.priority?.priority || 'Normal');
+                
+                const estMs = task.directEstimate !== undefined ? task.directEstimate : (task.time_estimate ? parseInt(task.time_estimate) : 0);
+                const clickupLoggedMs = task.directNativeSpent !== undefined ? task.directNativeSpent : (task.rawNativeSpent ? parseInt(task.rawNativeSpent) : 0);
+                const weaverLoggedMs = task._totalLocalAddedMs || 0;
+                const totalLoggedMs = clickupLoggedMs + weaverLoggedMs;
+
+                const estHrs = escapeCSV(formatHours(estMs));
+                const cuLoggedHrs = escapeCSV(formatHours(clickupLoggedMs));
+                const wvrLoggedHrs = escapeCSV(formatHours(weaverLoggedMs));
+                const totLoggedHrs = escapeCSV(formatHours(totalLoggedMs));
+
+                const assignees = escapeCSV((task.assignees || []).map(a => a.username).join('; '));
+                const tags = escapeCSV((task.tags || []).map(t => t.name).join('; '));
+                
+                const created = task.date_created ? escapeCSV(new Date(parseInt(task.date_created)).toLocaleDateString()) : '""';
+                const closed = task.date_closed ? escapeCSV(new Date(parseInt(task.date_closed)).toLocaleDateString()) : '""';
+
+                rows.push([
+                    name, list, status, priority, estHrs, cuLoggedHrs, wvrLoggedHrs, totLoggedHrs, assignees, tags, created, closed
+                ].join(','));
+            });
+
+            const csvContent = rows.join('\n');
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.setAttribute('download', `weaver_export_${new Date().toISOString().split('T')[0]}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        };
+        // --- END CSV EXPORT LOGIC ---
+
         const integrationUI = (
           <div className="animate-in fade-in duration-500 w-full">
             {integrationStep === 'idle' && mappedWorkflows.length === 0 && (
@@ -2307,6 +2374,10 @@
                 <p className="text-slate-400 text-sm mt-1">Dashboard metrics are dynamically synced and globally filtered.</p>
               </div>
               <div className="flex flex-col sm:flex-row gap-3">
+                <button onClick={handleExportCSV} className="flex items-center justify-center px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg shadow-lg transition-colors" title="Export currently filtered tasks to CSV">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                  Export CSV
+                </button>
                 <button onClick={handleConnectClickUp} className="flex items-center justify-center px-4 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white text-sm font-medium rounded-lg shadow-lg transition-colors">
                   <Settings className="h-4 w-4 mr-2" /> Connection
                 </button>
