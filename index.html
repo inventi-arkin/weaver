@@ -1220,7 +1220,7 @@
             let closest = dataPoints[0];
             let minDiff = Infinity;
             for (const pt of dataPoints) {
-                const diff = Math.abs(pt[0] - xPct);
+                const diff = Math.abs(pt.x - xPct);
                 if (diff < minDiff) {
                     minDiff = diff;
                     closest = pt;
@@ -1230,8 +1230,10 @@
             if (closest) {
                 setActiveChartHover({
                     chart: chartType,
-                    xPct: closest[0],
-                    yPct: closest[1]
+                    xPct: closest.x,
+                    yPct: closest.y,
+                    dateMs: closest.date,
+                    value: closest.value
                 });
             }
         };
@@ -1312,7 +1314,7 @@
 
         let historicalBurnedMs = initialBurnedMs;
         const startY = totalEstimateMs > 0 ? (initialBurnedMs / totalEstimateMs) * 100 : 0;
-        const burndownPointsData = [[0, Math.max(0, Math.min(100, startY))]];
+        const burndownPointsData = [{ x: 0, y: Math.max(0, Math.min(100, startY)), date: minDate, value: totalEstimateMs - initialBurnedMs }];
 
         const oneDayMs = 86400000;
         const endChartDate = Math.min(now, maxDate);
@@ -1324,31 +1326,33 @@
             }
             const stepX = ((currentDayMs - minDate) / totalDurationMs) * 100;
             const stepY = totalEstimateMs > 0 ? (historicalBurnedMs / totalEstimateMs) * 100 : 0;
-            burndownPointsData.push([Math.max(0, Math.min(100, stepX)), Math.max(0, Math.min(100, stepY))]);
+            burndownPointsData.push({ x: Math.max(0, Math.min(100, stepX)), y: Math.max(0, Math.min(100, stepY)), date: currentDayMs, value: totalEstimateMs - historicalBurnedMs });
             currentDayMs += oneDayMs;
         }
 
-        if (now > minDate && now < maxDate) {
-            while (validEvents.length > 0 && validEvents[0].date <= now) {
-                historicalBurnedMs += validEvents.shift().burned;
-            }
-            const finalX = ((now - minDate) / totalDurationMs) * 100;
-            const finalY = totalEstimateMs > 0 ? (historicalBurnedMs / totalEstimateMs) * 100 : 0;
-            
-            if (burndownPointsData.length > 0 && (finalX - burndownPointsData[burndownPointsData.length - 1][0]) < 2) {
-                burndownPointsData[burndownPointsData.length - 1][1] = Math.max(0, Math.min(100, finalY));
-                burndownPointsData[burndownPointsData.length - 1][0] = Math.max(0, Math.min(100, finalX));
-            } else {
-                burndownPointsData.push([Math.max(0, Math.min(100, finalX)), Math.max(0, Math.min(100, finalY))]);
-            }
+        // --- CHART FLUSH (Ensures final point matches 100% true total) ---
+        while (validEvents.length > 0) {
+            historicalBurnedMs += validEvents.shift().burned;
         }
+        const burndownFinalX = now >= maxDate ? 100 : ((now - minDate) / totalDurationMs) * 100;
+        const burndownFinalY = totalEstimateMs > 0 ? (historicalBurnedMs / totalEstimateMs) * 100 : 0;
+
+        if (burndownPointsData.length > 0 && (burndownFinalX - burndownPointsData[burndownPointsData.length - 1].x) < 2) {
+            burndownPointsData[burndownPointsData.length - 1].y = Math.max(0, Math.min(100, burndownFinalY));
+            burndownPointsData[burndownPointsData.length - 1].x = Math.max(0, Math.min(100, burndownFinalX));
+            burndownPointsData[burndownPointsData.length - 1].date = now;
+            burndownPointsData[burndownPointsData.length - 1].value = totalEstimateMs - historicalBurnedMs;
+        } else {
+            burndownPointsData.push({ x: Math.max(0, Math.min(100, burndownFinalX)), y: Math.max(0, Math.min(100, burndownFinalY)), date: now, value: totalEstimateMs - historicalBurnedMs });
+        }
+
 
         const generateSmoothPath = (points) => {
             if (points.length === 0) return "";
-            if (points.length === 1) return `M ${points[0][0]},${points[0][1]}`;
-            if (points.length === 2) return `M ${points[0][0]},${points[0][1]} L ${points[1][0]},${points[1][1]}`;
+            if (points.length === 1) return `M ${points[0].x},${points[0].y}`;
+            if (points.length === 2) return `M ${points[0].x},${points[0].y} L ${points[1].x},${points[1].y}`;
             
-            let d = `M ${points[0][0]},${points[0][1]}`;
+            let d = `M ${points[0].x},${points[0].y}`;
             const tension = 0.25;
             
             for (let i = 0; i < points.length - 1; i++) {
@@ -1357,25 +1361,25 @@
                 const p2 = points[i + 1];
                 const p3 = i !== points.length - 2 ? points[i + 2] : p2;
                 
-                let cp1x = p1[0] + (p2[0] - p0[0]) * tension;
-                let cp1y = p1[1] + (p2[1] - p0[1]) * tension;
-                let cp2x = p2[0] - (p3[0] - p1[0]) * tension;
-                let cp2y = p2[1] - (p3[1] - p1[1]) * tension;
+                let cp1x = p1.x + (p2.x - p0.x) * tension;
+                let cp1y = p1.y + (p2.y - p0.y) * tension;
+                let cp2x = p2.x - (p3.x - p1.x) * tension;
+                let cp2y = p2.y - (p3.y - p1.y) * tension;
                 
-                cp1x = Math.max(p1[0], Math.min(p2[0], cp1x));
-                cp2x = Math.max(p1[0], Math.min(p2[0], cp2x));
-                const minY = Math.min(p1[1], p2[1]);
-                const maxY = Math.max(p1[1], p2[1]);
+                cp1x = Math.max(p1.x, Math.min(p2.x, cp1x));
+                cp2x = Math.max(p1.x, Math.min(p2.x, cp2x));
+                const minY = Math.min(p1.y, p2.y);
+                const maxY = Math.max(p1.y, p2.y);
                 cp1y = Math.max(minY, Math.min(maxY, cp1y));
                 cp2y = Math.max(minY, Math.min(maxY, cp2y));
                 
-                d += ` C ${cp1x},${cp1y} ${cp2x},${cp2y} ${p2[0]},${p2[1]}`;
+                d += ` C ${cp1x},${cp1y} ${cp2x},${cp2y} ${p2.x},${p2.y}`;
             }
             return d;
         };
 
         const smoothLinePath = generateSmoothPath(burndownPointsData);
-        const latestX = burndownPointsData.length > 0 ? burndownPointsData[burndownPointsData.length-1][0] : currentX;
+        const latestX = burndownPointsData.length > 0 ? burndownPointsData[burndownPointsData.length-1].x : currentX;
         const areaPath = smoothLinePath ? smoothLinePath + ` L ${latestX},100 L 0,100 Z` : "";
         // --- END MONOTONIC BURNDOWN LOGIC ---
 
@@ -1444,7 +1448,7 @@
 
         let cumulativeLoggedMs = initialLoggedMs;
         const startBurnupY = 100 - (initialLoggedMs / maxBurnupMs) * 100;
-        const burnupPointsData = [[0, Math.max(0, Math.min(100, startBurnupY))]];
+        const burnupPointsData = [{ x: 0, y: Math.max(0, Math.min(100, startBurnupY)), date: minDate, value: initialLoggedMs }];
 
         let currentBurnupDayMs = minDate + oneDayMs;
         let logEventIdx = 0;
@@ -1456,28 +1460,29 @@
             }
             const stepX = ((currentBurnupDayMs - minDate) / totalDurationMs) * 100;
             const stepY = 100 - (cumulativeLoggedMs / maxBurnupMs) * 100;
-            burnupPointsData.push([Math.max(0, Math.min(100, stepX)), Math.max(0, Math.min(100, stepY))]);
+            burnupPointsData.push({ x: Math.max(0, Math.min(100, stepX)), y: Math.max(0, Math.min(100, stepY)), date: currentBurnupDayMs, value: cumulativeLoggedMs });
             currentBurnupDayMs += oneDayMs;
         }
 
-        if (now > minDate && now < maxDate) {
-            while (logEventIdx < logEvents.length && logEvents[logEventIdx].date <= now) {
-                cumulativeLoggedMs += logEvents[logEventIdx].logged;
-                logEventIdx++;
-            }
-            const finalX = ((now - minDate) / totalDurationMs) * 100;
-            const finalY = 100 - (cumulativeLoggedMs / maxBurnupMs) * 100;
-            
-            if (burnupPointsData.length > 0 && (finalX - burnupPointsData[burnupPointsData.length - 1][0]) < 2) {
-                burnupPointsData[burnupPointsData.length - 1][1] = Math.max(0, Math.min(100, finalY));
-                burnupPointsData[burnupPointsData.length - 1][0] = Math.max(0, Math.min(100, finalX));
-            } else {
-                burnupPointsData.push([Math.max(0, Math.min(100, finalX)), Math.max(0, Math.min(100, finalY))]);
-            }
+        // --- CHART FLUSH (Ensures final point matches 100% true total) ---
+        while (logEventIdx < logEvents.length) {
+            cumulativeLoggedMs += logEvents[logEventIdx].logged;
+            logEventIdx++;
+        }
+        const burnupFinalX = now >= maxDate ? 100 : ((now - minDate) / totalDurationMs) * 100;
+        const burnupFinalY = 100 - (cumulativeLoggedMs / maxBurnupMs) * 100;
+
+        if (burnupPointsData.length > 0 && (burnupFinalX - burnupPointsData[burnupPointsData.length - 1].x) < 2) {
+            burnupPointsData[burnupPointsData.length - 1].y = Math.max(0, Math.min(100, burnupFinalY));
+            burnupPointsData[burnupPointsData.length - 1].x = Math.max(0, Math.min(100, burnupFinalX));
+            burnupPointsData[burnupPointsData.length - 1].date = now;
+            burnupPointsData[burnupPointsData.length - 1].value = cumulativeLoggedMs;
+        } else {
+            burnupPointsData.push({ x: Math.max(0, Math.min(100, burnupFinalX)), y: Math.max(0, Math.min(100, burnupFinalY)), date: now, value: cumulativeLoggedMs });
         }
 
         const smoothBurnupLinePath = generateSmoothPath(burnupPointsData);
-        const latestBurnupX = burnupPointsData.length > 0 ? burnupPointsData[burnupPointsData.length-1][0] : currentX;
+        const latestBurnupX = burnupPointsData.length > 0 ? burnupPointsData[burnupPointsData.length-1].x : currentX;
         const burnupAreaPath = smoothBurnupLinePath ? smoothBurnupLinePath + ` L ${latestBurnupX},100 L 0,100 Z` : "";
         
         const idealCapacityY = 100 - ((devCapacityHours * 3600000) / maxBurnupMs) * 100;
@@ -1550,7 +1555,7 @@
 
            let cumulativeMs = initialDrillLoggedMs;
            const drillStartY = 100 - (initialDrillLoggedMs / drillMaxBurnupMs) * 100;
-           const drillPoints = [[0, Math.max(0, Math.min(100, drillStartY))]];
+           const drillPoints = [{ x: 0, y: Math.max(0, Math.min(100, drillStartY)), date: minDate, value: initialDrillLoggedMs }];
 
            let currentDayMs = minDate + oneDayMs;
            let eventIdx = 0;
@@ -1562,7 +1567,7 @@
                }
                const stepX = ((currentDayMs - minDate) / totalDurationMs) * 100;
                const stepY = 100 - (cumulativeMs / drillMaxBurnupMs) * 100;
-               drillPoints.push([Math.max(0, Math.min(100, stepX)), Math.max(0, Math.min(100, stepY))]);
+               drillPoints.push({ x: Math.max(0, Math.min(100, stepX)), y: Math.max(0, Math.min(100, stepY)), date: currentDayMs, value: cumulativeMs });
                currentDayMs += oneDayMs;
            }
 
@@ -1573,16 +1578,18 @@
                }
                const finalX = ((now - minDate) / totalDurationMs) * 100;
                const finalY = 100 - (cumulativeMs / drillMaxBurnupMs) * 100;
-               if (drillPoints.length > 0 && (finalX - drillPoints[drillPoints.length - 1][0]) < 2) {
-                   drillPoints[drillPoints.length - 1][1] = Math.max(0, Math.min(100, finalY));
-                   drillPoints[drillPoints.length - 1][0] = Math.max(0, Math.min(100, finalX));
+               if (drillPoints.length > 0 && (finalX - drillPoints[drillPoints.length - 1].x) < 2) {
+                   drillPoints[drillPoints.length - 1].y = Math.max(0, Math.min(100, finalY));
+                   drillPoints[drillPoints.length - 1].x = Math.max(0, Math.min(100, finalX));
+                   drillPoints[drillPoints.length - 1].date = now;
+                   drillPoints[drillPoints.length - 1].value = cumulativeMs;
                } else {
-                   drillPoints.push([Math.max(0, Math.min(100, finalX)), Math.max(0, Math.min(100, finalY))]);
+                   drillPoints.push({ x: Math.max(0, Math.min(100, finalX)), y: Math.max(0, Math.min(100, finalY)), date: now, value: cumulativeMs });
                }
            }
 
            const smoothDrillPath = generateSmoothPath(drillPoints);
-           const latestDrillX = drillPoints.length > 0 ? drillPoints[drillPoints.length-1][0] : currentX;
+           const latestDrillX = drillPoints.length > 0 ? drillPoints[drillPoints.length-1].x : currentX;
            const drillAreaPath = smoothDrillPath ? smoothDrillPath + ` L ${latestDrillX},100 L 0,100 Z` : "";
            
            const drillIdealY = 100 - (individualCapacityMs / drillMaxBurnupMs) * 100;
@@ -1592,7 +1599,7 @@
            const drillPlottedPath = `M 0,${Math.max(0, Math.min(100, drillPlottedY))} L 100,${Math.max(0, Math.min(100, drillPlottedY))}`;
 
            return (
-              <div className="flex flex-col h-[85vh] bg-slate-900 border border-slate-700/80 rounded-2xl overflow-hidden shadow-2xl relative w-full max-w-5xl animate-in zoom-in-95 duration-200">
+              <div className="flex flex-col h-[85vh] bg-slate-900 border border-slate-700/80 rounded-2xl overflow-hidden shadow-2xl relative w-full max-w-5xl animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
                  <div className="p-6 border-b border-slate-700 bg-slate-800/50 flex items-center justify-between shrink-0">
                      <div className="flex items-center space-x-4">
                        <img src={`https://ui-avatars.com/api/?name=${encodeURIComponent(assigneeUsername)}&background=random`} className="w-12 h-12 rounded-full border-2 border-indigo-500 shadow-[0_0_15px_rgba(99,102,241,0.4)]" />
@@ -1636,7 +1643,9 @@
                               <span>{Math.round(drillMaxBurnupHours * 0.5)}h</span>
                               <span>0h</span>
                             </div>
-                            <div className="absolute left-10 right-2 top-2 bottom-6">
+                            <div className="absolute left-10 right-2 top-2 bottom-6 cursor-crosshair"
+                                 onMouseMove={(e) => handleChartMouseMove(e, 'drill', drillPoints)}
+                                 onMouseLeave={() => setActiveChartHover(null)}>
                                 <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="w-full h-full overflow-visible">
                                     <defs>
                                       <linearGradient id="drillGradient" x1="0" y1="0" x2="0" y2="1">
@@ -1654,6 +1663,26 @@
                                     {drillAreaPath && <path d={drillAreaPath} fill="url(#drillGradient)" />}
                                     {smoothDrillPath && <path d={smoothDrillPath} fill="none" stroke="#10b981" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />}
                                 </svg>
+                                
+                                {activeChartHover?.chart === 'drill' && (
+                                   <>
+                                     <div className="absolute top-0 bottom-0 w-px bg-emerald-500/50 pointer-events-none" style={{ left: `${activeChartHover.xPct}%` }} />
+                                     <div className="absolute w-3 h-3 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.8)] pointer-events-none transform -translate-x-1/2 -translate-y-1/2 border-2 border-slate-900" style={{ left: `${activeChartHover.xPct}%`, top: `${activeChartHover.yPct}%` }} />
+                                     <div className="absolute pointer-events-none z-20 flex flex-col items-center drop-shadow-lg"
+                                          style={{ 
+                                            left: `${activeChartHover.xPct}%`, 
+                                            top: `${activeChartHover.yPct}%`,
+                                            transform: 'translate(-50%, -100%)',
+                                            marginTop: '-8px'
+                                          }}>
+                                        <div className="bg-slate-800 border border-emerald-500/50 text-white rounded-lg px-3 py-1.5 shadow-xl whitespace-nowrap flex flex-col items-center">
+                                           <span className="font-bold text-[10px] uppercase tracking-wider text-emerald-400 mb-0.5">{new Date(activeChartHover.dateMs).toLocaleDateString()}</span>
+                                           <span className="text-xs font-semibold text-slate-100">{Math.max(0, Math.round(activeChartHover.value / 3600000))}h Logged</span>
+                                        </div>
+                                        <div className="w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-t-[6px] border-t-emerald-500/50"></div>
+                                     </div>
+                                   </>
+                                )}
                             </div>
                             <div className="absolute left-10 right-2 bottom-0 h-6 flex justify-between text-xs font-medium text-slate-500">
                               <span className="-ml-3">{dayLabels[0]}</span>
@@ -2071,7 +2100,7 @@
 
             {/* Drill Down Modal */}
             {selectedDrillDownAssignee && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md onClick={() => setSelectedDrillDownAssignee(null)}">
                  {renderAssigneeDrillDown(selectedDrillDownAssignee)}
               </div>
             )}
