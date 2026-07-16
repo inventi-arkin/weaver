@@ -694,8 +694,9 @@
           id: Date.now().toString(), team: teamName, space: spaceName, folder: folderName, list: listName, listId: selectedList, tasks: initialTasks, lastSynced: Date.now(), listStartDate, listDueDate
         };
 
-        setMappedWorkflows(prev => {
-          const nextWorkflows = [...prev, newWorkflow];
+        setMappedWorkflows(() => {
+          // ENFORCE SOLE CONNECTION: Completely replace the array with ONLY the new workflow
+          const nextWorkflows = [newWorkflow]; 
           localStorage.setItem(`weaver_workflows_${appId}`, JSON.stringify(nextWorkflows));
           if (user && !user.isMock) {
             const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
@@ -704,7 +705,7 @@
           return nextWorkflows;
         });
         
-        logTransaction('Connection Added', `Mapped ClickUp list: ${listName}`, 'link');
+        logTransaction('Connection Updated', `Mapped to new ClickUp list: ${listName}`, 'link');
 
         setSelectedTeam(''); setSelectedSpace(''); setSelectedFolder(''); setSelectedList('');
         handleCancelIntegration();
