@@ -415,26 +415,33 @@
           return saved ? JSON.parse(saved) : [];
         } catch (e) { return []; }
       });
+      const activeListId = mappedWorkflows.length > 0 ? mappedWorkflows[0].listId : null;
+
       const [isAutoSyncing, setIsAutoSyncing] = useState(false);
       
       // Filtering & Settings State
       const [completionFilterType, setCompletionFilterType] = useState('none');
       const [selectedTagFilter, setSelectedTagFilter] = useState('');
       const [selectedAssigneeFilter, setSelectedAssigneeFilter] = useState('');
+      
       const [userRoles, setUserRoles] = useState(() => {
-        try { return JSON.parse(localStorage.getItem(`weaver_settings_${appId}`) || '{}').userRoles || {}; } catch(e) { return {}; }
+        if (!activeListId) return {};
+        try { return JSON.parse(localStorage.getItem(`weaver_settings_${appId}_${activeListId}`) || '{}').userRoles || {}; } catch(e) { return {}; }
       });
       const [devHoursPerDay, setDevHoursPerDay] = useState(() => {
-        try { const val = JSON.parse(localStorage.getItem(`weaver_settings_${appId}`) || '{}').devHoursPerDay; return val !== undefined ? val : 7; } catch(e) { return 7; }
+        if (!activeListId) return 7;
+        try { const val = JSON.parse(localStorage.getItem(`weaver_settings_${appId}_${activeListId}`) || '{}').devHoursPerDay; return val !== undefined ? val : 7; } catch(e) { return 7; }
       });
       const [qaHoursPerDay, setQaHoursPerDay] = useState(() => {
-        try { const val = JSON.parse(localStorage.getItem(`weaver_settings_${appId}`) || '{}').qaHoursPerDay; return val !== undefined ? val : 7; } catch(e) { return 7; }
+        if (!activeListId) return 7;
+        try { const val = JSON.parse(localStorage.getItem(`weaver_settings_${appId}_${activeListId}`) || '{}').qaHoursPerDay; return val !== undefined ? val : 7; } catch(e) { return 7; }
       });
       
       // Blocker State
       const [isBlockerModalOpen, setIsBlockerModalOpen] = useState(false);
       const [dateBlockers, setDateBlockers] = useState(() => {
-        try { return JSON.parse(localStorage.getItem(`weaver_settings_${appId}`) || '{}').dateBlockers || []; } catch(e) { return []; }
+        if (!activeListId) return [];
+        try { return JSON.parse(localStorage.getItem(`weaver_settings_${appId}_${activeListId}`) || '{}').dateBlockers || []; } catch(e) { return []; }
       });
       const [newBlockerDays, setNewBlockerDays] = useState(1);
       const [newBlockerRemark, setNewBlockerRemark] = useState('Holiday');
@@ -460,24 +467,13 @@
       const [timeEntryHours, setTimeEntryHours] = useState('');
       const [selectedTaskIdForTime, setSelectedTaskIdForTime] = useState('');
       const [timeAssignee, setTimeAssignee] = useState('');
-      const [timeEntryDate, setTimeEntryDate] = useState(() => new Date().toISOString().split('T')[0]);
       const [taskSearchQuery, setTaskSearchQuery] = useState('');
       const [showMyTasksOnly, setShowMyTasksOnly] = useState(false);
+      const [timeEntryDate, setTimeEntryDate] = useState(() => new Date().toISOString().split('T')[0]);
       
       const [activeChartHover, setActiveChartHover] = useState(null);
 
-      // ClickUp Mapping State
-      const [teams, setTeams] = useState([]);
-      const [spaces, setSpaces] = useState([]);
-      const [folders, setFolders] = useState([]);
-      const [lists, setLists] = useState([]);
-      const [folderlessLists, setFolderlessLists] = useState([]);
-      const [selectedTeam, setSelectedTeam] = useState('');
-      const [selectedSpace, setSelectedSpace] = useState('');
-      const [selectedFolder, setSelectedFolder] = useState('');
-      const [selectedList, setSelectedList] = useState('');
-
-      // Notifications State
+      // Notifications State & Transactions
       const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
       const [transactions, setTransactions] = useState(() => {
         try {
@@ -485,9 +481,6 @@
           return saved ? JSON.parse(saved) : [];
         } catch(e) { return []; }
       });
-
-      const mappedWorkflowsRef = useRef(mappedWorkflows);
-      useEffect(() => { mappedWorkflowsRef.current = mappedWorkflows; }, [mappedWorkflows]);
 
       const logTransaction = async (action, details, iconType = 'info') => {
         const newTx = {
@@ -515,6 +508,20 @@
           }
         }
       };
+
+      // ClickUp Mapping State
+      const [teams, setTeams] = useState([]);
+      const [spaces, setSpaces] = useState([]);
+      const [folders, setFolders] = useState([]);
+      const [lists, setLists] = useState([]);
+      const [folderlessLists, setFolderlessLists] = useState([]);
+      const [selectedTeam, setSelectedTeam] = useState('');
+      const [selectedSpace, setSelectedSpace] = useState('');
+      const [selectedFolder, setSelectedFolder] = useState('');
+      const [selectedList, setSelectedList] = useState('');
+
+      const mappedWorkflowsRef = useRef(mappedWorkflows);
+      useEffect(() => { mappedWorkflowsRef.current = mappedWorkflows; }, [mappedWorkflows]);
 
       const handleMockClickUpData = () => {
         setTeams(MOCK_CLICKUP_DATA.teams);
@@ -694,9 +701,8 @@
           id: Date.now().toString(), team: teamName, space: spaceName, folder: folderName, list: listName, listId: selectedList, tasks: initialTasks, lastSynced: Date.now(), listStartDate, listDueDate
         };
 
-        setMappedWorkflows(() => {
-          // ENFORCE SOLE CONNECTION: Completely replace the array with ONLY the new workflow
-          const nextWorkflows = [newWorkflow]; 
+        setMappedWorkflows(prev => {
+          const nextWorkflows = [newWorkflow]; // Overwrites any old connection to prevent duplicates
           localStorage.setItem(`weaver_workflows_${appId}`, JSON.stringify(nextWorkflows));
           if (user && !user.isMock) {
             const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
@@ -704,9 +710,8 @@
           }
           return nextWorkflows;
         });
-        
-        logTransaction('Connection Updated', `Mapped to new ClickUp list: ${listName}`, 'link');
 
+        logTransaction('Connection Updated', `Mapped to ClickUp list: ${listName}`, 'link');
         setSelectedTeam(''); setSelectedSpace(''); setSelectedFolder(''); setSelectedList('');
         handleCancelIntegration();
       };
@@ -785,13 +790,14 @@
       }, [mappedWorkflows.length, clickUpToken, user]);
 
       const saveSettings = async (updates) => {
-        const currentLocal = JSON.parse(localStorage.getItem(`weaver_settings_${appId}`) || '{}');
+        if (!activeListId) return;
+        const currentLocal = JSON.parse(localStorage.getItem(`weaver_settings_${appId}_${activeListId}`) || '{}');
         const newSettings = { ...currentLocal, ...updates };
-        localStorage.setItem(`weaver_settings_${appId}`, JSON.stringify(newSettings));
+        localStorage.setItem(`weaver_settings_${appId}_${activeListId}`, JSON.stringify(newSettings));
         
         if (user && !user.isMock) {
           try {
-            await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'capacity'), updates, { merge: true });
+            await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'capacity', activeListId), updates, { merge: true });
           } catch(err) {
              console.error("Error saving capacity settings to Firestore", err);
           }
@@ -841,6 +847,39 @@
         return () => unsubscribe();
       }, []);
 
+      // List-Specific Capacity Listener
+      useEffect(() => {
+        if (!activeListId) return;
+
+        try {
+          const localSettings = JSON.parse(localStorage.getItem(`weaver_settings_${appId}_${activeListId}`) || '{}');
+          setDevHoursPerDay(localSettings.devHoursPerDay !== undefined ? localSettings.devHoursPerDay : 7);
+          setQaHoursPerDay(localSettings.qaHoursPerDay !== undefined ? localSettings.qaHoursPerDay : 7);
+          setDateBlockers(localSettings.dateBlockers || []);
+          setUserRoles(localSettings.userRoles || {});
+        } catch (e) { console.warn(e); }
+
+        if (!user || user.isMock) return;
+
+        const capRef = doc(db, 'artifacts', appId, 'public', 'data', 'capacity', activeListId);
+        const unsubCap = onSnapshot(capRef, (snapshot) => {
+          if (snapshot.exists()) {
+            const d = snapshot.data();
+            setDevHoursPerDay(d.devHoursPerDay !== undefined ? d.devHoursPerDay : 7);
+            setQaHoursPerDay(d.qaHoursPerDay !== undefined ? d.qaHoursPerDay : 7);
+            setDateBlockers(d.dateBlockers || []);
+            setUserRoles(d.userRoles || {});
+          } else {
+            setDevHoursPerDay(7);
+            setQaHoursPerDay(7);
+            setDateBlockers([]);
+            setUserRoles({});
+          }
+        }, (error) => console.error("Error fetching capacity settings:", error));
+
+        return () => unsubCap();
+      }, [activeListId, user]);
+
       // Global Time Ledger & Settings Sync
       useEffect(() => {
         if (!user || user.isMock) return;
@@ -861,30 +900,18 @@
           }
         }, (error) => console.error("Error fetching workflows:", error));
 
-        const capRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'capacity');
-        const unsubCap = onSnapshot(capRef, (snapshot) => {
-          if (snapshot.exists()) {
-            const d = snapshot.data();
-            setDevHoursPerDay(d.devHoursPerDay !== undefined ? d.devHoursPerDay : 7);
-            setQaHoursPerDay(d.qaHoursPerDay !== undefined ? d.qaHoursPerDay : 7);
-            setDateBlockers(d.dateBlockers || []);
-            setUserRoles(d.userRoles || {});
-          }
-        }, (error) => console.error("Error fetching capacity settings:", error));
-
         const txRef = doc(db, 'artifacts', appId, 'public', 'data', 'ledgers', 'transactions');
         const unsubTx = onSnapshot(txRef, (snapshot) => {
           if (snapshot.exists()) {
             const data = snapshot.data();
             if (data.entries) {
-                // Ensure we only keep the latest 10 items globally
                 const sorted = data.entries.sort((a,b) => b.timestamp - a.timestamp).slice(0, 10);
                 setTransactions(sorted);
             }
           }
         }, (error) => console.error("Error fetching transactions:", error));
 
-        return () => { unsubLedger(); unsubWf(); unsubCap(); unsubTx(); };
+        return () => { unsubLedger(); unsubWf(); unsubTx(); };
       }, [user]);
 
       const handleMockLogin = async () => {
@@ -959,21 +986,16 @@
             else console.error("Error saving time entry:", error);
           }
         }
-        
-        const taskObj = flattenTasksDeep(activeWorkflows.flatMap(wf => wf.tasks || [])).find(t => t.id === selectedTaskIdForTime);
-        logTransaction('Time Logged', `${timeEntryHours}h logged on "${taskObj?.name || 'Task'}" by ${timeAssignee || user?.name}`, 'clock');
+
+        logTransaction('Time Logged', `${timeEntryHours}h logged on target task`, 'clock');
 
         setTimeEntryHours('');
         setTimeEntryNote('');
       };
 
       const handleDeleteTimeEntry = async (entry) => {
-        setGlobalTimeLedger(prev => {
-          const updated = prev.filter(e => e.id !== entry.id);
-          localStorage.setItem(`weaver_ledger_${appId}`, JSON.stringify(updated));
-          return updated;
-        });
-        
+        setGlobalTimeLedger(prev => prev.filter(e => e.id !== entry.id));
+        logTransaction('Time Entry Deleted', `Removed time log`, 'trash');
         if (user && !user.isMock) {
           const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'ledgers', 'global');
           try {
@@ -2438,7 +2460,7 @@
                             </select>
                           </div>
                         )}
-                        <button onClick={() => { if (!newBlockerDays || newBlockerDays <= 0) return; const assigneeName = newBlockerRemark === 'Leave' ? (newBlockerAssignee || assigneesList[0]?.username) : null; const newBlocker = { id: Date.now().toString(), days: parseInt(newBlockerDays), remark: newBlockerRemark, assignee: assigneeName }; const newBlockers = [...dateBlockers, newBlocker]; setDateBlockers(newBlockers); saveSettings({ dateBlockers: newBlockers }); logTransaction('Blocker Added', `${newBlockerDays} day(s) for ${newBlockerRemark}${assigneeName ? ` (${assigneeName})` : ''}`, 'info'); setNewBlockerDays(1); }} className="w-full flex items-center justify-center bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors">
+                        <button onClick={() => { if (!newBlockerDays || newBlockerDays <= 0) return; const newBlocker = { id: Date.now().toString(), days: parseInt(newBlockerDays), remark: newBlockerRemark, assignee: newBlockerRemark === 'Leave' ? (newBlockerAssignee || assigneesList[0]?.username) : null }; const newBlockers = [...dateBlockers, newBlocker]; setDateBlockers(newBlockers); saveSettings({ dateBlockers: newBlockers }); logTransaction('Blocker Added', `${newBlockerDays} day(s) for ${newBlockerRemark}`, 'info'); setNewBlockerDays(1); }} className="w-full flex items-center justify-center bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors">
                           <Plus className="w-4 h-4 mr-1.5" /> Add Date Blocker
                         </button>
                      </div>
@@ -2467,6 +2489,46 @@
                 </div>
               </div>
             </nav>
+
+            {/* Notifications Panel */}
+            {isNotificationsOpen && (
+              <div className="fixed top-16 right-4 sm:right-6 lg:right-8 w-80 bg-slate-900 border border-slate-700/80 rounded-xl shadow-2xl z-50 overflow-hidden animate-in slide-in-from-top-4 duration-200">
+                <div className="p-4 border-b border-slate-700/80 bg-slate-800/50 flex items-center justify-between">
+                  <h3 className="text-sm font-bold text-white flex items-center"><Bell className="w-4 h-4 mr-2 text-indigo-400" /> Recent Activity</h3>
+                  {transactions.length > 0 && <span className="text-xs text-slate-500">{transactions.length} entries</span>}
+                </div>
+                <div className="max-h-96 overflow-y-auto">
+                  {transactions.length === 0 ? (
+                    <div className="p-6 text-center text-sm text-slate-500 italic">No recent activity.</div>
+                  ) : (
+                    <div className="divide-y divide-white/5">
+                      {transactions.map(tx => (
+                        <div key={tx.id} className="p-4 hover:bg-white/5 transition-colors">
+                          <div className="flex items-start gap-3">
+                            <div className="mt-0.5 shrink-0">
+                              {tx.iconType === 'clock' && <div className="p-1.5 bg-emerald-500/10 rounded border border-emerald-500/20"><Clock className="w-3.5 h-3.5 text-emerald-400" /></div>}
+                              {tx.iconType === 'link' && <div className="p-1.5 bg-indigo-500/10 rounded border border-indigo-500/20"><Box className="w-3.5 h-3.5 text-indigo-400" /></div>}
+                              {tx.iconType === 'unlink' && <div className="p-1.5 bg-rose-500/10 rounded border border-rose-500/20"><Trash2 className="w-3.5 h-3.5 text-rose-400" /></div>}
+                              {tx.iconType === 'trash' && <div className="p-1.5 bg-rose-500/10 rounded border border-rose-500/20"><Trash2 className="w-3.5 h-3.5 text-rose-400" /></div>}
+                              {tx.iconType === 'info' && <div className="p-1.5 bg-blue-500/10 rounded border border-blue-500/20"><InfoIcon className="w-3.5 h-3.5 text-blue-400" /></div>}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium text-slate-200">{tx.action}</p>
+                              <p className="text-xs text-slate-400 mt-0.5 truncate">{tx.details}</p>
+                              <div className="flex items-center gap-2 mt-1.5 text-[10px] font-medium text-slate-500">
+                                <span>{new Date(tx.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                <span>•</span>
+                                <span>{tx.user}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {mappedWorkflows.length === 0 ? (
           <main className="relative z-25 max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
