@@ -19,6 +19,109 @@
     ::-webkit-scrollbar-thumb:hover { background: rgba(99, 102, 241, 0.4); }
     @keyframes spin-slow { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
     .animate-spin-slow { animation: spin-slow 12s linear infinite; }
+
+    /* Neon Glowing Buttons */
+    .btn-neon {
+      padding: 8px 16px;
+      text-transform: uppercase;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #ffffff80;
+      text-shadow: none;
+      background: transparent;
+      cursor: pointer;
+      box-shadow: transparent;
+      border: 1px solid #ffffff80;
+      transition: 0.5s ease;
+      user-select: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      letter-spacing: 0.05em;
+    }
+
+    .btn-neon.btn-neon-sm {
+      padding: 6px 12px;
+      font-size: 10px;
+      border-radius: 6px;
+    }
+
+    .btn-neon-indigo:hover, .btn-neon-indigo:focus {
+      color: #ffffff;
+      background: #6366f1;
+      border-color: #6366f1;
+      text-shadow: 0 0 5px #ffffff, 0 0 10px #ffffff, 0 0 20px #ffffff;
+      box-shadow: 0 0 5px #6366f1, 0 0 20px #6366f1, 0 0 50px #6366f1, 0 0 100px #6366f1;
+      outline: none;
+    }
+
+    .btn-neon-emerald:hover, .btn-neon-emerald:focus {
+      color: #ffffff;
+      background: #10b981;
+      border-color: #10b981;
+      text-shadow: 0 0 5px #ffffff, 0 0 10px #ffffff, 0 0 20px #ffffff;
+      box-shadow: 0 0 5px #10b981, 0 0 20px #10b981, 0 0 50px #10b981, 0 0 100px #10b981;
+      outline: none;
+    }
+
+    .btn-neon-slate:hover, .btn-neon-slate:focus {
+      color: #ffffff;
+      background: #64748b;
+      border-color: #64748b;
+      text-shadow: 0 0 5px #ffffff, 0 0 10px #ffffff, 0 0 20px #ffffff;
+      box-shadow: 0 0 5px #64748b, 0 0 20px #64748b, 0 0 50px #64748b, 0 0 100px #64748b;
+      outline: none;
+    }
+
+    .btn-neon:disabled {
+      opacity: 0.4;
+      pointer-events: none;
+    }
+
+    /* General Glowing Interactables (Inputs, Selects, Checkboxes) */
+    .neon-input {
+      transition: all 0.4s ease;
+    }
+    .neon-input:focus, .neon-input:hover {
+      border-color: #6366f1 !important;
+      box-shadow: 0 0 5px #6366f1, 0 0 15px #6366f1, 0 0 30px #6366f1 !important;
+      outline: none;
+    }
+    .neon-input-rose:focus, .neon-input-rose:hover {
+      border-color: #f43f5e !important;
+      box-shadow: 0 0 5px #f43f5e, 0 0 15px #f43f5e, 0 0 30px #f43f5e !important;
+      outline: none;
+    }
+
+    /* Text & Icon Glow (For transparent utility buttons, chevrons, close X) */
+    .neon-text-indigo { transition: all 0.3s ease; }
+    .neon-text-indigo:hover, .neon-text-indigo:focus {
+      color: #ffffff !important;
+      text-shadow: 0 0 5px #ffffff, 0 0 10px #6366f1, 0 0 20px #6366f1 !important;
+      outline: none;
+    }
+    
+    .neon-text-rose { transition: all 0.3s ease; }
+    .neon-text-rose:hover, .neon-text-rose:focus {
+      color: #ffffff !important;
+      text-shadow: 0 0 5px #ffffff, 0 0 10px #f43f5e, 0 0 20px #f43f5e !important;
+      outline: none;
+    }
+    
+    .neon-text-slate { transition: all 0.3s ease; }
+    .neon-text-slate:hover, .neon-text-slate:focus {
+      color: #ffffff !important;
+      text-shadow: 0 0 5px #ffffff, 0 0 10px #64748b, 0 0 20px #64748b !important;
+      outline: none;
+    }
+
+    .neon-text-emerald { transition: all 0.3s ease; }
+    .neon-text-emerald:hover, .neon-text-emerald:focus {
+      color: #ffffff !important;
+      text-shadow: 0 0 5px #ffffff, 0 0 10px #10b981, 0 0 20px #10b981 !important;
+      outline: none;
+    }
   </style>
 
   <!-- Configure Babel to use the classic JSX runtime (React.createElement) natively -->
@@ -60,7 +163,7 @@
       CheckCircle2, ArrowRight, Ticket, CheckSquare, LogOut, Settings, Bell, Box,
       FolderOpen, ListTodo, Plus, Trash2, ChevronRight, RefreshCw, Key, AlertTriangle,
       Clock, Calendar, Flag, Users, TrendingDown, TrendingUp, Target, Tag, X, Activity, PieChart,
-      Bug, ShieldAlert, Zap, Info as InfoIcon
+      Bug, ShieldAlert, Zap, Info as InfoIcon, Download
     } from 'lucide-react';
 
     // --- Firebase Configuration ---
@@ -129,7 +232,7 @@
 
       return (
         <div className="group relative flex items-center justify-center cursor-help">
-          <div className="p-1 -m-1 flex items-center justify-center">{children}</div>
+          <div className="p-1 -m-1 flex items-center justify-center neon-text-indigo">{children}</div>
           <div className={`pointer-events-none absolute z-[99999] w-64 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-xl shadow-2xl p-4 ${alignClasses} ${verticalClasses}`}>
             <p className="font-semibold text-white leading-snug">{text}</p>
             {formula && (
@@ -160,16 +263,24 @@
       
       return (
         <div className={`transition-all overflow-hidden ${isParent ? 'bg-slate-900/60 border border-white/5 rounded-xl' : 'bg-slate-900/40 rounded-r-lg border-l-2'}`} style={!isParent ? { borderLeftColor: `${themeColor}40` } : {}}>
-          <div className={`flex flex-col p-3 gap-2 ${!isParent ? 'pl-4' : ''}`}>
+          <div className={`flex flex-col p-3 gap-1.5 ${!isParent ? 'pl-4' : ''}`}>
             
-            <div className="flex items-start space-x-3 overflow-hidden min-w-0" title={task.name || 'Unnamed Task'}>
+            {/* Top Row: Title */}
+            <div className="flex items-start space-x-3 w-full group cursor-help">
               <div className="w-2.5 h-2.5 rounded-full shrink-0 shadow-lg mt-1.5" style={{ backgroundColor: themeColor, boxShadow: `0 0 8px ${themeColor}` }} />
-              <span className={`font-semibold truncate ${isParent ? 'text-slate-100 text-[15px]' : 'text-slate-300 text-sm'}`}>{task.name || 'Unnamed Task'}</span>
+              <div className="relative min-w-0 flex-1">
+                 <span className={`font-semibold block truncate ${isParent ? 'text-slate-100 text-[15px]' : 'text-slate-300 text-sm'}`}>{task.name || 'Unnamed Task'}</span>
+                 <div className="absolute left-0 bottom-full mb-2 hidden group-hover:block z-50 bg-slate-800 text-slate-100 text-xs px-3 py-1.5 rounded border border-slate-700 shadow-xl whitespace-normal break-words max-w-sm pointer-events-none">
+                    {task.name}
+                    <div className="absolute top-full left-4 border-[5px] border-transparent border-t-slate-800"></div>
+                 </div>
+              </div>
             </div>
             
+            {/* Bottom Row: Metadata */}
             <div className="flex items-center shrink-0 space-x-3 pl-5 overflow-x-auto overflow-y-hidden py-0.5">
               {hasSubtasks && (
-                <button onClick={() => toggleTaskExpand(task.id)} className="flex items-center space-x-1.5 px-2 py-0.5 rounded bg-indigo-500/10 hover:bg-indigo-500/20 text-[10px] text-indigo-300 font-bold border border-indigo-500/20 transition-colors shrink-0">
+                <button onClick={() => toggleTaskExpand(task.id)} className="flex items-center space-x-1.5 px-2 py-0.5 rounded bg-indigo-500/10 hover:bg-indigo-500/20 text-[10px] text-indigo-300 font-bold border border-indigo-500/20 transition-colors shrink-0 neon-text-indigo">
                   <span>Subtasks ({relevantSubtasks.length})</span>
                   <ChevronRight className={`h-3 w-3 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
                 </button>
@@ -223,14 +334,19 @@
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
         let animationFrameId;
-        let width = (canvas.width = window.innerWidth);
-        let height = (canvas.height = window.innerHeight);
+        
+        const setCanvasSize = () => {
+          canvas.width = window.innerWidth;
+          canvas.height = window.innerHeight;
+        };
+        
+        setCanvasSize();
 
         const handleResize = () => {
-          width = canvas.width = window.innerWidth;
-          height = canvas.height = window.innerHeight;
+          setCanvasSize();
           initializeWebs();
         };
+        
         window.addEventListener('resize', handleResize);
 
         let webs = [];
@@ -242,9 +358,13 @@
           spiders = [];
           packets = [];
 
+          // Use viewport dimensions for placing webs so they stay in view
+          const vWidth = window.innerWidth;
+          const vHeight = window.innerHeight;
+
           const webConfigs = [
-            { cx: width * 0.28, cy: height * 0.5, radius: Math.min(width, height) * 0.42, spokes: 8, rings: 5, color: '99, 102, 241' },
-            { cx: width * 0.72, cy: height * 0.42, radius: Math.min(width, height) * 0.32, spokes: 6, rings: 4, color: '59, 130, 246' }
+            { cx: vWidth * 0.28, cy: vHeight * 0.5, radius: Math.min(vWidth, vHeight) * 0.42, spokes: 8, rings: 5, color: '99, 102, 241' },
+            { cx: vWidth * 0.72, cy: vHeight * 0.42, radius: Math.min(vWidth, vHeight) * 0.32, spokes: 6, rings: 4, color: '59, 130, 246' }
           ];
 
           webConfigs.forEach((config, webIdx) => {
@@ -305,7 +425,7 @@
         };
 
         const animate = () => {
-          ctx.clearRect(0, 0, width, height);
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
 
           webs.forEach(web => {
             web.edges.forEach(edge => {
@@ -377,7 +497,7 @@
         };
       }, []);
 
-      return <canvas ref={canvasRef} className="fixed inset-0 w-full h-full block z-0 transition-opacity duration-1000 pointer-events-none" style={{ opacity }} />;
+      return <canvas ref={canvasRef} className="fixed top-0 left-0 w-full h-full block z-0 transition-opacity duration-1000 pointer-events-none" style={{ opacity }} />;
     };
 
     // --- MOCK DATA ---
@@ -389,7 +509,7 @@
       folderlessLists: { 'mock_space_1': [{ id: 'mock_list_3', name: 'General Engineering Tasks' }], 'mock_space_2': [{ id: 'mock_list_4', name: 'Escalated Tickets' }] },
       tasks: {
         'mock_list_1': [
-          { id: 't_1', name: 'Fix authentication callback bug', status: { status: 'in progress', color: '#3b82f6' }, priority: { priority: 'high', color: '#ef4444' }, date_created: (Date.now() - 10 * 86400000).toString(), start_date: (Date.now() - 4 * 86400000).toString(), due_date: (Date.now() + 86400000).toString(), assignees: [{ username: 'Alex D.', profilePicture: 'https://ui-avatars.com/api/?name=Alex+D&background=indigo&color=fff' }], tags: [{ name: 'backend', color: '#3b82f6' }, { name: 'bug', color: '#ef4444' }], time_estimate: 28800000, time_spent: 14400000 },
+          { id: 't_1', name: 'Fix authentication callback bug that causes loop on login', status: { status: 'in progress', color: '#3b82f6' }, priority: { priority: 'high', color: '#ef4444' }, date_created: (Date.now() - 10 * 86400000).toString(), start_date: (Date.now() - 4 * 86400000).toString(), due_date: (Date.now() + 86400000).toString(), assignees: [{ username: 'Alex D.', profilePicture: 'https://ui-avatars.com/api/?name=Alex+D&background=indigo&color=fff' }], tags: [{ name: 'backend', color: '#3b82f6' }, { name: 'bug', color: '#ef4444' }], time_estimate: 28800000, time_spent: 14400000 },
           { id: 't_2', name: 'Design new dashboard layout', status: { status: 'closed', color: '#10b981' }, priority: { priority: 'normal', color: '#eab308' }, date_created: (Date.now() - 15 * 86400000).toString(), date_closed: (Date.now() - 1 * 86400000).toString(), due_date: null, assignees: [{ username: 'Sarah W.', profilePicture: 'https://ui-avatars.com/api/?name=Sarah+W&background=emerald&color=fff' }], tags: [{ name: 'frontend', color: '#f59e0b' }, { name: 'design', color: '#8b5cf6' }], time_estimate: 43200000, time_spent: 43200000 }
         ],
         'mock_list_3': [
@@ -405,6 +525,7 @@
       const [errorMessage, setErrorMessage] = useState(null);
 
       // Core App State
+      const [warpStage, setWarpStage] = useState('idle'); // 'idle', 'weaving', 'flash', 'fade'
       const [integrationStep, setIntegrationStep] = useState('idle');
       const [clickUpToken, setClickUpToken] = useState(() => localStorage.getItem(`weaver_clickup_token_${appId}`) || '');
       const [tempToken, setTempToken] = useState('');
@@ -495,7 +616,7 @@
         };
 
         setTransactions(prev => {
-          const updated = [newTx, ...prev].slice(0, 100); // Keep last 100
+          const updated = [newTx, ...prev].slice(0, 100);
           localStorage.setItem(`weaver_transactions_${appId}`, JSON.stringify(updated));
           return updated;
         });
@@ -703,19 +824,37 @@
           id: Date.now().toString(), team: teamName, space: spaceName, folder: folderName, list: listName, listId: selectedList, tasks: initialTasks, lastSynced: Date.now(), listStartDate, listDueDate
         };
 
-        setMappedWorkflows(prev => {
-          const nextWorkflows = [newWorkflow]; // Overwrites any old connection to prevent duplicates
-          localStorage.setItem(`weaver_workflows_${appId}`, JSON.stringify(nextWorkflows));
-          if (user && !user.isMock) {
-            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
-            setDoc(docRef, { mappedWorkflows: nextWorkflows }, { merge: true }).catch(err => console.error("Error saving workflows:", err));
-          }
-          return nextWorkflows;
-        });
+        // --- DIMENSION WARP SEQUENCE ---
+        setWarpStage('weaving');
+        setIsSwitchModalOpen(false);
 
-        logTransaction('Connection Updated', `Mapped to ClickUp list: ${listName}`, 'link');
-        setSelectedTeam(''); setSelectedSpace(''); setSelectedFolder(''); setSelectedList('');
-        handleCancelIntegration();
+        setTimeout(() => {
+            setWarpStage('flash');
+            
+            // Render the dashboard heavily *during* the white flash to hide any UI stutter
+            setMappedWorkflows(prev => {
+              const nextWorkflows = [newWorkflow]; // Overwrites old connection completely
+              localStorage.setItem(`weaver_workflows_${appId}`, JSON.stringify(nextWorkflows));
+              if (user && !user.isMock) {
+                const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
+                setDoc(docRef, { mappedWorkflows: nextWorkflows }, { merge: true }).catch(err => console.error("Error saving workflows:", err));
+              }
+              return nextWorkflows;
+            });
+
+            logTransaction('Connection Established', `Warped to dimension: ${listName}`, 'link');
+            setSelectedTeam(''); setSelectedSpace(''); setSelectedFolder(''); setSelectedList('');
+            setIntegrationStep('idle');
+            setTempToken('');
+            setClickUpError(null);
+
+            setTimeout(() => {
+                setWarpStage('fade');
+                setTimeout(() => {
+                    setWarpStage('idle');
+                }, 1500); // Wait for the fade out to finish completely
+            }, 400); // 400ms of pure whiteout flash before fading
+        }, 2500); // 2.5 seconds of intense 'weaving' animation
       };
 
       const removeMapping = async (id) => {
@@ -808,30 +947,9 @@
 
       // Auth Initialization
       useEffect(() => {
-        const initAuth = async () => {
-          if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-            try {
-              await signInWithCustomToken(auth, __initial_auth_token);
-            } catch(err) {
-              if (err.code !== 'auth/custom-token-mismatch') console.warn("Custom token sign in failed", err);
-              try {
-                await signInAnonymously(auth); // Fallback to allow Firestore usage
-              } catch(fallbackErr) {
-                console.warn("Anonymous auth restricted:", fallbackErr);
-              }
-            }
-          } else {
-             // Essential fallback to ensure Firestore hooks connect for everyone
-             try {
-               await signInAnonymously(auth); 
-             } catch(fallbackErr) {
-               console.warn("Anonymous auth restricted:", fallbackErr);
-             }
-          }
-        };
-        initAuth();
+        let isInitialAuthCheck = true;
 
-        const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+        const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
           if (currentUser) {
             setUser({ 
               uid: currentUser.uid, 
@@ -841,11 +959,28 @@
               isMock: false,
               isAnonymous: currentUser.isAnonymous
             });
+            setAuthInitialized(true);
           } else {
-            setUser((prev) => prev?.isMock ? prev : null);
+            if (isInitialAuthCheck) {
+              // No user session found. Safely attempt fallback to custom token or anonymous auth.
+              if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                try {
+                  await signInWithCustomToken(auth, __initial_auth_token);
+                } catch(err) {
+                  try { await signInAnonymously(auth); } catch(fallbackErr) { console.warn(fallbackErr); }
+                }
+              } else {
+                 try { await signInAnonymously(auth); } catch(fallbackErr) { console.warn(fallbackErr); }
+              }
+            } else {
+              // User explicitly signed out
+              setUser((prev) => prev?.isMock ? prev : null);
+            }
+            setAuthInitialized(true);
           }
-          setAuthInitialized(true);
+          isInitialAuthCheck = false;
         });
+
         return () => unsubscribe();
       }, []);
 
@@ -1006,8 +1141,6 @@
             console.error("Error deleting time entry:", error);
           }
         }
-        
-        logTransaction('Time Entry Deleted', `Removed time log for ${entry.userId}`, 'trash');
       };
 
       if (!authInitialized) {
@@ -1067,7 +1200,6 @@
 
         const allFlatTasks = flattenTasksDeep(activeWorkflows.flatMap(wf => wf.tasks || []));
 
-        const totalGlobalHours = globalTimeLedger.reduce((acc, curr) => acc + curr.ms, 0) / 3600000;
         const getLoggedMsForTask = (taskId) => globalTimeLedger.filter(e => e.taskId === taskId).reduce((acc, curr) => acc + curr.ms, 0);
 
         const uniqueTags = Array.from(new Set(allFlatTasks.flatMap(t => t.tags?.map(tag => tag.name || '') || [])));
@@ -1137,14 +1269,12 @@
 
         const backlogTasks = filteredTasks.filter(t => backlogStatuses.includes((t.status?.status || 'open').toLowerCase()));
         const backlogBreakdown = getBreakdown(backlogTasks);
-        const backlogTasksCount = backlogBreakdown.total;
 
         const activeMainTasks = filteredTasks.filter(t => {
             const s = (t.status?.status || 'open').toLowerCase();
             return !doneStatuses.includes(s) && !backlogStatuses.includes(s);
         });
         const activeBreakdown = getBreakdown(activeMainTasks);
-        const activeTasksCount = activeBreakdown.total;
 
         const completedTasks = filteredTasks.filter(t => doneStatuses.includes((t.status?.status || '').toLowerCase()));
         const completedBreakdown = getBreakdown(completedTasks);
@@ -1414,7 +1544,6 @@
             currentDayMs += oneDayMs;
         }
 
-        // --- CHART FLUSH (Ensures final point matches 100% true total) ---
         while (validEvents.length > 0) {
             historicalBurnedMs += validEvents.shift().burned;
         }
@@ -1548,7 +1677,6 @@
             currentBurnupDayMs += oneDayMs;
         }
 
-        // --- CHART FLUSH (Ensures final point matches 100% true total) ---
         while (logEventIdx < logEvents.length) {
             cumulativeLoggedMs += logEvents[logEventIdx].logged;
             logEventIdx++;
@@ -1692,7 +1820,7 @@
                            <p className="text-sm text-indigo-300 font-medium uppercase tracking-wider">{userRole}</p>
                        </div>
                      </div>
-                     <button onClick={() => setSelectedDrillDownAssignee(null)} className="text-slate-400 hover:text-white p-2 hover:bg-slate-800 rounded transition-colors"><X className="w-6 h-6"/></button>
+                     <button onClick={() => setSelectedDrillDownAssignee(null)} className="text-slate-400 p-2 rounded transition-colors neon-text-slate neon-interactable neon-interactable-slate"><X className="w-6 h-6"/></button>
                  </div>
                  
                  <div className="flex flex-col lg:flex-row flex-1 overflow-hidden">
@@ -2013,7 +2141,6 @@
                 return (ms / 3600000).toFixed(2);
             };
 
-            // Define headers
             const headers = [
                 'Task Name', 'List/Workflow', 'Status', 'Priority', 
                 'Estimated Hours', 'Logged Hours (ClickUp)', 'Logged Hours (Weaver)', 'Total Logged Hours',
@@ -2022,12 +2149,8 @@
 
             const rows = [headers.join(',')];
 
-            // Build rows from filtered tasks
             filteredTasks.forEach(task => {
-                // Find parent workflow for context
-                const parentWf = activeWorkflows.find(wf => 
-                   flattenTasksDeep(wf.tasks).some(t => t.id === task.id)
-                ) || { list: 'Unknown' };
+                const parentWf = activeWorkflows.find(wf => flattenTasksDeep(wf.tasks).some(t => t.id === task.id)) || { list: 'Unknown' };
 
                 const name = escapeCSV(task.name);
                 const list = escapeCSV(parentWf.list);
@@ -2050,9 +2173,7 @@
                 const created = task.date_created ? escapeCSV(new Date(parseInt(task.date_created)).toLocaleDateString()) : '""';
                 const closed = task.date_closed ? escapeCSV(new Date(parseInt(task.date_closed)).toLocaleDateString()) : '""';
 
-                rows.push([
-                    name, list, status, priority, estHrs, cuLoggedHrs, wvrLoggedHrs, totLoggedHrs, assignees, tags, created, closed
-                ].join(','));
+                rows.push([name, list, status, priority, estHrs, cuLoggedHrs, wvrLoggedHrs, totLoggedHrs, assignees, tags, created, closed].join(','));
             });
 
             const csvContent = rows.join('\n');
@@ -2075,7 +2196,7 @@
                   <h2 className="text-lg font-semibold text-white">Connect your ticketing system</h2>
                   <p className="text-slate-400 mt-1 max-w-xl">To start weaving, connect Weaver to ClickUp. This allows us to automatically sync your support tickets with your development tasks.</p>
                 </div>
-                <button onClick={handleConnectClickUp} className="flex items-center px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 shadow-lg shrink-0">
+                <button onClick={handleConnectClickUp} className="btn-neon btn-neon-indigo shrink-0">
                   <Settings className="h-4 w-4 mr-2 animate-spin-slow" /> Connect ClickUp
                 </button>
               </div>
@@ -2090,17 +2211,17 @@
                 <div className="space-y-4">
                   <div>
                     <label className="block text-sm font-medium text-slate-300 mb-1">Personal Access Token</label>
-                    <input type="password" value={tempToken} onChange={(e) => setTempToken(e.target.value)} placeholder="pk_123456789_..." className="w-full bg-slate-950/60 border border-slate-700/60 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 font-mono text-sm" />
+                    <input type="password" value={tempToken} onChange={(e) => setTempToken(e.target.value)} placeholder="pk_123456789_..." className="w-full bg-slate-950/60 border border-transparent rounded-lg px-4 py-3 text-white neon-input neon-input-indigo" />
                   </div>
                   {clickUpError && (
                     <div className="p-4 bg-red-950/30 border border-red-900/50 rounded-xl text-sm text-red-300">
                       <div className="flex items-start mb-3"><AlertTriangle className="h-5 w-5 text-red-400 mr-2 shrink-0 mt-0.5" /><span className="font-medium">{clickUpError}</span></div>
-                      <button onClick={handleMockClickUpData} className="w-full flex justify-center py-2 px-4 border border-red-900/50 rounded-lg shadow-sm text-sm font-medium text-red-200 bg-red-950/40 hover:bg-red-900/30 transition-colors">Bypass with Mock ClickUp Data (Preview)</button>
+                      <button onClick={handleMockClickUpData} className="w-full flex justify-center py-2 px-4 border border-red-900/50 rounded-lg shadow-sm text-sm font-medium text-red-200 bg-red-950/40 hover:bg-red-900/30 transition-colors neon-text-rose neon-interactable neon-interactable-rose">Bypass with Mock ClickUp Data (Preview)</button>
                     </div>
                   )}
                   <div className="flex justify-end space-x-3 pt-2">
-                    <button onClick={handleCancelIntegration} className="px-4 py-2 text-sm font-medium text-slate-400 hover:text-white transition-colors focus:outline-none rounded-lg">Cancel</button>
-                    <button onClick={handleAuthenticateToken} disabled={!tempToken} className="flex items-center px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors shadow-md disabled:opacity-50">Authenticate</button>
+                    <button onClick={handleCancelIntegration} className="px-4 py-2 text-sm font-medium text-slate-400 rounded-lg neon-text-slate neon-interactable neon-interactable-slate">Cancel</button>
+                    <button onClick={handleAuthenticateToken} disabled={!tempToken} className="btn-neon btn-neon-indigo">Authenticate</button>
                   </div>
                 </div>
               </div>
@@ -2123,7 +2244,7 @@
                 <div className="p-6 space-y-5">
                   <div>
                     <label className="block text-sm font-medium text-slate-300 mb-1">1. Select Workspace</label>
-                    <select value={selectedTeam} onChange={(e) => { setSelectedTeam(e.target.value); setSelectedSpace(''); setSelectedFolder(''); setSelectedList(''); }} className="w-full bg-slate-950/60 border border-slate-700/60 rounded-lg px-3 py-2 text-white">
+                    <select value={selectedTeam} onChange={(e) => { setSelectedTeam(e.target.value); setSelectedSpace(''); setSelectedFolder(''); setSelectedList(''); }} className="w-full bg-slate-950/60 border border-transparent rounded-lg px-3 py-2 text-white neon-input neon-input-indigo">
                       <option value="" className="bg-slate-900 text-slate-300">-- Choose a Workspace --</option>
                       {teams.map(t => <option key={t.id} value={t.id} className="bg-slate-900 text-white">{t.name}</option>)}
                     </select>
@@ -2131,7 +2252,7 @@
                   {selectedTeam && (
                     <div>
                       <label className="block text-sm font-medium text-slate-300 mb-1">2. Select Space</label>
-                      <select value={selectedSpace} onChange={(e) => { setSelectedSpace(e.target.value); setSelectedFolder(''); setSelectedList(''); }} className="w-full bg-slate-950/60 border border-slate-700/60 rounded-lg px-3 py-2 text-white">
+                      <select value={selectedSpace} onChange={(e) => { setSelectedSpace(e.target.value); setSelectedFolder(''); setSelectedList(''); }} className="w-full bg-slate-950/60 border border-transparent rounded-lg px-3 py-2 text-white neon-input neon-input-indigo">
                         <option value="" className="bg-slate-900 text-slate-300">-- Choose a Space --</option>
                         {spaces.map(s => <option key={s.id} value={s.id} className="bg-slate-900 text-white">{s.name}</option>)}
                       </select>
@@ -2140,7 +2261,7 @@
                   {selectedSpace && (
                     <div>
                       <label className="block text-sm font-medium text-slate-300 mb-1">3. Select Folder <span className="text-slate-500 font-normal">(Optional)</span></label>
-                      <select value={selectedFolder} onChange={(e) => { setSelectedFolder(e.target.value); setSelectedList(''); }} className="w-full bg-slate-950/60 border border-slate-700/60 rounded-lg px-3 py-2 text-white">
+                      <select value={selectedFolder} onChange={(e) => { setSelectedFolder(e.target.value); setSelectedList(''); }} className="w-full bg-slate-950/60 border border-transparent rounded-lg px-3 py-2 text-white neon-input neon-input-indigo">
                         <option value="" className="bg-slate-900 text-slate-300">-- Folderless / Direct to Space --</option>
                         {folders.map(f => <option key={f.id} value={f.id} className="bg-slate-900 text-white">{f.name}</option>)}
                       </select>
@@ -2149,15 +2270,15 @@
                   {selectedSpace && (
                     <div>
                       <label className="block text-sm font-medium text-slate-300 mb-1">4. Select Task List</label>
-                      <select value={selectedList} onChange={(e) => setSelectedList(e.target.value)} className="w-full bg-slate-950/60 border border-slate-700/60 rounded-lg px-3 py-2 text-white">
+                      <select value={selectedList} onChange={(e) => setSelectedList(e.target.value)} className="w-full bg-slate-950/60 border border-transparent rounded-lg px-3 py-2 text-white neon-input neon-input-indigo">
                         <option value="" className="bg-slate-900 text-slate-300">-- Choose a List --</option>
                         {availableLists.map(l => <option key={l.id} value={l.id} className="bg-slate-900 text-white">{l.name}</option>)}
                       </select>
                     </div>
                   )}
                   <div className="pt-4 flex items-center justify-end space-x-3 border-t border-white/5">
-                    <button onClick={handleCancelIntegration} className="px-4 py-2 text-sm font-medium text-slate-400 hover:text-white rounded-lg">Cancel</button>
-                    <button disabled={!selectedList} onClick={handleAddMapping} className="flex items-center px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg disabled:opacity-50"><CheckCircle2 className="h-4 w-4 mr-2" /> Add to Weaver</button>
+                    <button onClick={handleCancelIntegration} className="px-4 py-2 text-sm font-medium text-slate-400 rounded-lg neon-text-slate neon-interactable neon-interactable-slate">Cancel</button>
+                    <button disabled={!selectedList} onClick={handleAddMapping} className="btn-neon btn-neon-indigo"><CheckCircle2 className="h-4 w-4 mr-2" /> Add to Weaver</button>
                   </div>
                 </div>
               </div>
@@ -2169,11 +2290,45 @@
           <div className="min-h-screen bg-slate-950 font-sans text-slate-100 relative">
             <WebNestBackground opacity={0.35} />
 
-            {/* Change Connection / Onboarding Modal */}
+            {/* Dimension Warp Splash Screen */}
+            {warpStage !== 'idle' && (
+              <div className="fixed inset-0 z-[99999] pointer-events-none flex flex-col items-center justify-center overflow-hidden">
+                
+                {/* Main Dark Background - fades out during 'fade' */}
+                <div className={`absolute inset-0 bg-slate-950 transition-opacity ${warpStage === 'fade' ? 'opacity-0 duration-[1500ms] ease-in-out' : 'opacity-100 duration-300'}`}></div>
+
+                {/* The exploding bright light core (Behind Spider) */}
+                <div className={`absolute rounded-full transition-all ease-in-out ${warpStage === 'flash' || warpStage === 'fade' ? 'w-[150vw] h-[150vw] bg-indigo-100 blur-[100px] opacity-100 duration-[400ms]' : 'w-[20vw] h-[20vw] bg-indigo-600/20 blur-[80px] opacity-100 animate-pulse duration-0'}`}></div>
+
+                {/* Spider and Rings - fades out during 'fade' */}
+                <div className={`relative flex items-center justify-center transition-opacity ${warpStage === 'fade' ? 'opacity-0 duration-[1000ms] ease-in-out' : 'opacity-100'}`}>
+                    <div className={`absolute rounded-full border transition-all animate-[spin_4s_linear_infinite] ${warpStage === 'flash' || warpStage === 'fade' ? 'w-[120vw] h-[120vw] border-indigo-100/80 duration-[400ms]' : 'w-[40vw] h-[40vw] border-indigo-500/20 duration-0'}`}></div>
+                    <div className={`absolute rounded-full border transition-all animate-[spin_3s_linear_infinite_reverse] ${warpStage === 'flash' || warpStage === 'fade' ? 'w-[90vw] h-[90vw] border-indigo-100/90 duration-[400ms]' : 'w-[30vw] h-[30vw] border-indigo-400/30 duration-0'}`}></div>
+                    <div className={`absolute rounded-full border transition-all animate-[spin_2s_linear_infinite] ${warpStage === 'flash' || warpStage === 'fade' ? 'w-[60vw] h-[60vw] border-white duration-[400ms]' : 'w-[20vw] h-[20vw] border-indigo-300/40 duration-0'}`}></div>
+                    
+                    <div className={`relative p-8 rounded-full border-2 transition-all duration-[400ms] ${warpStage === 'flash' || warpStage === 'fade' ? 'border-white shadow-[0_0_150px_rgba(255,255,255,1)] bg-indigo-400' : 'bg-slate-900 border-indigo-500 shadow-[0_0_100px_rgba(99,102,241,1)]'}`}>
+                      <SpiderNetworkIcon className={`h-24 w-24 transition-colors duration-[400ms] ${warpStage === 'flash' || warpStage === 'fade' ? 'text-white drop-shadow-[0_0_10px_rgba(255,255,255,1)]' : 'text-indigo-400'} ${warpStage === 'weaving' ? 'animate-pulse' : ''}`} />
+                    </div>
+                </div>
+
+                {/* Text Elements - fades out during 'flash' */}
+                <div className={`relative mt-12 flex flex-col items-center transition-opacity duration-300 ${warpStage === 'flash' || warpStage === 'fade' ? 'opacity-0' : 'opacity-100'}`}>
+                  <h2 className="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-emerald-400 tracking-[0.2em] animate-pulse">
+                    Weaving Dimension
+                  </h2>
+                  <p className="mt-4 text-indigo-300/70 font-mono text-sm tracking-widest uppercase">Synchronizing Neural Link...</p>
+                </div>
+                
+                {/* Overpowering Light Wash - blends the screen brightly, then fades */}
+                <div className={`absolute inset-0 transition-opacity pointer-events-none mix-blend-screen bg-[radial-gradient(circle_at_center,rgba(255,255,255,1)_0%,rgba(199,210,254,0.6)_40%,rgba(99,102,241,0)_100%)] ${warpStage === 'flash' ? 'opacity-100 duration-[400ms] ease-in' : warpStage === 'fade' ? 'opacity-0 duration-[1500ms] ease-out' : 'opacity-0 duration-0 hidden'}`}></div>
+              </div>
+            )}
+
+            {/* Change Connection Modal */}
             {isSwitchModalOpen && mappedWorkflows.length > 0 && (
               <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
                  <div className="bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden relative animate-in zoom-in-95 duration-200">
-                    <button onClick={handleCancelIntegration} className="absolute top-4 right-4 text-slate-400 hover:text-white z-10"><X /></button>
+                    <button onClick={handleCancelIntegration} className="absolute top-4 right-4 text-slate-400 p-2 rounded z-10 neon-text-slate neon-interactable neon-interactable-slate"><X /></button>
                     <div className="p-6">
                        <h2 className="text-xl font-bold text-white mb-6">Connect New Workflow</h2>
                        {integrationUI}
@@ -2184,7 +2339,7 @@
 
             {/* Drill Down Modal */}
             {selectedDrillDownAssignee && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md onClick={() => setSelectedDrillDownAssignee(null)}">
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md" onClick={() => setSelectedDrillDownAssignee(null)}>
                  {renderAssigneeDrillDown(selectedDrillDownAssignee)}
               </div>
             )}
@@ -2195,7 +2350,7 @@
                 <div className="bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl w-full max-w-7xl h-[85vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
                    <div className="p-5 border-b border-slate-700 flex justify-between items-center bg-slate-800/50 shrink-0">
                       <h2 className="text-xl font-bold text-white flex items-center"><ListTodo className="mr-3 h-6 w-6 text-indigo-400"/> Unified Workspace & Time Ledger</h2>
-                      <button onClick={() => setIsUnifiedModalOpen(false)} className="text-slate-400 hover:text-white transition-colors"><X className="h-6 w-6"/></button>
+                      <button onClick={() => setIsUnifiedModalOpen(false)} className="text-slate-400 p-2 rounded neon-text-slate neon-interactable neon-interactable-slate"><X className="h-6 w-6"/></button>
                    </div>
                    <div className="flex flex-col lg:flex-row flex-1 overflow-hidden">
                       
@@ -2203,9 +2358,9 @@
                       <div className="w-full lg:w-[55%] border-r border-slate-700/80 p-6 flex flex-col bg-slate-900/50">
                          <h3 className="text-sm font-semibold text-slate-400 mb-4 uppercase tracking-wider flex items-center"><FolderOpen className="h-4 w-4 mr-2"/> Active Hierarchy</h3>
                          <div className="mb-4 space-y-3">
-                            <input type="text" placeholder="Search tasks..." value={taskSearchQuery} onChange={e => setTaskSearchQuery(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
+                            <input type="text" placeholder="Search tasks..." value={taskSearchQuery} onChange={e => setTaskSearchQuery(e.target.value)} className="w-full bg-slate-950/60 border border-transparent rounded-lg p-2.5 text-white text-sm neon-input neon-input-indigo" />
                             <label className="flex items-center space-x-2 text-sm text-slate-300 cursor-pointer w-max select-none">
-                               <input type="checkbox" checked={showMyTasksOnly} onChange={e => setShowMyTasksOnly(e.target.checked)} className="rounded border-slate-700 bg-slate-900/50 text-indigo-600 focus:ring-indigo-500 w-4 h-4" />
+                               <input type="checkbox" checked={showMyTasksOnly} onChange={e => setShowMyTasksOnly(e.target.checked)} className="rounded border-transparent bg-slate-900/50 text-indigo-600 w-4 h-4 neon-input neon-input-indigo" />
                                <span>Show my tasks only</span>
                             </label>
                          </div>
@@ -2236,17 +2391,26 @@
                                   
                                   return (
                                      <div key={task.id} className="mb-2">
-                                        <div onClick={() => setSelectedTaskIdForTime(isSelected ? '' : task.id)} className={`p-3 rounded-lg border flex justify-between items-center cursor-pointer transition-all ${isSelected ? 'bg-indigo-600/20 border-indigo-500 shadow-[0_0_15px_rgba(99,102,241,0.2)]' : 'bg-slate-800/40 border-slate-700/50 hover:border-slate-500'}`}>
+                                        <div onClick={() => setSelectedTaskIdForTime(isSelected ? '' : task.id)} className={`p-3 rounded-lg border flex justify-between items-center cursor-pointer transition-all group ${isSelected ? 'bg-indigo-600/20 border-indigo-500 shadow-[0_0_15px_rgba(99,102,241,0.2)]' : 'bg-slate-800/40 border-slate-700/50 hover:border-indigo-500 hover:shadow-[0_0_10px_rgba(99,102,241,0.3)]'}`}>
                                            <div className="flex items-center space-x-3 min-w-0 flex-1 mr-4">
                                               {hasSubtasks ? (
-                                                <button onClick={(e) => { e.stopPropagation(); toggleTaskExpand(task.id); }} className="p-0.5 text-slate-400 hover:text-white rounded flex-shrink-0">
+                                                <button onClick={(e) => { e.stopPropagation(); toggleTaskExpand(task.id); }} className="p-0.5 text-slate-400 rounded flex-shrink-0 neon-text-indigo">
                                                    <ChevronRight className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
                                                 </button>
                                               ) : (
                                                 <div className="w-5 h-4 flex-shrink-0" />
                                               )}
                                               <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: task.status?.color || '#cbd5e1' }} />
-                                              <div className={`text-sm font-medium truncate ${isSelected ? 'text-indigo-100' : 'text-slate-200'}`} title={task.name}>{task.name}</div>
+                                              
+                                              {/* Truncated Name with Tooltip logic */}
+                                              <div className="relative min-w-0 flex-1">
+                                                 <span className={`block text-sm font-medium truncate ${isSelected ? 'text-indigo-100' : 'text-slate-200'}`}>{task.name}</span>
+                                                 <div className="absolute left-0 bottom-full mb-2 hidden group-hover:block z-50 bg-slate-800 text-slate-100 text-xs px-3 py-1.5 rounded border border-slate-700 shadow-xl whitespace-normal break-words max-w-md pointer-events-none">
+                                                    {task.name}
+                                                    <div className="absolute top-full left-4 border-[5px] border-transparent border-t-slate-800"></div>
+                                                 </div>
+                                              </div>
+
                                            </div>
                                            <div className="text-xs font-medium bg-slate-950/60 px-2 py-1 rounded-md text-slate-400 shrink-0 border border-white/5">
                                               {loggedMs > 0 ? `${(loggedMs / 3600000).toFixed(1)}h` : '0h'}
@@ -2293,14 +2457,14 @@
                               {selectedTaskIdForTime ? "Task Time Entries" : (user?.isMock ? "Local Live Feed" : "Global Live Feed")}
                            </h3>
                            {selectedTaskIdForTime && (
-                              <button onClick={() => setSelectedTaskIdForTime('')} className="text-[10px] uppercase font-bold text-slate-500 hover:text-indigo-400 bg-slate-800 px-2 py-0.5 rounded transition-colors border border-slate-700 flex items-center">
+                              <button onClick={() => setSelectedTaskIdForTime('')} className="text-[10px] uppercase font-bold text-slate-500 bg-slate-800 px-2 py-0.5 rounded transition-colors border border-transparent flex items-center neon-text-indigo neon-interactable neon-interactable-indigo">
                                  <X className="w-3 h-3 mr-1"/> Clear Selection
                               </button>
                            )}
                         </div>
                         <button 
                            onClick={() => setIsLogFormOpen(!isLogFormOpen)} 
-                           className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${isLogFormOpen ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600' : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-md'}`}
+                           className={`btn-neon btn-neon-sm ${isLogFormOpen ? 'btn-neon-slate' : 'btn-neon-indigo'}`}
                         >
                            {isLogFormOpen ? <><X className="w-3.5 h-3.5 mr-1" /> Close</> : <><Plus className="w-3.5 h-3.5 mr-1" /> Log Time</>}
                         </button>
@@ -2317,24 +2481,24 @@
                            <div className="mb-4 grid grid-cols-1 sm:grid-cols-3 gap-4">
                               <div>
                                  <label className="text-xs text-slate-400 font-medium mb-1.5 block">Date</label>
-                                 <input type="date" value={timeEntryDate} onChange={e => setTimeEntryDate(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-shadow" />
+                                 <input type="date" value={timeEntryDate} onChange={e => setTimeEntryDate(e.target.value)} className="w-full bg-slate-950/60 border border-transparent rounded-lg p-2.5 text-white text-sm neon-input neon-input-indigo" />
                               </div>
                               <div>
                                  <label className="text-xs text-slate-400 font-medium mb-1.5 block">Hours</label>
-                                 <input type="number" step="0.1" value={timeEntryHours} onChange={e => setTimeEntryHours(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-shadow" placeholder="e.g. 2.5" />
+                                 <input type="number" step="0.1" value={timeEntryHours} onChange={e => setTimeEntryHours(e.target.value)} className="w-full bg-slate-950/60 border border-transparent rounded-lg p-2.5 text-white text-sm neon-input neon-input-indigo" placeholder="e.g. 2.5" />
                               </div>
                               <div>
                                  <label className="text-xs text-slate-400 font-medium mb-1.5 block">Assignee</label>
-                                 <select value={timeAssignee || user?.name || ''} onChange={e => setTimeAssignee(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-shadow">
+                                 <select value={timeAssignee || user?.name || ''} onChange={e => setTimeAssignee(e.target.value)} className="w-full bg-slate-950/60 border border-transparent rounded-lg p-2.5 text-white text-sm neon-input neon-input-indigo">
                                     {workspaceUsers.map(u => <option key={u} value={u}>{u}</option>)}
                                  </select>
                               </div>
                            </div>
                            <div className="mb-4">
                               <label className="text-xs text-slate-400 font-medium mb-1.5 block">Description / Note</label>
-                              <input type="text" value={timeEntryNote} onChange={e => setTimeEntryNote(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-shadow" placeholder="What did you work on?" />
+                              <input type="text" value={timeEntryNote} onChange={e => setTimeEntryNote(e.target.value)} className="w-full bg-slate-950/60 border border-transparent rounded-lg p-2.5 text-white text-sm neon-input neon-input-indigo" placeholder="What did you work on?" />
                            </div>
-                           <button onClick={() => { handleLogTime(); setIsLogFormOpen(false); }} disabled={!selectedTaskIdForTime || !timeEntryHours} className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:hover:bg-indigo-600 text-white rounded-lg p-2.5 text-sm font-medium transition-colors shadow-lg">
+                           <button onClick={() => { handleLogTime(); setIsLogFormOpen(false); }} disabled={!selectedTaskIdForTime || !timeEntryHours} className="w-full btn-neon btn-neon-indigo mt-2">
                               Commit Time Entry
                            </button>
                         </div>
@@ -2368,7 +2532,7 @@
                                               </div>
                                               <div className="flex items-center gap-2 shrink-0">
                                                 <span className="text-emerald-400 font-bold bg-emerald-500/10 px-2 py-1 rounded text-sm border border-emerald-500/20">+{entry.ms / 3600000}h</span>
-                                                <button onClick={(e) => { e.stopPropagation(); handleDeleteTimeEntry(entry); }} className="text-slate-500 hover:text-red-400 p-1.5 rounded-md hover:bg-red-500/10 transition-colors"><Trash2 className="w-4 h-4" /></button>
+                                                <button onClick={(e) => { e.stopPropagation(); handleDeleteTimeEntry(entry); }} className="text-slate-500 p-1.5 rounded-md neon-text-rose neon-interactable neon-interactable-rose"><Trash2 className="w-4 h-4" /></button>
                                               </div>
                                            </div>
                                            {entry.note && <div className="text-slate-300 bg-slate-900/80 p-2.5 rounded-lg text-sm border border-white/5 italic mt-2">"{entry.note}"</div>}
@@ -2390,19 +2554,22 @@
                 <div className="bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden animate-in zoom-in-95">
                    <div className="flex items-center justify-between p-5 border-b border-slate-700/80 bg-slate-800/50">
                      <h2 className="text-lg font-bold text-white flex items-center gap-2"><Calendar className="w-5 h-5 text-indigo-400" /> Sprint Capacity Settings</h2>
-                     <button onClick={() => setIsBlockerModalOpen(false)} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
+                     <button onClick={() => setIsBlockerModalOpen(false)} className="p-1.5 rounded-lg text-slate-400 neon-text-slate neon-interactable neon-interactable-slate"><X className="w-5 h-5" /></button>
                    </div>
                    <div className="p-5 space-y-6">
                      <div className="bg-slate-900/60 p-4 rounded-xl border border-white/5 space-y-4">
-                        <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Daily Working Hours</h3>
+                        <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider flex items-center justify-between">
+                           Daily Working Hours
+                           <span className="text-[10px] text-indigo-400 font-bold bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20">List-Specific</span>
+                        </h3>
                         <div className="grid grid-cols-2 gap-4">
                           <div>
                              <label className="block text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider font-semibold">Developers</label>
-                             <input type="number" min="1" max="24" value={devHoursPerDay} onChange={e => { const val = e.target.value; setDevHoursPerDay(val); const num = Number(val); if(!isNaN(num) && val !== '') saveSettings({ devHoursPerDay: num }); }} className="w-full bg-slate-950/60 border border-slate-700/60 rounded-lg px-3 py-2 text-sm text-white outline-none" />
+                             <input type="number" min="1" max="24" value={devHoursPerDay} onChange={e => { const val = e.target.value; setDevHoursPerDay(val); const num = Number(val); if(!isNaN(num) && val !== '') saveSettings({ devHoursPerDay: num }); }} className="w-full bg-slate-950/60 border border-transparent rounded-lg px-3 py-2 text-sm text-white neon-input neon-input-indigo" />
                           </div>
                           <div>
                              <label className="block text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider font-semibold">QA Resources</label>
-                             <input type="number" min="1" max="24" value={qaHoursPerDay} onChange={e => { const val = e.target.value; setQaHoursPerDay(val); const num = Number(val); if(!isNaN(num) && val !== '') saveSettings({ qaHoursPerDay: num }); }} className="w-full bg-slate-950/60 border border-slate-700/60 rounded-lg px-3 py-2 text-sm text-white outline-none" />
+                             <input type="number" min="1" max="24" value={qaHoursPerDay} onChange={e => { const val = e.target.value; setQaHoursPerDay(val); const num = Number(val); if(!isNaN(num) && val !== '') saveSettings({ qaHoursPerDay: num }); }} className="w-full bg-slate-950/60 border border-transparent rounded-lg px-3 py-2 text-sm text-white neon-input neon-input-indigo" />
                           </div>
                         </div>
                      </div>
@@ -2413,9 +2580,9 @@
                        ) : (
                          <ul className="space-y-2 max-h-40 overflow-y-auto pr-1">
                            {dateBlockers.map(b => (
-                             <li key={b.id} className="flex items-center justify-between bg-slate-900/60 p-3 rounded-xl border border-white/5">
+                             <li key={b.id} className="flex items-center justify-between bg-slate-900/60 p-3 rounded-xl border border-white/5 group">
                                 <div className="flex flex-col"><span className="text-sm font-semibold text-slate-200">{b.remark} <span className="text-slate-400 font-normal">({b.days} day{b.days > 1 ? 's' : ''})</span></span>{b.remark === 'Leave' && <span className="text-xs text-indigo-400 font-medium mt-0.5">{b.assignee}</span>}</div>
-                                <button onClick={() => { const newBlockers = dateBlockers.filter(x => x.id !== b.id); setDateBlockers(newBlockers); saveSettings({ dateBlockers: newBlockers }); logTransaction('Blocker Removed', `Removed ${b.remark} blocker`, 'trash'); }} className="text-slate-500 hover:text-red-400 p-1.5 rounded-md hover:bg-red-500/10 transition-colors"><Trash2 className="w-4 h-4" /></button>
+                                <button onClick={() => { const newBlockers = dateBlockers.filter(x => x.id !== b.id); setDateBlockers(newBlockers); saveSettings({ dateBlockers: newBlockers }); logTransaction('Blocker Removed', `Removed ${b.remark} blocker`, 'trash'); }} className="text-slate-500 p-1.5 rounded-md neon-text-rose neon-interactable neon-interactable-rose"><Trash2 className="w-4 h-4" /></button>
                              </li>
                            ))}
                          </ul>
@@ -2424,10 +2591,10 @@
                      <div className="bg-slate-900/60 p-4 rounded-xl border border-white/5 space-y-4">
                         <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Add New Blocker</h3>
                         <div className="grid grid-cols-2 gap-4">
-                          <div><label className="block text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider font-semibold">No. of Days</label><input type="number" min="1" value={newBlockerDays} onChange={e => setNewBlockerDays(e.target.value)} className="w-full bg-slate-950/60 border border-slate-700/60 rounded-lg px-3 py-2 text-sm text-white outline-none" /></div>
+                          <div><label className="block text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider font-semibold">No. of Days</label><input type="number" min="1" value={newBlockerDays} onChange={e => setNewBlockerDays(e.target.value)} className="w-full bg-slate-950/60 border border-transparent rounded-lg px-3 py-2 text-sm text-white neon-input neon-input-indigo" /></div>
                           <div>
                             <label className="block text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider font-semibold">Remarks</label>
-                            <select value={newBlockerRemark} onChange={e => setNewBlockerRemark(e.target.value)} className="w-full bg-slate-950/60 border border-slate-700/60 rounded-lg px-3 py-2 text-sm text-white outline-none cursor-pointer">
+                            <select value={newBlockerRemark} onChange={e => setNewBlockerRemark(e.target.value)} className="w-full bg-slate-950/60 border border-transparent rounded-lg px-3 py-2 text-sm text-white neon-input neon-input-indigo">
                               <option value="Holiday">Holiday</option><option value="Company Event">Company Event</option><option value="Leave">Leave</option>
                             </select>
                           </div>
@@ -2435,12 +2602,12 @@
                         {newBlockerRemark === 'Leave' && (
                           <div>
                             <label className="block text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider font-semibold">Team Member</label>
-                            <select value={newBlockerAssignee || (assigneesList[0]?.username || '')} onChange={e => setNewBlockerAssignee(e.target.value)} className="w-full bg-slate-950/60 border border-slate-700/60 rounded-lg px-3 py-2 text-sm text-white outline-none cursor-pointer">
+                            <select value={newBlockerAssignee || (assigneesList[0]?.username || '')} onChange={e => setNewBlockerAssignee(e.target.value)} className="w-full bg-slate-950/60 border border-transparent rounded-lg px-3 py-2 text-sm text-white neon-input neon-input-indigo">
                               {assigneesList.map(a => <option key={a.username} value={a.username}>{a.username}</option>)}
                             </select>
                           </div>
                         )}
-                        <button onClick={() => { if (!newBlockerDays || newBlockerDays <= 0) return; const newBlocker = { id: Date.now().toString(), days: parseInt(newBlockerDays), remark: newBlockerRemark, assignee: newBlockerRemark === 'Leave' ? (newBlockerAssignee || assigneesList[0]?.username) : null }; const newBlockers = [...dateBlockers, newBlocker]; setDateBlockers(newBlockers); saveSettings({ dateBlockers: newBlockers }); logTransaction('Blocker Added', `${newBlockerDays} day(s) for ${newBlockerRemark}`, 'info'); setNewBlockerDays(1); }} className="w-full flex items-center justify-center bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors">
+                        <button onClick={() => { if (!newBlockerDays || newBlockerDays <= 0) return; const newBlocker = { id: Date.now().toString(), days: parseInt(newBlockerDays), remark: newBlockerRemark, assignee: newBlockerRemark === 'Leave' ? (newBlockerAssignee || assigneesList[0]?.username) : null }; const newBlockers = [...dateBlockers, newBlocker]; setDateBlockers(newBlockers); saveSettings({ dateBlockers: newBlockers }); logTransaction('Blocker Added', `${newBlockerDays} day(s) for ${newBlockerRemark}`, 'info'); setNewBlockerDays(1); }} className="w-full btn-neon btn-neon-indigo mt-4">
                           <Plus className="w-4 h-4 mr-1.5" /> Add Date Blocker
                         </button>
                      </div>
@@ -2457,14 +2624,14 @@
                     <span className="ml-2 text-xl font-bold tracking-tight text-white">Weaver</span>
                   </div>
                   <div className="flex items-center space-x-4">
-                    <button onClick={() => { setIsNotificationsOpen(!isNotificationsOpen); setVisibleTxCount(10); }} className={`text-slate-400 hover:text-white transition-colors relative ${isNotificationsOpen ? 'text-white' : ''}`}>
+                    <button onClick={() => { setIsNotificationsOpen(!isNotificationsOpen); setVisibleTxCount(10); }} className={`text-slate-400 transition-colors relative neon-text-indigo ${isNotificationsOpen ? 'text-white' : ''}`}>
                       <Bell className="h-5 w-5" />
                       {transactions.length > 0 && <span className="absolute -top-1 -right-1 flex h-3 w-3"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span><span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500 border border-slate-950"></span></span>}
                     </button>
                     <div className="h-8 w-8 rounded-full bg-indigo-950/50 flex items-center justify-center overflow-hidden border border-white/10 cursor-pointer">
                       <img src={user.avatar} alt={user.name} className="h-full w-full object-cover" />
                     </div>
-                    <button onClick={handleLogout} className="flex items-center text-sm font-medium text-slate-400 hover:text-white transition-colors"><LogOut className="h-4 w-4 mr-1" /> Sign out</button>
+                    <button onClick={handleLogout} className="flex items-center text-sm font-medium text-slate-400 transition-colors neon-text-slate"><LogOut className="h-4 w-4 mr-1" /> Sign out</button>
                   </div>
                 </div>
               </div>
@@ -2509,7 +2676,7 @@
                 </div>
                 {transactions.length > visibleTxCount && (
                   <div className="p-3 bg-slate-800/80 border-t border-slate-700/80 text-center shrink-0">
-                    <button onClick={() => setVisibleTxCount(prev => prev + 10)} className="text-xs font-semibold text-indigo-400 hover:text-indigo-300 transition-colors py-1.5 px-4 rounded-md hover:bg-indigo-500/10 w-full">View More Logs</button>
+                    <button onClick={() => setVisibleTxCount(prev => prev + 10)} className="text-xs font-semibold text-slate-400 py-1.5 px-4 rounded-md neon-text-indigo neon-interactable neon-interactable-indigo w-full">View More Logs</button>
                   </div>
                 )}
               </div>
@@ -2534,13 +2701,13 @@
                     <div className={`h-2 w-2 rounded-full mr-2 ${isAutoSyncing ? 'bg-emerald-400 animate-pulse' : 'bg-emerald-500/50'}`}></div> 
                     Synced: {new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: 'numeric', second: 'numeric' }).format(new Date(mappedWorkflows[0].lastSynced))}
                     {clickUpToken && (
-                      <button onClick={runSyncSequence} disabled={isAutoSyncing} className="ml-2 pl-2 border-l border-emerald-500/30 text-emerald-500 hover:text-emerald-300 transition-colors disabled:opacity-50" title="Sync Now">
+                      <button onClick={runSyncSequence} disabled={isAutoSyncing} className="ml-2 pl-2 border-l border-emerald-500/30 transition-colors disabled:opacity-50 neon-text-emerald" title="Sync Now">
                         <RefreshCw className={`h-3.5 w-3.5 ${isAutoSyncing ? 'animate-spin' : ''}`} />
                       </button>
                     )}
                   </div>
                   {!clickUpToken && mappedWorkflows.length > 0 && (
-                    <button onClick={handleConnectClickUp} className="flex items-center px-3 py-1 rounded-full border bg-rose-900/30 border-rose-500/30 text-rose-400 hover:bg-rose-900/50 hover:text-rose-300 text-xs font-medium cursor-pointer transition-colors" title="Your API token was lost from memory. Please reconnect to resume syncing.">
+                    <button onClick={handleConnectClickUp} className="flex items-center px-3 py-1 rounded-full border bg-rose-900/30 border-rose-500/30 text-rose-400 text-xs font-medium cursor-pointer transition-colors neon-text-rose neon-interactable neon-interactable-rose" title="Your API token was lost from memory. Please reconnect to resume syncing.">
                       <AlertTriangle className="h-3 w-3 mr-1.5" /> Reconnect
                     </button>
                   )}
@@ -2552,16 +2719,15 @@
                 </h1>
                 <p className="text-slate-400 text-sm mt-1">Dashboard metrics are dynamically synced and globally filtered.</p>
               </div>
-              <div className="flex flex-col sm:flex-row gap-3">
-                <button onClick={handleExportCSV} className="flex items-center justify-center px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg shadow-lg transition-colors" title="Export currently filtered tasks to CSV">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                  Export CSV
+              <div className="flex flex-row flex-wrap items-center gap-3">
+                <button onClick={handleExportCSV} className="btn-neon btn-neon-emerald" title="Export currently filtered tasks to CSV">
+                  <Download className="mr-1.5 h-3.5 w-3.5" /> CSV
                 </button>
-                <button onClick={handleConnectClickUp} className="flex items-center justify-center px-4 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white text-sm font-medium rounded-lg shadow-lg transition-colors">
-                  <Settings className="h-4 w-4 mr-2" /> Connection
+                <button onClick={handleConnectClickUp} className="btn-neon btn-neon-slate" title="Connection Settings">
+                  <Settings className="mr-1.5 h-3.5 w-3.5" /> Sync
                 </button>
-                <button onClick={() => setIsUnifiedModalOpen(true)} className="flex items-center justify-center px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg shadow-lg transition-colors">
-                  <ListTodo className="h-4 w-4 mr-2" /> Manage Tasks & Time
+                <button onClick={() => setIsUnifiedModalOpen(true)} className="btn-neon btn-neon-indigo" title="Manage Tasks & Time">
+                  <ListTodo className="mr-1.5 h-3.5 w-3.5" /> Tasks
                 </button>
                 <div className="flex items-center bg-slate-900/40 backdrop-blur-md p-1.5 rounded-lg border border-white/5">
                   <span className="text-sm text-slate-400 font-medium px-2 shrink-0">Global Filter:</span>
@@ -2572,18 +2738,18 @@
                           if (e.target.value === 'tags' && uniqueTags.length > 0) setSelectedTagFilter(uniqueTags[0]);
                           if (e.target.value === 'assignees' && uniqueAssignees.length > 0) setSelectedAssigneeFilter(uniqueAssignees[0]);
                         }} 
-                        className={`bg-slate-900/60 border border-white/10 rounded-md px-3 py-1.5 text-sm text-white outline-none ${completionFilterType !== 'none' ? 'mr-2' : ''}`}
+                        className={`bg-slate-900/60 border border-transparent rounded-md px-3 py-1.5 text-sm text-white neon-input neon-input-indigo ${completionFilterType !== 'none' ? 'mr-2' : ''}`}
                       >
                         <option value="none">All Data</option><option value="tags">By Tag</option><option value="assignees">By Assignee</option>
                       </select>
                       {completionFilterType === 'tags' && (
-                        <select value={selectedTagFilter} onChange={(e) => setSelectedTagFilter(e.target.value)} className="bg-indigo-950/30 border border-indigo-500/30 rounded-md px-3 py-1.5 text-sm text-indigo-100 outline-none max-w-[150px]">
+                        <select value={selectedTagFilter} onChange={(e) => setSelectedTagFilter(e.target.value)} className="bg-indigo-950/30 border border-transparent rounded-md px-3 py-1.5 text-sm text-indigo-100 neon-input neon-input-indigo max-w-[150px]">
                           {uniqueTags.length === 0 && <option value="">No tags</option>}
                           {uniqueTags.map(tag => <option key={tag} value={tag}>{tag}</option>)}
                         </select>
                       )}
                       {completionFilterType === 'assignees' && (
-                        <select value={selectedAssigneeFilter} onChange={(e) => setSelectedAssigneeFilter(e.target.value)} className="bg-indigo-950/30 border border-indigo-500/30 rounded-md px-3 py-1.5 text-sm text-indigo-100 outline-none max-w-[150px]">
+                        <select value={selectedAssigneeFilter} onChange={(e) => setSelectedAssigneeFilter(e.target.value)} className="bg-indigo-950/30 border border-transparent rounded-md px-3 py-1.5 text-sm text-indigo-100 neon-input neon-input-indigo max-w-[150px]">
                           {uniqueAssignees.length === 0 && <option value="">No assignees</option>}
                           {uniqueAssignees.map(a => <option key={a} value={a}>{a}</option>)}
                         </select>
@@ -2609,7 +2775,7 @@
                           <div className="text-lg font-semibold text-white flex items-center flex-wrap gap-2">
                             Sprint Completion
                             <MetricTooltip align="left" text="Visual classification of your entire scope into Backlog, Active, and Resolved." formula="Segments represent the proportion of task counts in each status category.">
-                              <InfoIcon className="h-4 w-4 text-slate-500 hover:text-indigo-400 transition-colors" />
+                              <InfoIcon className="h-4 w-4 text-slate-500 transition-colors" />
                             </MetricTooltip>
                           </div>
                         </div>
@@ -2647,7 +2813,7 @@
                           <div className="flex items-start space-x-4">
                             <div className="bg-blue-500/10 p-2.5 rounded-lg border border-blue-500/20"><Box className="h-5 w-5 text-blue-400" /></div>
                             <div>
-                              <div className="text-sm font-medium text-slate-400 flex items-center gap-1">Backlog <MetricTooltip text="Tasks not started"><InfoIcon className="h-3 w-3 text-slate-500 hover:text-indigo-400" /></MetricTooltip></div>
+                              <div className="text-sm font-medium text-slate-400 flex items-center gap-1">Backlog <MetricTooltip text="Tasks not started"><InfoIcon className="h-3 w-3 text-slate-500" /></MetricTooltip></div>
                               <p className="text-2xl font-extrabold text-white mt-0.5">{backlogBreakdown.total}</p>
                             </div>
                           </div>
@@ -2667,7 +2833,7 @@
                           <div className="flex items-start space-x-4">
                             <div className="bg-indigo-500/10 p-2.5 rounded-lg border border-indigo-500/20"><CheckSquare className="h-5 w-5 text-indigo-400" /></div>
                             <div>
-                              <div className="text-sm font-medium text-slate-400 flex items-center gap-1">Active Tasks <MetricTooltip text="Tasks in progress"><InfoIcon className="h-3 w-3 text-slate-500 hover:text-indigo-400" /></MetricTooltip></div>
+                              <div className="text-sm font-medium text-slate-400 flex items-center gap-1">Active Tasks <MetricTooltip text="Tasks in progress"><InfoIcon className="h-3 w-3 text-slate-500" /></MetricTooltip></div>
                               <p className="text-2xl font-extrabold text-white mt-0.5">{activeBreakdown.total}</p>
                             </div>
                           </div>
@@ -2687,7 +2853,7 @@
                           <div className="flex items-start space-x-4">
                             <div className="bg-emerald-500/10 p-2.5 rounded-lg border border-emerald-500/20"><CheckCircle2 className="h-5 w-5 text-emerald-400" /></div>
                             <div>
-                              <div className="text-sm font-medium text-slate-400 flex items-center gap-1">Total Resolved <MetricTooltip text="Completed tasks"><InfoIcon className="h-3 w-3 text-slate-500 hover:text-indigo-400" /></MetricTooltip></div>
+                              <div className="text-sm font-medium text-slate-400 flex items-center gap-1">Total Resolved <MetricTooltip text="Completed tasks"><InfoIcon className="h-3 w-3 text-slate-500" /></MetricTooltip></div>
                               <p className="text-2xl font-extrabold text-white mt-0.5">{completedBreakdown.total}</p>
                             </div>
                           </div>
@@ -2719,7 +2885,7 @@
                           <div className="text-lg font-semibold text-white flex items-center flex-wrap gap-2">
                             Sprint Burndown
                             <MetricTooltip align="right" text="Tracks remaining task effort versus your ideal timeline." formula="Y-Axis: Remaining tracked hours. X-Axis: Elapsed time between earliest Start Date and latest Due Date.">
-                              <InfoIcon className="h-4 w-4 text-slate-500 hover:text-indigo-400 transition-colors" />
+                              <InfoIcon className="h-4 w-4 text-slate-500 transition-colors" />
                             </MetricTooltip>
                           </div>
                         </div>
@@ -2817,7 +2983,7 @@
                           <div className="text-lg font-semibold text-white flex items-center flex-wrap gap-2">
                             Effort Burnup (Logged Hours)
                             <MetricTooltip align="left" text="Cumulative tracked hours against realistic capacity." formula="Y-Axis: Total logged hours. Ideal Line: (Developers × Daily Hours) × (Sprint Days - Blockers).">
-                              <InfoIcon className="h-4 w-4 text-slate-500 hover:text-emerald-400 transition-colors" />
+                              <InfoIcon className="h-4 w-4 text-slate-500 transition-colors" />
                             </MetricTooltip>
                           </div>
                         </div>
@@ -2907,7 +3073,7 @@
                         <div className="flex items-center space-x-3 mb-3">
                           <div className="bg-indigo-500/10 p-2.5 rounded-lg border border-indigo-500/20 shrink-0"><Target className="h-6 w-6 text-indigo-400" /></div>
                           <div className="text-lg font-semibold text-white flex items-center gap-2">
-                            Bucket Utilization <MetricTooltip align="left" text="Calculated based on developer capacity vs total scope demand." formula="Total Est Hours ÷ ((Devs × Sprint Days × Dev Hours) - Dev Leaves) × 100"><InfoIcon className="h-4 w-4 text-slate-500 hover:text-indigo-400" /></MetricTooltip>
+                            Bucket Utilization <MetricTooltip align="left" text="Calculated based on developer capacity vs total scope demand." formula="Total Est Hours ÷ ((Devs × Sprint Days × Dev Hours) - Dev Leaves) × 100"><InfoIcon className="h-4 w-4 text-slate-500 transition-colors" /></MetricTooltip>
                           </div>
                         </div>
                         <p className="text-sm text-slate-400 mb-5 leading-relaxed">Measures the total demand of your planned scope against the capacity of your tagged Developer resources.</p>
@@ -2937,7 +3103,7 @@
                         <div className="space-y-4">
                           <div className="flex items-center justify-between">
                             <div className="text-sm font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-2">Capacity Limits <MetricTooltip align="center" text="Available resource limits for the sprint." formula="Resources = Unique Assignees. Duration = Working Days - (Holidays + Events). Click the gear icon to configure."><InfoIcon className="h-3.5 w-3.5 text-slate-500" /></MetricTooltip></div>
-                            <button onClick={() => setIsBlockerModalOpen(true)} className="p-1.5 rounded-lg bg-slate-900/60 hover:bg-indigo-500/20 text-slate-400 hover:text-indigo-300 border border-white/5 transition-all"><Settings className="w-4 h-4" /></button>
+                            <button onClick={() => setIsBlockerModalOpen(true)} className="p-1.5 rounded-lg bg-slate-900/60 border border-white/5 transition-all neon-text-indigo neon-interactable neon-interactable-indigo"><Settings className="w-4 h-4" /></button>
                           </div>
                           <div className="grid grid-cols-1 gap-3">
                             <div className="bg-slate-900/60 p-3.5 rounded-xl border border-white/5 flex items-center justify-between">
@@ -2981,7 +3147,7 @@
                       <div className="flex items-center flex-wrap space-x-3 mb-3">
                         <div className="bg-purple-500/10 p-2.5 rounded-lg border border-purple-500/20 shrink-0"><Target className="h-6 w-6 text-purple-400" /></div>
                         <h2 className="text-lg font-semibold text-white flex items-center flex-wrap gap-2">
-                          Est. Accuracy <MetricTooltip align="left" text="Measures the accuracy of time estimates against actual time spent." formula="100 - (|Actual Duration - Estimated Time| / Estimated Time * 100) for completed tasks."><InfoIcon className="h-4 w-4 text-slate-500 hover:text-indigo-400" /></MetricTooltip>
+                          Est. Accuracy <MetricTooltip align="left" text="Measures the accuracy of time estimates against actual time spent." formula="100 - (|Actual Duration - Estimated Time| / Estimated Time * 100) for completed tasks."><InfoIcon className="h-4 w-4 text-slate-500 transition-colors" /></MetricTooltip>
                         </h2>
                       </div>
                       <p className="text-sm text-slate-400 mb-5 leading-relaxed">Measures how closely the initial time estimates match the actual duration it takes to complete tasks.</p>
@@ -2990,7 +3156,7 @@
 
                     <div className="flex-1 border-t md:border-t-0 md:border-l border-white/5 pt-6 md:pt-0 md:pl-8 lg:pl-12">
                       <div className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4 flex items-center flex-wrap gap-2">
-                        Average Time in Status <MetricTooltip align="center" text="Average time completed tasks spend in intermediate phases." formula="Parses the task's Activity Logs timeline, calculates duration between status changes, and averages it."><InfoIcon className="h-3.5 w-3.5 text-slate-500 hover:text-indigo-400" /></MetricTooltip>
+                        Average Time in Status <MetricTooltip align="center" text="Average time completed tasks spend in intermediate phases." formula="Parses the task's Activity Logs timeline, calculates duration between status changes, and averages it."><InfoIcon className="h-3.5 w-3.5 text-slate-500 transition-colors" /></MetricTooltip>
                       </div>
                       
                       {avgTimeInStatusList.length > 0 ? (
@@ -3023,7 +3189,7 @@
                         const totalAssigned = Object.values(assignee.statusCounts).reduce((s, c) => s + c.count, 0);
 
                         return (
-                          <div key={assignee.username} onClick={() => setSelectedDrillDownAssignee(assignee.username)} className="bg-slate-900/40 backdrop-blur-md p-5 rounded-2xl border border-white/5 flex flex-col justify-between shadow-xl cursor-pointer hover:border-indigo-500/50 hover:bg-slate-800/60 transition-all group">
+                          <div key={assignee.username} onClick={() => setSelectedDrillDownAssignee(assignee.username)} className="bg-slate-900/40 backdrop-blur-md p-5 rounded-2xl border border-white/5 flex flex-col justify-between shadow-xl cursor-pointer hover:bg-slate-800/60 transition-all group neon-interactable neon-interactable-indigo">
                             <div>
                               <div className="flex justify-between items-start mb-4">
                                 <div className="flex items-center gap-3">
@@ -3033,7 +3199,7 @@
                                     <p className="text-xs text-slate-500">{totalAssigned} Assigned Items</p>
                                   </div>
                                 </div>
-                                <select value={userRoles[assignee.username] || 'Developer'} onClick={e => e.stopPropagation()} onChange={(e) => { const val = e.target.value; setUserRoles(p => { const n = {...p, [assignee.username]: val}; saveSettings({userRoles: n}); return n;}); }} className="bg-slate-900/60 border border-white/10 text-indigo-300 text-[10px] font-bold uppercase rounded px-2 py-1 outline-none">
+                                <select value={userRoles[assignee.username] || 'Developer'} onClick={e => e.stopPropagation()} onChange={(e) => { const val = e.target.value; setUserRoles(p => { const n = {...p, [assignee.username]: val}; saveSettings({userRoles: n}); return n;}); }} className="bg-slate-900/60 border border-transparent text-indigo-300 text-[10px] font-bold uppercase rounded px-2 py-1 outline-none neon-input neon-input-indigo">
                                   <option value="Developer">Developer</option><option value="QA">QA</option>
                                 </select>
                               </div>
@@ -3108,7 +3274,7 @@
                 {stalledTasks.length > 0 && (
                   <div className="mb-8 bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl overflow-hidden">
                     <div className="px-6 py-4 border-b border-white/5 bg-slate-900/30 flex justify-between items-center">
-                      <div className="text-sm font-bold text-white flex items-center gap-2"><ClockAlert className="h-4 w-4 text-amber-500" /> Needs Attention <MetricTooltip text="Tasks exceeding estimate"><InfoIcon className="h-3 w-3 text-slate-500" /></MetricTooltip></div>
+                      <div className="text-sm font-bold text-white flex items-center gap-2"><ClockAlert className="h-4 w-4 text-amber-500" /> Needs Attention <MetricTooltip text="Tasks exceeding estimate"><InfoIcon className="h-3 w-3 text-slate-500 transition-colors" /></MetricTooltip></div>
                       <span className="text-[10px] font-bold text-amber-500 border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 rounded uppercase tracking-wider">Stalled</span>
                     </div>
                     <ul className="divide-y divide-white/5">
@@ -3193,7 +3359,7 @@
                               <div className="flex items-center text-xs text-slate-500"><Clock className="h-3 w-3 mr-1" /> Last synced: {new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: 'numeric', second: 'numeric' }).format(new Date(workflow.lastSynced))}</div>
                             </div>
                           </div>
-                          <button onClick={() => removeMapping(workflow.id)} className="text-slate-400 hover:text-red-400 transition-colors p-2 rounded-md hover:bg-red-950/20"><Trash2 className="h-5 w-5" /></button>
+                          <button onClick={() => removeMapping(workflow.id)} className="text-slate-400 p-2 rounded-md neon-text-rose neon-interactable neon-interactable-rose"><Trash2 className="h-5 w-5" /></button>
                         </div>
                       </li>
                     ))}
@@ -3219,7 +3385,7 @@
           <div className="w-full lg:w-1/2 flex items-center justify-center p-8 relative z-20 bg-slate-950/20 backdrop-blur-[4px] border-l border-white/10 shadow-[-20px_0_50px_rgba(0,0,0,0.3)]">
             <div className="w-full max-w-sm space-y-8 bg-slate-900/30 backdrop-blur-2xl p-10 rounded-[2.5rem] border border-white/10 shadow-2xl">
               <div><h2 className="text-3xl font-bold text-white">Welcome back</h2><p className="mt-2 text-sm text-slate-400">Sign in to your account.</p></div>
-              <button onClick={handleGoogleLogin} disabled={isLoggingIn} className="w-full flex items-center justify-center px-4 py-3 border border-slate-700/60 shadow-lg bg-slate-800/80 hover:bg-slate-800 text-sm font-medium text-slate-100 rounded-xl transition-all">
+              <button onClick={handleGoogleLogin} disabled={isLoggingIn} className="w-full btn-neon btn-neon-indigo mt-4">
                 {isLoggingIn ? <span>Connecting...</span> : <span>Sign in with Google</span>}
               </button>
               
