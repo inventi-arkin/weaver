@@ -88,13 +88,8 @@
       box-shadow: 0 0 5px #6366f1, 0 0 15px #6366f1, 0 0 30px #6366f1 !important;
       outline: none;
     }
-    .neon-input-rose:focus, .neon-input-rose:hover {
-      border-color: #f43f5e !important;
-      box-shadow: 0 0 5px #f43f5e, 0 0 15px #f43f5e, 0 0 30px #f43f5e !important;
-      outline: none;
-    }
 
-    /* Text & Icon Glow (For transparent utility buttons, chevrons, close X) */
+    /* Text & Icon Glow */
     .neon-text-indigo { transition: all 0.3s ease; }
     .neon-text-indigo:hover, .neon-text-indigo:focus {
       color: #ffffff !important;
@@ -108,19 +103,56 @@
       text-shadow: 0 0 5px #ffffff, 0 0 10px #f43f5e, 0 0 20px #f43f5e !important;
       outline: none;
     }
-    
-    .neon-text-slate { transition: all 0.3s ease; }
-    .neon-text-slate:hover, .neon-text-slate:focus {
-      color: #ffffff !important;
-      text-shadow: 0 0 5px #ffffff, 0 0 10px #64748b, 0 0 20px #64748b !important;
-      outline: none;
-    }
 
     .neon-text-emerald { transition: all 0.3s ease; }
     .neon-text-emerald:hover, .neon-text-emerald:focus {
       color: #ffffff !important;
       text-shadow: 0 0 5px #ffffff, 0 0 10px #10b981, 0 0 20px #10b981 !important;
       outline: none;
+    }
+
+    /* Neon Border / Background Glow for Badges & Icon Buttons */
+    .neon-border-emerald { transition: all 0.3s ease; }
+    .neon-border-emerald:hover {
+      border-color: #10b981 !important;
+      box-shadow: 0 0 10px rgba(16, 185, 129, 0.4), inset 0 0 5px rgba(16, 185, 129, 0.2) !important;
+      color: #34d399 !important;
+    }
+
+    .neon-border-indigo { transition: all 0.3s ease; }
+    .neon-border-indigo:hover {
+      border-color: #6366f1 !important;
+      box-shadow: 0 0 10px rgba(99, 102, 241, 0.4), inset 0 0 5px rgba(99, 102, 241, 0.2) !important;
+      color: #818cf8 !important;
+    }
+
+    .neon-border-rose { transition: all 0.3s ease; }
+    .neon-border-rose:hover {
+      border-color: #f43f5e !important;
+      box-shadow: 0 0 10px rgba(244, 63, 94, 0.4), inset 0 0 5px rgba(244, 63, 94, 0.2) !important;
+      color: #fb7185 !important;
+    }
+
+    .neon-border-amber { transition: all 0.3s ease; }
+    .neon-border-amber:hover {
+      border-color: #f59e0b !important;
+      box-shadow: 0 0 10px rgba(245, 158, 11, 0.4), inset 0 0 5px rgba(245, 158, 11, 0.2) !important;
+      color: #fbbf24 !important;
+    }
+
+    .neon-border-slate { transition: all 0.3s ease; }
+    .neon-border-slate:hover {
+      border-color: #64748b !important;
+      box-shadow: 0 0 10px rgba(100, 116, 139, 0.4), inset 0 0 5px rgba(100, 116, 139, 0.2) !important;
+      color: #e2e8f0 !important;
+    }
+
+    /* Floating Card Lift and Glow */
+    .neon-card { transition: all 0.3s ease; }
+    .neon-card:hover {
+      transform: translateY(-5px);
+      border-color: rgba(99, 102, 241, 0.4) !important;
+      box-shadow: 0 10px 25px -5px rgba(99, 102, 241, 0.2), 0 8px 10px -6px rgba(99, 102, 241, 0.1) !important;
     }
   </style>
 
@@ -183,7 +215,6 @@
     const googleProvider = new GoogleAuthProvider();
     const appId = typeof __app_id !== 'undefined' ? __app_id : 'weaver-default-app';
 
-    // --- Custom SVG Icons & Helpers ---
     const SpiderNetworkIcon = ({ className }) => (
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
         <path d="M12 3 L19 7 L21 14 L17 20 L12 21 L7 20 L3 14 L5 7 Z" strokeWidth="1" strokeDasharray="2 2" opacity="0.3" />
@@ -233,7 +264,7 @@
       return (
         <div className="group relative flex items-center justify-center cursor-help">
           <div className="p-1 -m-1 flex items-center justify-center neon-text-indigo">{children}</div>
-          <div className={`pointer-events-none absolute z-[99999] w-64 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-xl shadow-2xl p-4 ${alignClasses} ${verticalClasses}`}>
+          <div className={`pointer-events-none absolute z-[999999] w-64 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-xl shadow-[0_0_15px_rgba(99,102,241,0.5)] p-4 ${alignClasses} ${verticalClasses}`}>
             <p className="font-semibold text-white leading-snug">{text}</p>
             {formula && (
               <div className="mt-2.5 pt-2.5 border-t border-slate-700/50">
@@ -262,15 +293,15 @@
       const displayHours = hasTimeData ? `${Math.round(spentMs / 3600000)}h / ${Math.round(estimateMs / 3600000)}h` : null;
       
       return (
-        <div className={`transition-all overflow-hidden ${isParent ? 'bg-slate-900/60 border border-white/5 rounded-xl' : 'bg-slate-900/40 rounded-r-lg border-l-2'}`} style={!isParent ? { borderLeftColor: `${themeColor}40` } : {}}>
+        <div className={`transition-all overflow-hidden ${isParent ? 'bg-slate-900/60 border border-white/5 rounded-xl neon-card' : 'bg-slate-900/40 rounded-r-lg border-l-2'}`} style={!isParent ? { borderLeftColor: `${themeColor}40` } : {}}>
           <div className={`flex flex-col p-3 gap-1.5 ${!isParent ? 'pl-4' : ''}`}>
             
             {/* Top Row: Title */}
-            <div className="flex items-start space-x-3 w-full group cursor-help">
+            <div className="flex items-start space-x-3 w-full group cursor-help relative">
               <div className="w-2.5 h-2.5 rounded-full shrink-0 shadow-lg mt-1.5" style={{ backgroundColor: themeColor, boxShadow: `0 0 8px ${themeColor}` }} />
               <div className="relative min-w-0 flex-1">
-                 <span className={`font-semibold block truncate ${isParent ? 'text-slate-100 text-[15px]' : 'text-slate-300 text-sm'}`}>{task.name || 'Unnamed Task'}</span>
-                 <div className="absolute left-0 bottom-full mb-2 hidden group-hover:block z-50 bg-slate-800 text-slate-100 text-xs px-3 py-1.5 rounded border border-slate-700 shadow-xl whitespace-normal break-words max-w-sm pointer-events-none">
+                 <span className={`font-semibold block truncate transition-colors group-hover:text-indigo-300 ${isParent ? 'text-slate-100 text-[15px]' : 'text-slate-300 text-sm'}`}>{task.name || 'Unnamed Task'}</span>
+                 <div className="absolute left-0 bottom-full mb-2 hidden group-hover:block z-[999999] bg-slate-800 text-slate-100 text-xs px-3 py-1.5 rounded border border-slate-700 shadow-[0_0_15px_rgba(99,102,241,0.5)] whitespace-normal break-words max-w-sm pointer-events-none">
                     {task.name}
                     <div className="absolute top-full left-4 border-[5px] border-transparent border-t-slate-800"></div>
                  </div>
@@ -280,7 +311,7 @@
             {/* Bottom Row: Metadata */}
             <div className="flex items-center shrink-0 space-x-3 pl-5 overflow-x-auto overflow-y-hidden py-0.5">
               {hasSubtasks && (
-                <button onClick={() => toggleTaskExpand(task.id)} className="flex items-center space-x-1.5 px-2 py-0.5 rounded bg-indigo-500/10 hover:bg-indigo-500/20 text-[10px] text-indigo-300 font-bold border border-indigo-500/20 transition-colors shrink-0 neon-text-indigo">
+                <button onClick={() => toggleTaskExpand(task.id)} className="flex items-center space-x-1.5 px-2 py-0.5 rounded bg-indigo-500/10 text-[10px] text-indigo-300 font-bold border border-transparent transition-all shrink-0 neon-border-indigo">
                   <span>Subtasks ({relevantSubtasks.length})</span>
                   <ChevronRight className={`h-3 w-3 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
                 </button>
@@ -307,7 +338,7 @@
                 task.assignees && task.assignees.length > 0 ? (
                   <div className="flex -space-x-1.5 shrink-0 ml-auto">
                     {task.assignees.map((assignee, i) => (
-                      <img key={i} src={assignee.profilePicture || `https://ui-avatars.com/api/?name=${encodeURIComponent(assignee.username || 'U')}&background=random`} alt={assignee.username} title={assignee.username} className="w-6 h-6 rounded-full border border-slate-900 bg-slate-800 object-cover relative hover:z-10 hover:scale-110 transition-transform cursor-help" />
+                      <img key={i} src={assignee.profilePicture || `https://ui-avatars.com/api/?name=${encodeURIComponent(assignee.username || 'U')}&background=random`} alt={assignee.username} title={assignee.username} className="w-6 h-6 rounded-full border border-slate-900 bg-slate-800 object-cover relative transition-all hover:z-[99] hover:scale-110 neon-border-indigo cursor-help" />
                     ))}
                   </div>
                 ) : (
@@ -325,7 +356,6 @@
       );
     };
 
-    // --- HTML5 Canvas Background ---
     const WebNestBackground = ({ opacity }) => {
       const canvasRef = useRef(null);
 
@@ -358,7 +388,6 @@
           spiders = [];
           packets = [];
 
-          // Use viewport dimensions for placing webs so they stay in view
           const vWidth = window.innerWidth;
           const vHeight = window.innerHeight;
 
@@ -1820,7 +1849,7 @@
                            <p className="text-sm text-indigo-300 font-medium uppercase tracking-wider">{userRole}</p>
                        </div>
                      </div>
-                     <button onClick={() => setSelectedDrillDownAssignee(null)} className="text-slate-400 p-2 rounded transition-colors neon-text-slate neon-interactable neon-interactable-slate"><X className="w-6 h-6"/></button>
+                     <button onClick={() => setSelectedDrillDownAssignee(null)} className="p-1.5 rounded-lg border border-transparent text-slate-400 transition-all neon-border-slate"><X className="w-6 h-6"/></button>
                  </div>
                  
                  <div className="flex flex-col lg:flex-row flex-1 overflow-hidden">
@@ -1849,7 +1878,7 @@
                                <span className="flex items-center"><div className="w-3 h-0 border-t-2 border-dotted border-blue-400 mr-1.5"></div> Scope</span>
                                <span className="flex items-center text-emerald-400"><div className="w-2 h-2 bg-emerald-500 rounded-full mr-1.5"></div> Logged</span>
                           </div>
-                          <div className="relative h-48 w-full mt-2">
+                          <div className="relative h-48 w-full mt-2 hover:z-[99999]">
                             <div className="absolute left-0 top-0 bottom-6 w-8 flex flex-col justify-between text-xs font-medium text-slate-500 text-right pr-2">
                               <span>{drillMaxBurnupHours}h</span>
                               <span>{Math.round(drillMaxBurnupHours * 0.5)}h</span>
@@ -1858,7 +1887,7 @@
                             <div className="absolute left-10 right-2 top-2 bottom-6 cursor-crosshair"
                                  onMouseMove={(e) => handleChartMouseMove(e, 'drill', drillPoints)}
                                  onMouseLeave={() => setActiveChartHover(null)}>
-                                <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="w-full h-full overflow-visible">
+                                <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="w-full h-full overflow-visible z-10 relative">
                                     <defs>
                                       <linearGradient id="drillGradient" x1="0" y1="0" x2="0" y2="1">
                                         <stop offset="0%" stopColor="#10b981" stopOpacity="0.3" />
@@ -1878,16 +1907,16 @@
                                 
                                 {activeChartHover?.chart === 'drill' && (
                                    <>
-                                     <div className="absolute top-0 bottom-0 w-px bg-emerald-500/50 pointer-events-none" style={{ left: `${activeChartHover.xPct}%` }} />
-                                     <div className="absolute w-3 h-3 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.8)] pointer-events-none transform -translate-x-1/2 -translate-y-1/2 border-2 border-slate-900" style={{ left: `${activeChartHover.xPct}%`, top: `${activeChartHover.yPct}%` }} />
-                                     <div className="absolute pointer-events-none z-20 flex flex-col items-center drop-shadow-lg"
+                                     <div className="absolute top-0 bottom-0 w-px bg-emerald-500/50 pointer-events-none z-20" style={{ left: `${activeChartHover.xPct}%` }} />
+                                     <div className="absolute w-3 h-3 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.8)] pointer-events-none transform -translate-x-1/2 -translate-y-1/2 border-2 border-slate-900 z-20" style={{ left: `${activeChartHover.xPct}%`, top: `${activeChartHover.yPct}%` }} />
+                                     <div className="absolute pointer-events-none z-[999999] flex flex-col items-center drop-shadow-lg"
                                           style={{ 
                                             left: `${activeChartHover.xPct}%`, 
                                             top: `${activeChartHover.yPct}%`,
                                             transform: 'translate(-50%, -100%)',
                                             marginTop: '-8px'
                                           }}>
-                                        <div className="bg-slate-800 border border-emerald-500/50 text-white rounded-lg px-3 py-1.5 shadow-xl whitespace-nowrap flex flex-col items-center">
+                                        <div className="bg-slate-800 border border-emerald-500/50 text-white rounded-lg px-3 py-1.5 shadow-[0_0_15px_rgba(16,185,129,0.5)] whitespace-nowrap flex flex-col items-center">
                                            <span className="font-bold text-[10px] uppercase tracking-wider text-emerald-400 mb-0.5">{new Date(activeChartHover.dateMs).toLocaleDateString()}</span>
                                            <span className="text-xs font-semibold text-slate-100">{Math.max(0, Math.round(activeChartHover.value / 3600000))}h Logged</span>
                                         </div>
@@ -2216,11 +2245,11 @@
                   {clickUpError && (
                     <div className="p-4 bg-red-950/30 border border-red-900/50 rounded-xl text-sm text-red-300">
                       <div className="flex items-start mb-3"><AlertTriangle className="h-5 w-5 text-red-400 mr-2 shrink-0 mt-0.5" /><span className="font-medium">{clickUpError}</span></div>
-                      <button onClick={handleMockClickUpData} className="w-full flex justify-center py-2 px-4 border border-red-900/50 rounded-lg shadow-sm text-sm font-medium text-red-200 bg-red-950/40 hover:bg-red-900/30 transition-colors neon-text-rose neon-interactable neon-interactable-rose">Bypass with Mock ClickUp Data (Preview)</button>
+                      <button onClick={handleMockClickUpData} className="w-full flex justify-center py-2 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-red-200 bg-red-950/40 transition-all neon-border-rose">Bypass with Mock ClickUp Data (Preview)</button>
                     </div>
                   )}
                   <div className="flex justify-end space-x-3 pt-2">
-                    <button onClick={handleCancelIntegration} className="px-4 py-2 text-sm font-medium text-slate-400 rounded-lg neon-text-slate neon-interactable neon-interactable-slate">Cancel</button>
+                    <button onClick={handleCancelIntegration} className="px-4 py-2 text-sm font-medium text-slate-400 border border-transparent rounded-lg transition-all neon-border-slate">Cancel</button>
                     <button onClick={handleAuthenticateToken} disabled={!tempToken} className="btn-neon btn-neon-indigo">Authenticate</button>
                   </div>
                 </div>
@@ -2277,7 +2306,7 @@
                     </div>
                   )}
                   <div className="pt-4 flex items-center justify-end space-x-3 border-t border-white/5">
-                    <button onClick={handleCancelIntegration} className="px-4 py-2 text-sm font-medium text-slate-400 rounded-lg neon-text-slate neon-interactable neon-interactable-slate">Cancel</button>
+                    <button onClick={handleCancelIntegration} className="px-4 py-2 text-sm font-medium text-slate-400 border border-transparent rounded-lg transition-all neon-border-slate">Cancel</button>
                     <button disabled={!selectedList} onClick={handleAddMapping} className="btn-neon btn-neon-indigo"><CheckCircle2 className="h-4 w-4 mr-2" /> Add to Weaver</button>
                   </div>
                 </div>
@@ -2326,9 +2355,9 @@
 
             {/* Change Connection Modal */}
             {isSwitchModalOpen && mappedWorkflows.length > 0 && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+              <div className="fixed inset-0 z-[999] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
                  <div className="bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden relative animate-in zoom-in-95 duration-200">
-                    <button onClick={handleCancelIntegration} className="absolute top-4 right-4 text-slate-400 p-2 rounded z-10 neon-text-slate neon-interactable neon-interactable-slate"><X /></button>
+                    <button onClick={handleCancelIntegration} className="absolute top-4 right-4 text-slate-400 p-1.5 rounded-lg z-10 border border-transparent transition-all neon-border-slate"><X className="w-5 h-5" /></button>
                     <div className="p-6">
                        <h2 className="text-xl font-bold text-white mb-6">Connect New Workflow</h2>
                        {integrationUI}
@@ -2339,18 +2368,18 @@
 
             {/* Drill Down Modal */}
             {selectedDrillDownAssignee && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md" onClick={() => setSelectedDrillDownAssignee(null)}>
+              <div className="fixed inset-0 z-[999] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md" onClick={() => setSelectedDrillDownAssignee(null)}>
                  {renderAssigneeDrillDown(selectedDrillDownAssignee)}
               </div>
             )}
 
             {/* Unified Tasks & Time Modal */}
             {isUnifiedModalOpen && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+              <div className="fixed inset-0 z-[999] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
                 <div className="bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl w-full max-w-7xl h-[85vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
                    <div className="p-5 border-b border-slate-700 flex justify-between items-center bg-slate-800/50 shrink-0">
                       <h2 className="text-xl font-bold text-white flex items-center"><ListTodo className="mr-3 h-6 w-6 text-indigo-400"/> Unified Workspace & Time Ledger</h2>
-                      <button onClick={() => setIsUnifiedModalOpen(false)} className="text-slate-400 p-2 rounded neon-text-slate neon-interactable neon-interactable-slate"><X className="h-6 w-6"/></button>
+                      <button onClick={() => setIsUnifiedModalOpen(false)} className="text-slate-400 p-1.5 rounded-lg border border-transparent transition-all neon-border-slate"><X className="h-5 w-5"/></button>
                    </div>
                    <div className="flex flex-col lg:flex-row flex-1 overflow-hidden">
                       
@@ -2394,7 +2423,7 @@
                                         <div onClick={() => setSelectedTaskIdForTime(isSelected ? '' : task.id)} className={`p-3 rounded-lg border flex justify-between items-center cursor-pointer transition-all group ${isSelected ? 'bg-indigo-600/20 border-indigo-500 shadow-[0_0_15px_rgba(99,102,241,0.2)]' : 'bg-slate-800/40 border-slate-700/50 hover:border-indigo-500 hover:shadow-[0_0_10px_rgba(99,102,241,0.3)]'}`}>
                                            <div className="flex items-center space-x-3 min-w-0 flex-1 mr-4">
                                               {hasSubtasks ? (
-                                                <button onClick={(e) => { e.stopPropagation(); toggleTaskExpand(task.id); }} className="p-0.5 text-slate-400 rounded flex-shrink-0 neon-text-indigo">
+                                                <button onClick={(e) => { e.stopPropagation(); toggleTaskExpand(task.id); }} className="p-0.5 border border-transparent text-slate-400 rounded flex-shrink-0 transition-all neon-border-indigo">
                                                    <ChevronRight className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
                                                 </button>
                                               ) : (
@@ -2403,11 +2432,11 @@
                                               <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: task.status?.color || '#cbd5e1' }} />
                                               
                                               {/* Truncated Name with Tooltip logic */}
-                                              <div className="relative min-w-0 flex-1">
-                                                 <span className={`block text-sm font-medium truncate ${isSelected ? 'text-indigo-100' : 'text-slate-200'}`}>{task.name}</span>
-                                                 <div className="absolute left-0 bottom-full mb-2 hidden group-hover:block z-50 bg-slate-800 text-slate-100 text-xs px-3 py-1.5 rounded border border-slate-700 shadow-xl whitespace-normal break-words max-w-md pointer-events-none">
+                                              <div className="relative min-w-0 flex-1 group/tooltip">
+                                                 <span className={`block text-sm font-medium truncate transition-colors ${isSelected ? 'text-indigo-100' : 'text-slate-200 group-hover:text-indigo-300'}`}>{task.name}</span>
+                                                 <div className="absolute left-0 top-full mt-2 hidden group-hover/tooltip:block z-[999999] bg-slate-800 text-slate-100 text-xs px-3 py-1.5 rounded border border-slate-700 shadow-[0_0_15px_rgba(99,102,241,0.5)] whitespace-normal break-words max-w-md pointer-events-none">
                                                     {task.name}
-                                                    <div className="absolute top-full left-4 border-[5px] border-transparent border-t-slate-800"></div>
+                                                    <div className="absolute bottom-full left-4 border-[5px] border-transparent border-b-slate-800"></div>
                                                  </div>
                                               </div>
 
@@ -2457,7 +2486,7 @@
                               {selectedTaskIdForTime ? "Task Time Entries" : (user?.isMock ? "Local Live Feed" : "Global Live Feed")}
                            </h3>
                            {selectedTaskIdForTime && (
-                              <button onClick={() => setSelectedTaskIdForTime('')} className="text-[10px] uppercase font-bold text-slate-500 bg-slate-800 px-2 py-0.5 rounded transition-colors border border-transparent flex items-center neon-text-indigo neon-interactable neon-interactable-indigo">
+                              <button onClick={() => setSelectedTaskIdForTime('')} className="text-[10px] uppercase font-bold text-slate-400 bg-slate-800 px-2 py-1 rounded-md transition-all border border-transparent flex items-center neon-border-indigo">
                                  <X className="w-3 h-3 mr-1"/> Clear Selection
                               </button>
                            )}
@@ -2518,7 +2547,7 @@
                                   return [...feedEntries].sort((a,b) => b.timestamp - a.timestamp).map(entry => {
                                      const task = allFlatTasks.find(t => t.id === entry.taskId);
                                      return (
-                                        <div key={entry.id} className="bg-slate-800/40 p-4 rounded-xl border border-slate-700/50 shadow-sm animate-in fade-in slide-in-from-top-2">
+                                        <div key={entry.id} className="bg-slate-800/40 p-4 rounded-xl border border-slate-700/50 shadow-sm animate-in fade-in slide-in-from-top-2 neon-card">
                                            <div className="flex justify-between items-start mb-2">
                                               <div className="pr-4">
                                                  <span className="font-semibold text-indigo-300 text-sm leading-tight block mb-1">{task?.name || 'Unknown Task'}</span>
@@ -2532,7 +2561,7 @@
                                               </div>
                                               <div className="flex items-center gap-2 shrink-0">
                                                 <span className="text-emerald-400 font-bold bg-emerald-500/10 px-2 py-1 rounded text-sm border border-emerald-500/20">+{entry.ms / 3600000}h</span>
-                                                <button onClick={(e) => { e.stopPropagation(); handleDeleteTimeEntry(entry); }} className="text-slate-500 p-1.5 rounded-md neon-text-rose neon-interactable neon-interactable-rose"><Trash2 className="w-4 h-4" /></button>
+                                                <button onClick={(e) => { e.stopPropagation(); handleDeleteTimeEntry(entry); }} className="text-slate-400 p-1.5 rounded-lg border border-transparent transition-all neon-border-rose"><Trash2 className="w-4 h-4" /></button>
                                               </div>
                                            </div>
                                            {entry.note && <div className="text-slate-300 bg-slate-900/80 p-2.5 rounded-lg text-sm border border-white/5 italic mt-2">"{entry.note}"</div>}
@@ -2550,11 +2579,11 @@
 
             {/* Capacity Settings Blocker Modal */}
             {isBlockerModalOpen && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200">
+              <div className="fixed inset-0 z-[999] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200">
                 <div className="bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden animate-in zoom-in-95">
                    <div className="flex items-center justify-between p-5 border-b border-slate-700/80 bg-slate-800/50">
                      <h2 className="text-lg font-bold text-white flex items-center gap-2"><Calendar className="w-5 h-5 text-indigo-400" /> Sprint Capacity Settings</h2>
-                     <button onClick={() => setIsBlockerModalOpen(false)} className="p-1.5 rounded-lg text-slate-400 neon-text-slate neon-interactable neon-interactable-slate"><X className="w-5 h-5" /></button>
+                     <button onClick={() => setIsBlockerModalOpen(false)} className="p-1.5 rounded-lg border border-transparent text-slate-400 transition-all neon-border-slate"><X className="w-5 h-5" /></button>
                    </div>
                    <div className="p-5 space-y-6">
                      <div className="bg-slate-900/60 p-4 rounded-xl border border-white/5 space-y-4">
@@ -2582,7 +2611,7 @@
                            {dateBlockers.map(b => (
                              <li key={b.id} className="flex items-center justify-between bg-slate-900/60 p-3 rounded-xl border border-white/5 group">
                                 <div className="flex flex-col"><span className="text-sm font-semibold text-slate-200">{b.remark} <span className="text-slate-400 font-normal">({b.days} day{b.days > 1 ? 's' : ''})</span></span>{b.remark === 'Leave' && <span className="text-xs text-indigo-400 font-medium mt-0.5">{b.assignee}</span>}</div>
-                                <button onClick={() => { const newBlockers = dateBlockers.filter(x => x.id !== b.id); setDateBlockers(newBlockers); saveSettings({ dateBlockers: newBlockers }); logTransaction('Blocker Removed', `Removed ${b.remark} blocker`, 'trash'); }} className="text-slate-500 p-1.5 rounded-md neon-text-rose neon-interactable neon-interactable-rose"><Trash2 className="w-4 h-4" /></button>
+                                <button onClick={() => { const newBlockers = dateBlockers.filter(x => x.id !== b.id); setDateBlockers(newBlockers); saveSettings({ dateBlockers: newBlockers }); logTransaction('Blocker Removed', `Removed ${b.remark} blocker`, 'trash'); }} className="p-1.5 rounded-lg border border-transparent text-slate-400 transition-all neon-border-rose"><Trash2 className="w-4 h-4" /></button>
                              </li>
                            ))}
                          </ul>
@@ -2624,14 +2653,14 @@
                     <span className="ml-2 text-xl font-bold tracking-tight text-white">Weaver</span>
                   </div>
                   <div className="flex items-center space-x-4">
-                    <button onClick={() => { setIsNotificationsOpen(!isNotificationsOpen); setVisibleTxCount(10); }} className={`text-slate-400 transition-colors relative neon-text-indigo ${isNotificationsOpen ? 'text-white' : ''}`}>
+                    <button onClick={() => { setIsNotificationsOpen(!isNotificationsOpen); setVisibleTxCount(10); }} className={`p-1.5 rounded-lg border border-transparent transition-all neon-border-indigo relative ${isNotificationsOpen ? 'text-white' : 'text-slate-400'}`}>
                       <Bell className="h-5 w-5" />
                       {transactions.length > 0 && <span className="absolute -top-1 -right-1 flex h-3 w-3"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span><span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500 border border-slate-950"></span></span>}
                     </button>
-                    <div className="h-8 w-8 rounded-full bg-indigo-950/50 flex items-center justify-center overflow-hidden border border-white/10 cursor-pointer">
+                    <div className="h-8 w-8 rounded-full bg-indigo-950/50 flex items-center justify-center overflow-hidden border border-transparent transition-all neon-border-indigo cursor-pointer">
                       <img src={user.avatar} alt={user.name} className="h-full w-full object-cover" />
                     </div>
-                    <button onClick={handleLogout} className="flex items-center text-sm font-medium text-slate-400 transition-colors neon-text-slate"><LogOut className="h-4 w-4 mr-1" /> Sign out</button>
+                    <button onClick={handleLogout} className="p-1.5 rounded-lg border border-transparent flex items-center text-sm font-medium text-slate-400 transition-all neon-border-slate"><LogOut className="h-4 w-4 sm:mr-1" /> <span className="hidden sm:block">Sign out</span></button>
                   </div>
                 </div>
               </div>
@@ -2639,7 +2668,7 @@
 
             {/* Notifications Panel */}
             {isNotificationsOpen && (
-              <div className="fixed top-16 right-4 sm:right-6 lg:right-8 w-80 bg-slate-900 border border-slate-700/80 rounded-xl shadow-2xl z-50 flex flex-col max-h-[80vh] overflow-hidden animate-in slide-in-from-top-4 duration-200">
+              <div className="fixed top-16 right-4 sm:right-6 lg:right-8 w-80 bg-slate-900 border border-slate-700/80 rounded-xl shadow-[0_0_20px_rgba(99,102,241,0.3)] z-50 flex flex-col max-h-[80vh] overflow-hidden animate-in slide-in-from-top-4 duration-200">
                 <div className="p-4 border-b border-slate-700/80 bg-slate-800/50 flex items-center justify-between shrink-0">
                   <h3 className="text-sm font-bold text-white flex items-center"><Bell className="w-4 h-4 mr-2 text-indigo-400" /> Recent Activity</h3>
                   {transactions.length > 0 && <span className="text-xs text-slate-500">{transactions.length} entries</span>}
@@ -2676,7 +2705,7 @@
                 </div>
                 {transactions.length > visibleTxCount && (
                   <div className="p-3 bg-slate-800/80 border-t border-slate-700/80 text-center shrink-0">
-                    <button onClick={() => setVisibleTxCount(prev => prev + 10)} className="text-xs font-semibold text-slate-400 py-1.5 px-4 rounded-md neon-text-indigo neon-interactable neon-interactable-indigo w-full">View More Logs</button>
+                    <button onClick={() => setVisibleTxCount(prev => prev + 10)} className="text-xs font-semibold text-slate-400 py-1.5 px-4 border border-transparent rounded-md transition-all neon-border-indigo w-full">View More Logs</button>
                   </div>
                 )}
               </div>
@@ -2685,7 +2714,7 @@
             {mappedWorkflows.length === 0 ? (
           <main className="relative z-25 max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
             <div className="text-center mb-10">
-              <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-indigo-500/10 mb-6 border border-indigo-500/20 shadow-inner"><SpiderNetworkIcon className="h-8 w-8 text-indigo-400 animate-pulse" /></div>
+              <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-indigo-500/10 mb-6 border border-indigo-500/20 shadow-[0_0_15px_rgba(99,102,241,0.2)]"><SpiderNetworkIcon className="h-8 w-8 text-indigo-400 animate-pulse" /></div>
               <h1 className="text-3xl font-bold text-white tracking-tight">Welcome to Weaver, {user.name.split(' ')[0]}!</h1>
               <p className="text-slate-400 mt-3 text-lg max-w-xl mx-auto">Before we build your dashboard, let's connect your task tracking system to pull in your assignments.</p>
             </div>
@@ -2697,22 +2726,25 @@
               <div>
                 <h1 className="text-2xl font-bold text-white flex items-center gap-3">
                   {mappedWorkflows.length > 1 ? `${mappedWorkflows.length} Active Workflows` : (mappedWorkflows[0]?.list || 'Your Workspace')}
-                  <div className="flex items-center px-3 py-1 rounded-full border bg-emerald-900/30 border-emerald-500/30 text-emerald-400 text-xs font-medium">
-                    <div className={`h-2 w-2 rounded-full mr-2 ${isAutoSyncing ? 'bg-emerald-400 animate-pulse' : 'bg-emerald-500/50'}`}></div> 
+                  
+                  {}
+                  <div className="flex items-center px-3 py-1 rounded-full border bg-emerald-900/30 border-emerald-500/30 text-emerald-400 text-xs font-medium cursor-default transition-all duration-500 hover:bg-[#10b981] hover:text-white hover:border-[#10b981] hover:shadow-[0_0_5px_#10b981,0_0_20px_#10b981,0_0_50px_#10b981,0_0_100px_#10b981] group">
+                    <div className={`h-2 w-2 rounded-full mr-2 ${isAutoSyncing ? 'bg-emerald-400 animate-pulse' : 'bg-emerald-500/50'} group-hover:bg-white transition-colors`}></div> 
                     Synced: {new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: 'numeric', second: 'numeric' }).format(new Date(mappedWorkflows[0].lastSynced))}
                     {clickUpToken && (
-                      <button onClick={runSyncSequence} disabled={isAutoSyncing} className="ml-2 pl-2 border-l border-emerald-500/30 transition-colors disabled:opacity-50 neon-text-emerald" title="Sync Now">
+                      <button onClick={runSyncSequence} disabled={isAutoSyncing} className="ml-2 pl-2 border-l border-emerald-500/30 transition-colors disabled:opacity-50 hover:opacity-70 group-hover:text-white group-hover:border-white/50" title="Sync Now">
                         <RefreshCw className={`h-3.5 w-3.5 ${isAutoSyncing ? 'animate-spin' : ''}`} />
                       </button>
                     )}
                   </div>
+
                   {!clickUpToken && mappedWorkflows.length > 0 && (
-                    <button onClick={handleConnectClickUp} className="flex items-center px-3 py-1 rounded-full border bg-rose-900/30 border-rose-500/30 text-rose-400 text-xs font-medium cursor-pointer transition-colors neon-text-rose neon-interactable neon-interactable-rose" title="Your API token was lost from memory. Please reconnect to resume syncing.">
+                    <button onClick={handleConnectClickUp} className="flex items-center px-3 py-1 rounded-full border border-transparent bg-rose-900/30 text-rose-400 text-xs font-medium cursor-pointer transition-all neon-border-rose" title="Your API token was lost from memory. Please reconnect to resume syncing.">
                       <AlertTriangle className="h-3 w-3 mr-1.5" /> Reconnect
                     </button>
                   )}
                   {user?.isMock && (
-                    <div className="ml-3 flex items-center px-2 py-0.5 rounded border bg-amber-900/30 border-amber-500/30 text-amber-400 text-[10px] font-bold uppercase tracking-wider cursor-help" title="Running in Local Offline mode. Update firebaseConfig to enable global cross-device sync.">
+                    <div className="ml-3 flex items-center px-3 py-1 rounded-full border border-transparent bg-amber-900/30 text-amber-400 text-[10px] font-bold uppercase tracking-wider cursor-help transition-all neon-border-amber" title="Running in Local Offline mode. Update firebaseConfig to enable global cross-device sync.">
                       <ShieldAlert className="h-3 w-3 mr-1" /> Offline
                     </div>
                   )}
@@ -2765,7 +2797,7 @@
                     <h2 className="text-lg font-semibold text-white">Overall Progress & Distribution</h2>
                   </div>
                   
-                  <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl overflow-hidden">
+                  <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl">
                     <div className="flex flex-col lg:flex-row">
                       
                       {/* Left Pane - Task Distribution */}
@@ -2809,7 +2841,7 @@
 
                       {/* Right Pane - Metric Cards */}
                       <div className="lg:w-1/2 p-6 md:p-8 flex flex-col gap-4 justify-center">
-                        <div className="bg-slate-900/60 p-4 rounded-xl border border-white/5 flex items-center justify-between shadow-sm">
+                        <div className="neon-card bg-slate-900/60 p-4 rounded-xl border border-white/5 flex items-center justify-between shadow-sm">
                           <div className="flex items-start space-x-4">
                             <div className="bg-blue-500/10 p-2.5 rounded-lg border border-blue-500/20"><Box className="h-5 w-5 text-blue-400" /></div>
                             <div>
@@ -2829,7 +2861,7 @@
                           </div>
                         </div>
                         
-                        <div className="bg-slate-900/60 p-4 rounded-xl border border-white/5 flex items-center justify-between shadow-sm">
+                        <div className="neon-card bg-slate-900/60 p-4 rounded-xl border border-white/5 flex items-center justify-between shadow-sm">
                           <div className="flex items-start space-x-4">
                             <div className="bg-indigo-500/10 p-2.5 rounded-lg border border-indigo-500/20"><CheckSquare className="h-5 w-5 text-indigo-400" /></div>
                             <div>
@@ -2849,7 +2881,7 @@
                           </div>
                         </div>
                         
-                        <div className="bg-slate-900/60 p-4 rounded-xl border border-white/5 flex items-center justify-between shadow-sm">
+                        <div className="neon-card bg-slate-900/60 p-4 rounded-xl border border-white/5 flex items-center justify-between shadow-sm">
                           <div className="flex items-start space-x-4">
                             <div className="bg-emerald-500/10 p-2.5 rounded-lg border border-emerald-500/20"><CheckCircle2 className="h-5 w-5 text-emerald-400" /></div>
                             <div>
@@ -2897,7 +2929,7 @@
                       </div>
                     </div>
                     
-                    <div className="relative h-56 w-full">
+                    <div className="relative h-56 w-full hover:z-[99999]">
                       <div className="absolute left-0 top-0 bottom-6 w-8 flex flex-col justify-between text-xs font-medium text-slate-500 text-right pr-2">
                         <span>{totalEstHours}h</span>
                         <span>{Math.round(totalEstHours * 0.75)}h</span>
@@ -2946,16 +2978,16 @@
 
                         {activeChartHover?.chart === 'burndown' && (
                            <>
-                             <div className="absolute top-0 bottom-0 w-px bg-indigo-500/50 pointer-events-none" style={{ left: `${activeChartHover.xPct}%` }} />
-                             <div className="absolute w-3 h-3 bg-indigo-500 rounded-full shadow-[0_0_8px_rgba(99,102,241,0.8)] pointer-events-none transform -translate-x-1/2 -translate-y-1/2 border-2 border-slate-900" style={{ left: `${activeChartHover.xPct}%`, top: `${activeChartHover.yPct}%` }} />
-                             <div className="absolute pointer-events-none z-20 flex flex-col items-center drop-shadow-lg"
+                             <div className="absolute top-0 bottom-0 w-px bg-indigo-500/50 pointer-events-none z-[9999]" style={{ left: `${activeChartHover.xPct}%` }} />
+                             <div className="absolute w-3 h-3 bg-indigo-500 rounded-full shadow-[0_0_8px_rgba(99,102,241,0.8)] pointer-events-none transform -translate-x-1/2 -translate-y-1/2 border-2 border-slate-900 z-[9999]" style={{ left: `${activeChartHover.xPct}%`, top: `${activeChartHover.yPct}%` }} />
+                             <div className="absolute pointer-events-none z-[999999] flex flex-col items-center drop-shadow-lg"
                                   style={{ 
                                     left: `${activeChartHover.xPct}%`, 
                                     top: `${activeChartHover.yPct}%`,
                                     transform: 'translate(-50%, -100%)',
                                     marginTop: '-8px'
                                   }}>
-                                <div className="bg-slate-800 border border-indigo-500/50 text-white rounded-lg px-3 py-1.5 shadow-xl whitespace-nowrap flex flex-col items-center">
+                                <div className="bg-slate-800 border border-indigo-500/50 text-white rounded-lg px-3 py-1.5 shadow-[0_0_15px_rgba(99,102,241,0.5)] whitespace-nowrap flex flex-col items-center">
                                    <span className="font-bold text-[10px] uppercase tracking-wider text-indigo-400 mb-0.5">{new Date(activeChartHover.dateMs).toLocaleDateString()}</span>
                                    <span className="text-xs font-semibold text-slate-100">{Math.max(0, Math.round(activeChartHover.value / 3600000))}h Remaining</span>
                                 </div>
@@ -2992,11 +3024,11 @@
                       <div className="flex flex-row sm:flex-col gap-4 sm:gap-1.5 text-sm bg-slate-900/60 px-3 py-2 rounded-lg border border-white/5 shrink-0">
                         <div className="flex items-center text-slate-400 font-medium"><div className="w-4 h-0 border-t-2 border-dashed border-slate-500 mr-2"></div> Capacity ({devCapacityHours}h)</div>
                         <div className="flex items-center text-slate-400 font-medium"><div className="w-4 h-0 border-t-2 border-dotted border-blue-400 mr-2"></div> Plotted ({totalEstHours}h)</div>
-                        <div className="flex items-center text-slate-400 font-medium"><div className="w-3 h-3 bg-emerald-500 rounded-full mr-2 shadow-lg shadow-emerald-500/50"></div> Logged Time</div>
+                        <div className="flex items-center text-slate-400 font-medium"><div className="w-3 h-3 bg-emerald-500 rounded-full mr-2 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div> Logged Time</div>
                       </div>
                     </div>
                     
-                    <div className="relative h-56 w-full">
+                    <div className="relative h-56 w-full hover:z-[99999]">
                       <div className="absolute left-0 top-0 bottom-6 w-8 flex flex-col justify-between text-xs font-medium text-slate-500 text-right pr-2">
                         <span>{maxBurnupHours}h</span>
                         <span>{Math.round(maxBurnupHours * 0.75)}h</span>
@@ -3034,16 +3066,16 @@
 
                             {activeChartHover?.chart === 'burnup' && (
                                <>
-                                 <div className="absolute top-0 bottom-0 w-px bg-emerald-500/50 pointer-events-none" style={{ left: `${activeChartHover.xPct}%` }} />
-                                 <div className="absolute w-3 h-3 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.8)] pointer-events-none transform -translate-x-1/2 -translate-y-1/2 border-2 border-slate-900" style={{ left: `${activeChartHover.xPct}%`, top: `${activeChartHover.yPct}%` }} />
-                                 <div className="absolute pointer-events-none z-20 flex flex-col items-center drop-shadow-lg"
+                                 <div className="absolute top-0 bottom-0 w-px bg-emerald-500/50 pointer-events-none z-[9999]" style={{ left: `${activeChartHover.xPct}%` }} />
+                                 <div className="absolute w-3 h-3 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.8)] pointer-events-none transform -translate-x-1/2 -translate-y-1/2 border-2 border-slate-900 z-[9999]" style={{ left: `${activeChartHover.xPct}%`, top: `${activeChartHover.yPct}%` }} />
+                                 <div className="absolute pointer-events-none z-[999999] flex flex-col items-center drop-shadow-lg"
                                       style={{ 
                                         left: `${activeChartHover.xPct}%`, 
                                         top: `${activeChartHover.yPct}%`,
                                         transform: 'translate(-50%, -100%)',
                                         marginTop: '-8px'
                                       }}>
-                                    <div className="bg-slate-800 border border-emerald-500/50 text-white rounded-lg px-3 py-1.5 shadow-xl whitespace-nowrap flex flex-col items-center">
+                                    <div className="bg-slate-800 border border-emerald-500/50 text-white rounded-lg px-3 py-1.5 shadow-[0_0_15px_rgba(16,185,129,0.5)] whitespace-nowrap flex flex-col items-center">
                                        <span className="font-bold text-[10px] uppercase tracking-wider text-emerald-400 mb-0.5">{new Date(activeChartHover.dateMs).toLocaleDateString()}</span>
                                        <span className="text-xs font-semibold text-slate-100">{Math.max(0, Math.round(activeChartHover.value / 3600000))}h Logged</span>
                                     </div>
@@ -3103,7 +3135,7 @@
                         <div className="space-y-4">
                           <div className="flex items-center justify-between">
                             <div className="text-sm font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-2">Capacity Limits <MetricTooltip align="center" text="Available resource limits for the sprint." formula="Resources = Unique Assignees. Duration = Working Days - (Holidays + Events). Click the gear icon to configure."><InfoIcon className="h-3.5 w-3.5 text-slate-500" /></MetricTooltip></div>
-                            <button onClick={() => setIsBlockerModalOpen(true)} className="p-1.5 rounded-lg bg-slate-900/60 border border-white/5 transition-all neon-text-indigo neon-interactable neon-interactable-indigo"><Settings className="w-4 h-4" /></button>
+                            <button onClick={() => setIsBlockerModalOpen(true)} className="p-1.5 rounded-lg border border-transparent transition-all neon-border-slate text-slate-400"><Settings className="w-4 h-4" /></button>
                           </div>
                           <div className="grid grid-cols-1 gap-3">
                             <div className="bg-slate-900/60 p-3.5 rounded-xl border border-white/5 flex items-center justify-between">
@@ -3189,7 +3221,7 @@
                         const totalAssigned = Object.values(assignee.statusCounts).reduce((s, c) => s + c.count, 0);
 
                         return (
-                          <div key={assignee.username} onClick={() => setSelectedDrillDownAssignee(assignee.username)} className="bg-slate-900/40 backdrop-blur-md p-5 rounded-2xl border border-white/5 flex flex-col justify-between shadow-xl cursor-pointer hover:bg-slate-800/60 transition-all group neon-interactable neon-interactable-indigo">
+                          <div key={assignee.username} onClick={() => setSelectedDrillDownAssignee(assignee.username)} className="neon-card bg-slate-900/40 backdrop-blur-md p-5 rounded-2xl border border-white/5 flex flex-col justify-between shadow-xl cursor-pointer hover:bg-slate-800/60 transition-all group border border-transparent transition-all neon-border-indigo">
                             <div>
                               <div className="flex justify-between items-start mb-4">
                                 <div className="flex items-center gap-3">
@@ -3227,43 +3259,43 @@
                   <div className="mb-8">
                     <div className="flex items-center space-x-2 mb-4"><Bug className="h-5 w-5 text-rose-400" /><h2 className="text-lg font-semibold text-white">Quality & Defects</h2></div>
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4 lg:gap-6">
-                      <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-purple-500/10 shadow-xl flex items-start space-x-4">
-                        <div className="bg-purple-500/10 p-3 rounded-lg border border-purple-500/20"><Target className="h-6 w-6 text-purple-400" /></div>
+                      <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-purple-500/10 shadow-xl flex items-start space-x-4 neon-card cursor-default group">
+                        <div className="bg-purple-500/10 p-3 rounded-lg border border-purple-500/20 group-hover:border-purple-500/50 transition-colors"><Target className="h-6 w-6 text-purple-400" /></div>
                         <div className="min-w-0">
                           <div className="text-sm font-medium text-slate-400 flex items-center gap-1 flex-wrap">Avg Quality Rate <MetricTooltip align="left" text="Average quality score across mother tasks." formula="100% minus penalty points for each bug based on complexity/priority. (Critical: -20, High: -15, Normal: -10, Low: -5)."><InfoIcon className="h-3.5 w-3.5" /></MetricTooltip></div>
-                          <p className="text-2xl font-bold text-white mt-1">{avgQualityRate}%</p>
+                          <p className="text-2xl font-bold text-white mt-1 group-hover:text-purple-300 transition-colors">{avgQualityRate}%</p>
                         </div>
                       </div>
 
-                      <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-rose-500/10 shadow-xl flex items-start space-x-4">
-                        <div className="bg-rose-500/10 p-3 rounded-lg border border-rose-500/20"><Bug className="h-6 w-6 text-rose-400" /></div>
+                      <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-rose-500/10 shadow-xl flex items-start space-x-4 neon-card cursor-default group">
+                        <div className="bg-rose-500/10 p-3 rounded-lg border border-rose-500/20 group-hover:border-rose-500/50 transition-colors"><Bug className="h-6 w-6 text-rose-400" /></div>
                         <div className="min-w-0">
                           <div className="text-sm font-medium text-slate-400 flex items-center gap-1 flex-wrap">Active Defects <MetricTooltip align="left" text="Unresolved bugs or defects." formula="Total identified bugs minus resolved bugs."><InfoIcon className="h-3.5 w-3.5" /></MetricTooltip></div>
-                          <p className="text-2xl font-bold text-white mt-1">{activeBugsCount}</p>
+                          <p className="text-2xl font-bold text-white mt-1 group-hover:text-rose-300 transition-colors">{activeBugsCount}</p>
                         </div>
                       </div>
                       
-                      <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-orange-500/10 shadow-xl flex items-start space-x-4">
-                        <div className="bg-orange-500/10 p-3 rounded-lg border border-orange-500/20"><ShieldAlert className="h-6 w-6 text-orange-400" /></div>
+                      <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-orange-500/10 shadow-xl flex items-start space-x-4 neon-card cursor-default group">
+                        <div className="bg-orange-500/10 p-3 rounded-lg border border-orange-500/20 group-hover:border-orange-500/50 transition-colors"><ShieldAlert className="h-6 w-6 text-orange-400" /></div>
                         <div className="min-w-0">
                           <div className="text-sm font-medium text-slate-400 flex items-center gap-1 flex-wrap">High/Critical <MetricTooltip align="center" text="Urgent defects requiring immediate attention." formula="Active defects with priority set to 'High', 'Urgent', or 'Critical'."><InfoIcon className="h-3.5 w-3.5" /></MetricTooltip></div>
-                          <p className="text-2xl font-bold text-white mt-1">{criticalBugsCount}</p>
+                          <p className="text-2xl font-bold text-white mt-1 group-hover:text-orange-300 transition-colors">{criticalBugsCount}</p>
                         </div>
                       </div>
 
-                      <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-emerald-500/10 shadow-xl flex items-start space-x-4">
-                        <div className="bg-emerald-500/10 p-3 rounded-lg border border-emerald-500/20"><Activity className="h-6 w-6 text-emerald-400" /></div>
+                      <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-emerald-500/10 shadow-xl flex items-start space-x-4 neon-card cursor-default group">
+                        <div className="bg-emerald-500/10 p-3 rounded-lg border border-emerald-500/20 group-hover:border-emerald-500/50 transition-colors"><Activity className="h-6 w-6 text-emerald-400" /></div>
                         <div className="min-w-0">
                           <div className="text-sm font-medium text-slate-400 flex items-center gap-1 flex-wrap">Resolution Rate <MetricTooltip align="center" text="Percentage of total identified bugs that have been fixed." formula="(Resolved Bugs / Total Identified Bugs) × 100"><InfoIcon className="h-3.5 w-3.5" /></MetricTooltip></div>
-                          <div className="flex items-end space-x-2 mt-1"><p className="text-2xl font-bold text-white">{bugResolutionRate}%</p></div>
+                          <div className="flex items-end space-x-2 mt-1"><p className="text-2xl font-bold text-white group-hover:text-emerald-300 transition-colors">{bugResolutionRate}%</p></div>
                         </div>
                       </div>
 
-                      <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-sky-500/10 shadow-xl flex items-start space-x-4">
-                        <div className="bg-sky-500/10 p-3 rounded-lg border border-sky-500/20"><Zap className="h-6 w-6 text-sky-400" /></div>
+                      <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-sky-500/10 shadow-xl flex items-start space-x-4 neon-card cursor-default group">
+                        <div className="bg-sky-500/10 p-3 rounded-lg border border-sky-500/20 group-hover:border-sky-500/50 transition-colors"><Zap className="h-6 w-6 text-sky-400" /></div>
                         <div className="min-w-0">
                           <div className="text-sm font-medium text-slate-400 flex items-center gap-1 flex-wrap">Avg Fix Velocity <MetricTooltip align="right" text="Average turnaround time to resolve a defect." formula="Sum of (Date Closed - Date Created) for all resolved bugs / Total number of resolved bugs."><InfoIcon className="h-3.5 w-3.5" /></MetricTooltip></div>
-                          <div className="flex items-end space-x-2 mt-1"><p className="text-2xl font-bold text-white">{avgVelocityValue}</p>{avgVelocityUnit && <p className="text-xs text-slate-400 mb-1">{avgVelocityUnit}</p>}</div>
+                          <div className="flex items-end space-x-2 mt-1"><p className="text-2xl font-bold text-white group-hover:text-sky-300 transition-colors">{avgVelocityValue}</p>{avgVelocityUnit && <p className="text-xs text-slate-400 mb-1">{avgVelocityUnit}</p>}</div>
                         </div>
                       </div>
                     </div>
@@ -3359,7 +3391,7 @@
                               <div className="flex items-center text-xs text-slate-500"><Clock className="h-3 w-3 mr-1" /> Last synced: {new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: 'numeric', second: 'numeric' }).format(new Date(workflow.lastSynced))}</div>
                             </div>
                           </div>
-                          <button onClick={() => removeMapping(workflow.id)} className="text-slate-400 p-2 rounded-md neon-text-rose neon-interactable neon-interactable-rose"><Trash2 className="h-5 w-5" /></button>
+                          <button onClick={() => removeMapping(workflow.id)} className="p-1.5 rounded-lg border border-transparent text-slate-400 transition-all neon-border-rose"><Trash2 className="h-5 w-5" /></button>
                         </div>
                       </li>
                     ))}
