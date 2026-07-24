@@ -650,6 +650,29 @@
       // Notifications State & Transactions
       const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
       const [visibleTxCount, setVisibleTxCount] = useState(10);
+      const notificationsRef = useRef(null);
+      const bellButtonRef = useRef(null);
+
+      // Hook to handle clicking outside of the notifications panel
+      useEffect(() => {
+        const handleClickOutside = (event) => {
+          if (
+            isNotificationsOpen &&
+            notificationsRef.current &&
+            !notificationsRef.current.contains(event.target) &&
+            bellButtonRef.current &&
+            !bellButtonRef.current.contains(event.target)
+          ) {
+            setIsNotificationsOpen(false);
+          }
+        };
+
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => {
+          document.removeEventListener('mousedown', handleClickOutside);
+        };
+      }, [isNotificationsOpen]);
+
       const [transactions, setTransactions] = useState(() => {
         try {
           const saved = localStorage.getItem(`weaver_transactions_${appId}`);
@@ -2724,7 +2747,7 @@
                     <span className="ml-2 text-xl font-bold tracking-tight text-white">Weaver</span>
                   </div>
                   <div className="flex items-center space-x-4">
-                    <button onClick={() => { setIsNotificationsOpen(!isNotificationsOpen); setVisibleTxCount(10); }} className={`p-1.5 rounded-lg border border-transparent transition-all neon-border-indigo relative ${isNotificationsOpen ? 'text-white' : 'text-slate-400'}`}>
+                    <button ref={bellButtonRef} onClick={() => { setIsNotificationsOpen(!isNotificationsOpen); setVisibleTxCount(10); }} className={`p-1.5 rounded-lg border border-transparent transition-all neon-border-indigo relative ${isNotificationsOpen ? 'text-white' : 'text-slate-400'}`}>
                       <Bell className="h-5 w-5" />
                       {transactions.length > 0 && <span className="absolute -top-1 -right-1 flex h-3 w-3"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span><span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500 border border-slate-950"></span></span>}
                     </button>
@@ -2739,7 +2762,7 @@
 
             {/* Notifications Panel */}
             {isNotificationsOpen && (
-              <div className="fixed top-16 right-4 sm:right-6 lg:right-8 w-80 bg-slate-900 border border-slate-700/80 rounded-xl shadow-[0_0_20px_rgba(99,102,241,0.3)] z-50 flex flex-col max-h-[80vh] overflow-hidden animate-in slide-in-from-top-4 duration-200">
+              <div ref={notificationsRef} className="fixed top-16 right-4 sm:right-6 lg:right-8 w-80 bg-slate-900 border border-slate-700/80 rounded-xl shadow-[0_0_20px_rgba(99,102,241,0.3)] z-50 flex flex-col max-h-[80vh] overflow-hidden animate-in slide-in-from-top-4 duration-200">
                 <div className="p-4 border-b border-slate-700/80 bg-slate-800/50 flex items-center justify-between shrink-0">
                   <h3 className="text-sm font-bold text-white flex items-center"><Bell className="w-4 h-4 mr-2 text-indigo-400" /> Recent Activity</h3>
                   {transactions.length > 0 && <span className="text-xs text-slate-500">{transactions.length} entries</span>}
@@ -2798,7 +2821,7 @@
                 <h1 className="text-2xl font-bold text-white flex items-center gap-3">
                   {mappedWorkflows.length > 1 ? `${mappedWorkflows.length} Active Workflows` : (mappedWorkflows[0]?.list || 'Your Workspace')}
                   
-                  <div className="flex items-center px-3 py-1 rounded-full border bg-emerald-900/30 border-emerald-500/30 text-emerald-400 text-xs font-medium cursor-default transition-all duration-500 group pill-neon-emerald">
+                  <div className="flex items-center px-3 py-1 rounded-full border bg-emerald-900/30 border-emerald-500/30 text-emerald-400 text-xs font-medium cursor-default transition-all duration-500 hover:bg-[#10b981] hover:text-white hover:border-[#10b981] hover:shadow-[0_0_5px_#10b981,0_0_20px_#10b981,0_0_50px_#10b981,0_0_100px_#10b981] group">
                     <div className={`h-2 w-2 rounded-full mr-2 ${isAutoSyncing ? 'bg-emerald-400 animate-pulse' : 'bg-emerald-500/50'} group-hover:bg-white transition-colors`}></div> 
                     Synced: {new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: 'numeric', second: 'numeric' }).format(new Date(mappedWorkflows[0].lastSynced))}
                     {clickUpToken && (
