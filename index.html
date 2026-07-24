@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="referrer" content="no-referrer">
   <title>Weaver - Thread Support and Development together</title>
   
   <!-- Tailwind CSS CDN -->
@@ -152,6 +153,17 @@
       border-color: #64748b !important;
       box-shadow: 0 0 10px rgba(100, 116, 139, 0.4), inset 0 0 5px rgba(100, 116, 139, 0.2) !important;
       color: #e2e8f0 !important;
+    }
+
+    /* Synced Pill Badge Specific Emerald Glow */
+    .pill-neon-emerald { transition: all 0.5s ease; }
+    .pill-neon-emerald:hover {
+      color: #ffffff !important;
+      background: #10b981 !important;
+      border-color: #10b981 !important;
+      text-shadow: 0 0 5px #ffffff, 0 0 10px #ffffff, 0 0 20px #ffffff !important;
+      box-shadow: 0 0 5px #10b981, 0 0 20px #10b981, 0 0 50px #10b981, 0 0 100px #10b981 !important;
+      outline: none;
     }
 
     /* Floating Card Lift and Glow */
@@ -342,7 +354,7 @@
                 task.assignees && task.assignees.length > 0 ? (
                   <div className="flex -space-x-1.5 shrink-0 ml-auto">
                     {task.assignees.map((assignee, i) => (
-                      <img key={i} src={assignee.profilePicture || `https://ui-avatars.com/api/?name=${encodeURIComponent(assignee.username || 'U')}&background=random`} alt={assignee.username} title={assignee.username} referrerPolicy="no-referrer" className="w-6 h-6 rounded-full border border-slate-900 bg-slate-800 object-cover relative transition-all hover:z-[99] hover:scale-110 neon-border-indigo cursor-help" />
+                      <img key={i} referrerPolicy="no-referrer" src={assignee.profilePicture || `https://ui-avatars.com/api/?name=${encodeURIComponent(assignee.username || 'U')}&background=random`} alt={assignee.username} title={assignee.username} className="w-6 h-6 rounded-full border border-slate-900 bg-slate-800 object-cover relative transition-all hover:z-[99] hover:scale-110 neon-border-indigo cursor-help" />
                     ))}
                   </div>
                 ) : (
@@ -1843,7 +1855,7 @@
               <div className="flex flex-col h-[85vh] bg-slate-900 border border-slate-700/80 rounded-2xl overflow-hidden shadow-2xl relative w-full max-w-5xl animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
                  <div className="p-6 border-b border-slate-700 bg-slate-800/50 flex items-center justify-between shrink-0">
                      <div className="flex items-center space-x-4">
-                       <img src={`https://ui-avatars.com/api/?name=${encodeURIComponent(assigneeUsername)}&background=random`} referrerPolicy="no-referrer" className="w-12 h-12 rounded-full border-2 border-indigo-500 shadow-[0_0_15px_rgba(99,102,241,0.4)]" />
+                       <img referrerPolicy="no-referrer" src={`https://ui-avatars.com/api/?name=${encodeURIComponent(assigneeUsername)}&background=random`} className="w-12 h-12 rounded-full border-2 border-indigo-500 shadow-[0_0_15px_rgba(99,102,241,0.4)]" />
                        <div>
                            <h2 className="text-xl font-bold text-white">{assigneeUsername}'s Workload Drill-Down</h2>
                            <p className="text-sm text-indigo-300 font-medium uppercase tracking-wider">{userRole}</p>
@@ -2656,7 +2668,7 @@
                       {transactions.length > 0 && <span className="absolute -top-1 -right-1 flex h-3 w-3"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span><span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500 border border-slate-950"></span></span>}
                     </button>
                     <div className="h-8 w-8 rounded-full bg-indigo-950/50 flex items-center justify-center overflow-hidden border border-transparent transition-all neon-border-indigo cursor-pointer">
-                      <img src={user.avatar} alt={user.name} className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+                      <img referrerPolicy="no-referrer" src={user.avatar} alt={user.name} className="h-full w-full object-cover" />
                     </div>
                     <button onClick={handleLogout} className="p-1.5 rounded-lg border border-transparent flex items-center text-sm font-medium text-slate-400 transition-all neon-border-slate"><LogOut className="h-4 w-4 sm:mr-1" /> <span className="hidden sm:block">Sign out</span></button>
                   </div>
@@ -2725,7 +2737,7 @@
                 <h1 className="text-2xl font-bold text-white flex items-center gap-3">
                   {mappedWorkflows.length > 1 ? `${mappedWorkflows.length} Active Workflows` : (mappedWorkflows[0]?.list || 'Your Workspace')}
                   
-                  <div className="flex items-center px-3 py-1 rounded-full border bg-emerald-900/30 border-emerald-500/30 text-emerald-400 text-xs font-medium cursor-default transition-all duration-500 hover:bg-[#10b981] hover:text-white hover:border-[#10b981] hover:shadow-[0_0_5px_#10b981,0_0_20px_#10b981,0_0_50px_#10b981,0_0_100px_#10b981] group">
+                  <div className="flex items-center px-3 py-1 rounded-full border bg-emerald-900/30 border-emerald-500/30 text-emerald-400 text-xs font-medium cursor-default transition-all duration-500 hover:bg-[#10b981] hover:text-white hover:border-[#10b981] hover:shadow-[0_0_5px_#10b981,0_0_20px_#10b981,0_0_50px_#10b981,0_0_100px_#10b981] group pill-neon-emerald">
                     <div className={`h-2 w-2 rounded-full mr-2 ${isAutoSyncing ? 'bg-emerald-400 animate-pulse' : 'bg-emerald-500/50'} group-hover:bg-white transition-colors`}></div> 
                     Synced: {new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: 'numeric', second: 'numeric' }).format(new Date(mappedWorkflows[0].lastSynced))}
                     {clickUpToken && (
@@ -3231,7 +3243,7 @@
                             <div>
                               <div className="flex justify-between items-start mb-4">
                                 <div className="flex items-center gap-3">
-                                  <img src={assignee.profilePicture} referrerPolicy="no-referrer" className="w-10 h-10 rounded-full border border-slate-700 group-hover:border-indigo-500 object-cover bg-slate-800 transition-colors" />
+                                  <img referrerPolicy="no-referrer" src={assignee.profilePicture} className="w-10 h-10 rounded-full border border-slate-700 group-hover:border-indigo-500 object-cover bg-slate-800 transition-colors" />
                                   <div>
                                     <h3 className="text-sm font-bold text-white group-hover:text-indigo-300 transition-colors">{assignee.username}</h3>
                                     <p className="text-xs text-slate-500">{totalAssigned} Assigned Items</p>
@@ -3322,7 +3334,7 @@
                             <div className="flex items-center gap-2 mb-1"><div className="w-1.5 h-1.5 rounded-full" style={{backgroundColor: task.status?.color || '#94a3b8'}}/><span className="text-sm font-bold text-slate-200">{task.name}</span></div>
                             <div className="text-xs text-slate-500 ml-3.5"><ClockAlert className="w-3 h-3 inline mr-1 text-amber-500/50" /> Elapsed: {Math.floor((now - parseInt(task.date_created))/86400000)}d / Est: {Math.round(parseInt(task.time_estimate)/3600000)}h</div>
                           </div>
-                          {task.assignees && task.assignees.length > 0 && <img src={task.assignees[0].profilePicture || `https://ui-avatars.com/api/?name=${task.assignees[0].username}`} referrerPolicy="no-referrer" className="w-6 h-6 rounded-full border border-slate-700 bg-slate-800 object-cover" />}
+                          {task.assignees && task.assignees.length > 0 && <img referrerPolicy="no-referrer" src={task.assignees[0].profilePicture || `https://ui-avatars.com/api/?name=${task.assignees[0].username}`} className="w-6 h-6 rounded-full border border-slate-700 bg-slate-800 object-cover" />}
                         </li>
                       ))}
                     </ul>
