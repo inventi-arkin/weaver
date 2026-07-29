@@ -1134,7 +1134,17 @@
           if (isOfflineFallback.current) return;
           if (snapshot.exists()) {
             const data = snapshot.data();
-            if (data.mappedWorkflows) setMappedWorkflows(data.mappedWorkflows);
+            if (data.mappedWorkflows) {
+               setMappedWorkflows(prev => {
+                   // Ensure we don't rollback to an older server state if our local state just updated
+                   const localSync = prev[0]?.lastSynced || 0;
+                   const serverSync = data.mappedWorkflows[0]?.lastSynced || 0;
+                   if (serverSync >= localSync || prev.length === 0) {
+                       return data.mappedWorkflows;
+                   }
+                   return prev;
+               });
+            }
           }
         }, (error) => console.error("Error fetching workflows:", error));
 
