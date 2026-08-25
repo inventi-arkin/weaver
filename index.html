@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="referrer" content="no-referrer">
   <title>Weaver - Thread Support and Development together</title>
+  <meta name="referrer" content="no-referrer">
   
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -354,7 +354,7 @@
                 task.assignees && task.assignees.length > 0 ? (
                   <div className="flex -space-x-1.5 shrink-0 ml-auto">
                     {task.assignees.map((assignee, i) => (
-                      <img key={i} src={assignee.profilePicture || `https://ui-avatars.com/api/?name=${encodeURIComponent(assignee.username || 'U')}&background=random`} alt={assignee.username} title={assignee.username} referrerPolicy="no-referrer" className="w-6 h-6 rounded-full border border-slate-900 bg-slate-800 object-cover relative transition-all hover:z-[99] hover:scale-110 neon-border-indigo cursor-help" />
+                      <img key={i} referrerPolicy="no-referrer" src={assignee.profilePicture || `https://ui-avatars.com/api/?name=${encodeURIComponent(assignee.username || 'U')}&background=random`} alt={assignee.username} title={assignee.username} className="w-6 h-6 rounded-full border border-slate-900 bg-slate-800 object-cover relative transition-all hover:z-[99] hover:scale-110 neon-border-indigo cursor-help" />
                     ))}
                   </div>
                 ) : (
@@ -652,8 +652,7 @@
       const [visibleTxCount, setVisibleTxCount] = useState(10);
       const notificationsRef = useRef(null);
       const bellButtonRef = useRef(null);
-      const isOfflineFallback = useRef(false);
-
+      
       // Hook to handle clicking outside of the notifications panel
       useEffect(() => {
         const handleClickOutside = (event) => {
@@ -703,10 +702,7 @@
             await updateDoc(docRef, { entries: arrayUnion(newTx) });
           } catch (error) {
             if (error.code === 'not-found') await setDoc(docRef, { entries: [newTx] });
-            else {
-                console.error("Error saving transaction:", error);
-                isOfflineFallback.current = true;
-            }
+            else console.error("Error saving transaction:", error);
           }
         }
       };
@@ -737,11 +733,13 @@
         if (token === 'mock_token') return {};
         
         const targetUrl = `https://api.clickup.com/api/v2/${endpoint}`;
-        // We must use proxies that explicitly forward custom 'Authorization' headers.
+        
+        // Use an array of robust proxies. 
+        // We use allorigins.win because it guarantees header forwarding if we use the /raw?url= endpoint.
         const proxies = [
+          `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
           `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`,
-          `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`, 
-          `https://thingproxy.freeboard.io/fetch/${targetUrl}`
+          `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`
         ];
 
         let lastError = new Error('Connection blocked by CORS or timed out.');
@@ -769,12 +767,11 @@
             return await res.json();
           } catch (err) {
             lastError = err;
-            // If the proxy strips the header, rate-limits, or blocks us (like 403), we MUST try the next proxy.
-            continue; 
+            continue; // Proceed to the next proxy loop!
           }
         }
-        // If all proxies fail, throw the very last error we encountered
-        throw lastError; 
+        
+        throw lastError; // If all proxies fail, throw the final error.
       };
 
       useEffect(() => {
@@ -929,7 +926,7 @@
                 const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
                 setDoc(docRef, { mappedWorkflows: nextWorkflows }, { merge: true }).catch(err => {
                     console.error("Error saving workflows:", err);
-                    isOfflineFallback.current = true;
+                    setMappedWorkflows(nextWorkflows);
                 });
               }
               return nextWorkflows;
@@ -961,7 +958,7 @@
             const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
             setDoc(docRef, { mappedWorkflows: newWorkflows }, { merge: true }).catch(err => {
                 console.error("Error deleting workflow:", err);
-                isOfflineFallback.current = true;
+                setMappedWorkflows(newWorkflows);
             });
           }
           return newWorkflows;
@@ -1013,7 +1010,7 @@
             const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
             setDoc(docRef, { mappedWorkflows: nextWorkflows }, { merge: true }).catch(err => {
                 console.error("Error saving synced workflows:", err);
-                isOfflineFallback.current = true;
+                setMappedWorkflows(nextWorkflows);
             });
           }
           return nextWorkflows;
@@ -1040,7 +1037,6 @@
             await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'capacity', activeListId), updates, { merge: true });
           } catch(err) {
              console.error("Error saving capacity settings to Firestore", err);
-             isOfflineFallback.current = true;
           }
         }
       };
@@ -1128,7 +1124,6 @@
 
         const ledgerRef = doc(db, 'artifacts', appId, 'public', 'data', 'ledgers', 'global');
         const unsubLedger = onSnapshot(ledgerRef, (snapshot) => {
-          if (isOfflineFallback.current) return;
           if (snapshot.exists()) {
             const data = snapshot.data();
             if (data.entries) setGlobalTimeLedger(data.entries);
@@ -1137,7 +1132,6 @@
 
         const wfRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
         const unsubWf = onSnapshot(wfRef, (snapshot) => {
-          if (isOfflineFallback.current) return;
           if (snapshot.exists()) {
             const data = snapshot.data();
             if (data.mappedWorkflows) {
@@ -1156,7 +1150,6 @@
 
         const txRef = doc(db, 'artifacts', appId, 'public', 'data', 'ledgers', 'transactions');
         const unsubTx = onSnapshot(txRef, (snapshot) => {
-          if (isOfflineFallback.current) return;
           if (snapshot.exists()) {
             const data = snapshot.data();
             if (data.entries) {
@@ -1254,10 +1247,7 @@
             await updateDoc(docRef, { entries: arrayUnion(newEntry) });
           } catch (error) {
             if (error.code === 'not-found') await setDoc(docRef, { entries: [newEntry] });
-            else {
-                console.error("Error saving time entry:", error);
-                isOfflineFallback.current = true;
-            }
+            else console.error("Error saving time entry:", error);
           }
         }
 
@@ -1276,7 +1266,6 @@
             await updateDoc(docRef, { entries: arrayRemove(entry) });
           } catch (error) {
             console.error("Error deleting time entry:", error);
-            isOfflineFallback.current = true;
           }
         }
       };
@@ -3328,10 +3317,10 @@
                       <div className="flex items-center flex-wrap space-x-3 mb-3">
                         <div className="bg-purple-500/10 p-2.5 rounded-lg border border-purple-500/20 shrink-0"><Target className="h-6 w-6 text-purple-400" /></div>
                         <h2 className="text-lg font-semibold text-white flex items-center flex-wrap gap-2">
-                          Est. Accuracy <div className="hover:z-[99999]"><MetricTooltip align="left" text="Measures accuracy of time estimates against time spent in dev." formula="100 - (|Time in 'Ongoing Dev' - Estimated Time| / Estimated Time * 100) for completed tasks."><InfoIcon className="h-4 w-4 text-slate-500 transition-colors" /></MetricTooltip></div>
+                          Est. Accuracy <div className="hover:z-[99999]"><MetricTooltip align="left" text="Measures the accuracy of time estimates against actual time spent." formula="100 - (|Actual Duration - Estimated Time| / Estimated Time * 100) for completed tasks."><InfoIcon className="h-4 w-4 text-slate-500 transition-colors" /></MetricTooltip></div>
                         </h2>
                       </div>
-                      <p className="text-sm text-slate-400 mb-5 leading-relaxed">Measures how closely the initial time estimates match the duration spent in the Ongoing Dev phase.</p>
+                      <p className="text-sm text-slate-400 mb-5 leading-relaxed">Measures how closely the initial time estimates match the actual duration it takes to complete tasks.</p>
                       <div className="flex items-end"><span className="text-6xl font-extrabold text-white tracking-tight leading-none">{estimationAccuracyDisplay}</span></div>
                     </div>
 
@@ -3475,7 +3464,7 @@
                 {/* Active Explorer */}
                 <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl mb-8">
                   <div className="px-6 py-4 border-b border-white/5 bg-slate-900/30 rounded-t-2xl"><h2 className="text-sm font-bold text-white flex items-center gap-2"><ListTodo className="h-4 w-4 text-indigo-400" /> Active Tasks Explorer</h2></div>
-                  <div className="p-6 max-h-[500px] overflow-y-auto">
+                  <div className="p-6">
                     {activeWorkflows.map(workflow => {
                       const mainTasksOnly = (workflow.tasks || []).filter(t => !(t.name || '').toLowerCase().includes('qa bugs'));
                       const rootTasksByTags = buildFilteredTree(mainTasksOnly, false);
@@ -3496,7 +3485,7 @@
                     <h2 className="text-sm font-bold text-white flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-emerald-400" /> Completed Tasks Explorer</h2>
                     <span className="text-xs font-medium text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20">{completedFilteredTasksCount} Resolved</span>
                   </div>
-                  <div className="p-6 max-h-[500px] overflow-y-auto">
+                  <div className="p-6">
                     {activeWorkflows.map(workflow => {
                       const mainTasksOnly = (workflow.tasks || []).filter(t => !(t.name || '').toLowerCase().includes('qa bugs'));
                       const completedTasksTree = buildFilteredTree(mainTasksOnly, true);
