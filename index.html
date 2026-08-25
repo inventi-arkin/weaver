@@ -737,10 +737,14 @@
         if (token === 'mock_token') return {};
         
         const targetUrl = `https://api.clickup.com/api/v2/${endpoint}`;
+        // We must use proxies that explicitly forward custom 'Authorization' headers.
         const proxies = [
+          `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`,
           `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`, 
           `https://thingproxy.freeboard.io/fetch/${targetUrl}`
         ];
+
+        let lastError = new Error('Connection blocked by CORS or timed out.');
 
         for (const proxyUrl of proxies) {
           try {
@@ -764,11 +768,13 @@
             }
             return await res.json();
           } catch (err) {
-            if (err.name === 'AbortError' || err.message === 'Failed to fetch' || err.name === 'TypeError') continue;
-            throw err; 
+            lastError = err;
+            // If the proxy strips the header, rate-limits, or blocks us (like 403), we MUST try the next proxy.
+            continue; 
           }
         }
-        throw new Error('Connection blocked by CORS or timed out.');
+        // If all proxies fail, throw the very last error we encountered
+        throw lastError; 
       };
 
       useEffect(() => {
@@ -2202,15 +2208,20 @@
                 }
 
                 if (Object.keys(parsedTimeInStatus).length > 0) {
+                    let ongoingDevMs = 0;
                     Object.entries(parsedTimeInStatus).forEach(([statusStr, durationMs]) => {
-                        const cleanStatus = statusStr.toLowerCase();
+                        const cleanStatus = statusStr.toLowerCase().trim();
                         if (!excludedStatusesForAccuracy.includes(cleanStatus)) {
                             if (!timeInStatusStats[cleanStatus]) timeInStatusStats[cleanStatus] = { sum: 0, count: 0 };
                             timeInStatusStats[cleanStatus].sum += durationMs;
                             timeInStatusStats[cleanStatus].count++;
-                            actualRunningMs += durationMs;
+                        }
+                        // Explicitly target Ongoing Dev for the Accuracy calculation
+                        if (cleanStatus === 'ongoing dev' || cleanStatus === 'in progress') {
+                            ongoingDevMs += durationMs;
                         }
                     });
+                    actualRunningMs = ongoingDevMs;
                 } else {
                     const end_date = t.date_closed ? parseDateMs(t.date_closed) : (t.date_updated ? parseDateMs(t.date_updated) : minDate);
                     const start_date = t.start_date ? parseDateMs(t.start_date) : (t.date_created ? parseDateMs(t.date_created) : end_date);
@@ -3317,10 +3328,10 @@
                       <div className="flex items-center flex-wrap space-x-3 mb-3">
                         <div className="bg-purple-500/10 p-2.5 rounded-lg border border-purple-500/20 shrink-0"><Target className="h-6 w-6 text-purple-400" /></div>
                         <h2 className="text-lg font-semibold text-white flex items-center flex-wrap gap-2">
-                          Est. Accuracy <div className="hover:z-[99999]"><MetricTooltip align="left" text="Measures the accuracy of time estimates against actual time spent." formula="100 - (|Actual Duration - Estimated Time| / Estimated Time * 100) for completed tasks."><InfoIcon className="h-4 w-4 text-slate-500 transition-colors" /></MetricTooltip></div>
+                          Est. Accuracy <div className="hover:z-[99999]"><MetricTooltip align="left" text="Measures accuracy of time estimates against time spent in dev." formula="100 - (|Time in 'Ongoing Dev' - Estimated Time| / Estimated Time * 100) for completed tasks."><InfoIcon className="h-4 w-4 text-slate-500 transition-colors" /></MetricTooltip></div>
                         </h2>
                       </div>
-                      <p className="text-sm text-slate-400 mb-5 leading-relaxed">Measures how closely the initial time estimates match the actual duration it takes to complete tasks.</p>
+                      <p className="text-sm text-slate-400 mb-5 leading-relaxed">Measures how closely the initial time estimates match the duration spent in the Ongoing Dev phase.</p>
                       <div className="flex items-end"><span className="text-6xl font-extrabold text-white tracking-tight leading-none">{estimationAccuracyDisplay}</span></div>
                     </div>
 
