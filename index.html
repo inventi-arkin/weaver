@@ -217,7 +217,6 @@
       Bug, ShieldAlert, Zap, Info as InfoIcon, Download, Image as ImageIcon
     } from 'lucide-react';
 
-    // --- STREAMING_CHUNK:Firebase Setup ---
     const firebaseConfig = {
       apiKey: "AIzaSyCzNMczm3bQ_1rnpoxvDswGDy4PE7XXCnI",
       authDomain: "weaver-2b8f6.firebaseapp.com",
@@ -234,7 +233,6 @@
     const googleProvider = new GoogleAuthProvider();
     const appId = typeof __app_id !== 'undefined' ? __app_id : 'weaver-default-app';
 
-    // --- STREAMING_CHUNK:Defining UI Helpers ---
     const SpiderNetworkIcon = ({ className }) => (
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
         <path d="M12 3 L19 7 L21 14 L17 20 L12 21 L7 20 L3 14 L5 7 Z" strokeWidth="1" strokeDasharray="2 2" opacity="0.3" />
@@ -372,7 +370,6 @@
       );
     };
 
-    // --- STREAMING_CHUNK:Canvas Background ---
     const WebNestBackground = ({ opacity }) => {
       const canvasRef = useRef(null);
 
@@ -546,7 +543,6 @@
       return <canvas ref={canvasRef} className="fixed top-0 left-0 w-full h-full block z-0 transition-opacity duration-1000 pointer-events-none" style={{ opacity }} />;
     };
 
-    // --- STREAMING_CHUNK:Mock Data ---
     const MOCK_CLICKUP_DATA = {
       teams: [{ id: 'mock_team_1', name: 'Acme Corp Workspace' }],
       spaces: { 'mock_team_1': [{ id: 'mock_space_1', name: 'Engineering' }, { id: 'mock_space_2', name: 'Customer Support' }] },
@@ -564,7 +560,6 @@
       }
     };
 
-    // --- STREAMING_CHUNK:App Component Initialization ---
     function App() {
       const [user, setUser] = useState(null);
       const [isLoggingIn, setIsLoggingIn] = useState(false);
@@ -721,7 +716,6 @@
       const mappedWorkflowsRef = useRef(mappedWorkflows);
       useEffect(() => { mappedWorkflowsRef.current = mappedWorkflows; }, [mappedWorkflows]);
 
-      // --- STREAMING_CHUNK:Integration Handlers ---
       const handleMockClickUpData = () => {
         setTeams(MOCK_CLICKUP_DATA.teams);
         setClickUpToken('mock_token');
@@ -730,48 +724,60 @@
       };
 
       const fetchClickUp = async (endpoint, token, method = 'GET', body = null) => {
-        if (token === 'mock_token') return {};
-        
-        const targetUrl = `https://api.clickup.com/api/v2/${endpoint}`;
-        
-        // Use an array of robust proxies. 
-        // We use allorigins.win because it guarantees header forwarding if we use the /raw?url= endpoint.
-        const proxies = [
-          `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
-          `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`,
-          `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`
-        ];
-
-        let lastError = new Error('Connection blocked by CORS or timed out.');
-
-        for (const proxyUrl of proxies) {
+          if (token === 'mock_token') return {};
+          const targetUrl = `https://api.clickup.com/api/v2/${endpoint}`;
+          
+          // 1. Attempt direct fetch first (Works instantly if you have a CORS extension)
           try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 15000);
-            
-            const fetchOptions = { 
-              method, 
-              headers: { 'Authorization': token, 'Content-Type': 'application/json' },
-              signal: controller.signal
-            };
-            if (body) fetchOptions.body = JSON.stringify(body);
-            
-            const res = await fetch(proxyUrl, fetchOptions);
-            clearTimeout(timeoutId);
-            
-            if (!res.ok) {
-              let errText = '';
-              try { const d = await res.json(); errText = d.err || d.error || ''; } catch(e){}
-              throw new Error(errText || `HTTP ${res.status}`);
-            }
-            return await res.json();
-          } catch (err) {
-            lastError = err;
-            continue; // Proceed to the next proxy loop!
+              const directRes = await fetch(targetUrl, {
+                  method,
+                  headers: { 'Authorization': token, 'Content-Type': 'application/json' },
+                  ...(body && { body: JSON.stringify(body) })
+              });
+              if (directRes.ok) return await directRes.json();
+              if (directRes.status === 401) {
+                  const error = new Error('Invalid API Token. ClickUp rejected the connection.');
+                  error.isDefinitive = true;
+                  throw error;
+              }
+          } catch (e) {
+              if (e.isDefinitive) throw e;
           }
-        }
-        
-        throw lastError; // If all proxies fail, throw the final error.
+
+          // 2. Route through your Personal Cloudflare Worker
+          const myCloudflareWorkerUrl = 'https://weaver.arkin-paroan.workers.dev';
+          
+          // Remove trailing slash if present, then build proxy URL
+          const cleanProxyBase = myCloudflareWorkerUrl.replace(/\/$/, '');
+          const proxyUrl = `${cleanProxyBase}/?url=${encodeURIComponent(targetUrl)}`;
+          
+          const fetchOptions = {
+              method,
+              headers: { 'Authorization': token, 'Content-Type': 'application/json' },
+              ...(body && { body: JSON.stringify(body) })
+          };
+          
+          try {
+              const res = await fetch(proxyUrl, fetchOptions);
+              if (!res.ok) {
+                  let errText = '';
+                  try {
+                      const d = await res.json();
+                      errText = d.error || '';
+                  } catch (e) {
+                      errText = await res.text();
+                  }
+                  if (res.status === 401) {
+                      const error = new Error('Invalid API Token. ClickUp rejected the connection.');
+                      error.isDefinitive = true;
+                      throw error;
+                  }
+                  throw new Error(errText || `HTTP ${res.status}`);
+              }
+              return await res.json();
+          } catch (err) {
+              throw err;
+          }
       };
 
       useEffect(() => {
@@ -911,7 +917,7 @@
           id: Date.now().toString(), team: teamName, space: spaceName, folder: folderName, list: listName, listId: selectedList, tasks: initialTasks, lastSynced: Date.now(), listStartDate, listDueDate
         };
 
-        // --- DIMENSION WARP SEQUENCE ---
+        // DIMENSION WARP SEQUENCE
         setWarpStage('weaving');
         setIsSwitchModalOpen(false);
 
@@ -919,8 +925,7 @@
             setWarpStage('flash');
             
             setMappedWorkflows(prev => {
-              const filtered = prev.filter(w => w.listId !== newWorkflow.listId);
-              const nextWorkflows = [...filtered, newWorkflow];
+              const nextWorkflows = [newWorkflow]; // Replace instead of append
               localStorage.setItem(`weaver_workflows_${appId}`, JSON.stringify(nextWorkflows));
               if (user && !user.isMock) {
                 const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
@@ -1041,7 +1046,6 @@
         }
       };
 
-      // --- STREAMING_CHUNK:Authentication Handlers ---
       useEffect(() => {
         let isInitialAuthCheck = true;
 
@@ -1270,7 +1274,6 @@
         }
       };
 
-      // --- STREAMING_CHUNK:Dashboard Processing Engine ---
       if (!authInitialized) {
         return (
           <div className="min-h-screen bg-slate-950 flex items-center justify-center">
@@ -1591,7 +1594,6 @@
             formatDate(maxDate)
         ];
         
-        // --- STREAMING_CHUNK:Monotonic Burndown Logic ---
         let initialBurnedMs = 0;
         const validEvents = [];
         
@@ -1721,7 +1723,6 @@
         const latestX = burndownPointsData.length > 0 ? burndownPointsData[burndownPointsData.length-1].x : currentX;
         const areaPath = smoothLinePath ? smoothLinePath + ` L ${latestX},100 L 0,100 Z` : "";
 
-        // --- STREAMING_CHUNK:Daily Burnup Logic ---
         let initialLoggedMs = 0;
         const logEvents = [];
         
@@ -1830,7 +1831,6 @@
         const clampedPlottedY = Math.max(0, Math.min(100, plottedY));
         const plottedPath = `M 0,${clampedPlottedY} L 100,${clampedPlottedY}`;
 
-        // --- STREAMING_CHUNK:Drill Down Modal Calculation ---
         const renderAssigneeDrillDown = (assigneeUsername) => {
            const assigneeTasks = allFlatTasks.filter(t => t.assignees?.some(a => a.username === assigneeUsername));
            if (!assigneeTasks || assigneeTasks.length === 0) return null;
@@ -2258,7 +2258,6 @@
           .sort((a, b) => (now - (parseInt(b.date_created) || now)) - (now - (parseInt(a.date_created) || now)))
           .slice(0, 5);
 
-        // --- STREAMING_CHUNK:CSV Export Logic ---
         const handleExportCSV = () => {
             const escapeCSV = (str) => {
                 if (str === null || str === undefined) return '""';
@@ -2272,18 +2271,25 @@
             };
 
             const headers = [
-                'Task Name', 'List/Workflow', 'Status', 'Priority', 
+                'Task Name', 'Task ID', 'List/Workflow', 'Status', 'Priority', 
                 'Estimated Hours', 'Logged Hours (ClickUp)', 'Logged Hours (Weaver)', 'Total Logged Hours',
-                'Assignees', 'Tags', 'Date Created', 'Date Closed'
+                'Assignees', 'Tags', 'Date Created', 'Date Closed', 'Parent Task ID'
             ];
 
             const rows = [headers.join(',')];
 
-            filteredTasks.forEach(task => {
-                const parentWf = activeWorkflows.find(wf => flattenTasksDeep(wf.tasks).some(t => t.id === task.id)) || { list: 'Unknown' };
+            const taskToWorkflowMap = {};
+            activeWorkflows.forEach(wf => {
+                flattenTasksDeep(wf.tasks || []).forEach(t => {
+                    taskToWorkflowMap[t.id] = wf.list;
+                });
+            });
 
+            allFlatTasks.forEach(task => {
+                const listName = taskToWorkflowMap[task.id] || 'Unknown';
                 const name = escapeCSV(task.name);
-                const list = escapeCSV(parentWf.list);
+                const id = escapeCSV(task.id);
+                const list = escapeCSV(listName);
                 const status = escapeCSV(task.status?.status || 'Open');
                 const priority = escapeCSV(task.priority?.priority || 'Normal');
                 
@@ -2302,8 +2308,9 @@
                 
                 const created = task.date_created ? escapeCSV(new Date(parseInt(task.date_created)).toLocaleDateString()) : '""';
                 const closed = task.date_closed ? escapeCSV(new Date(parseInt(task.date_closed)).toLocaleDateString()) : '""';
+                const parentId = task.parent ? escapeCSV(task.parent) : '""';
 
-                rows.push([name, list, status, priority, estHrs, cuLoggedHrs, wvrLoggedHrs, totLoggedHrs, assignees, tags, created, closed].join(','));
+                rows.push([name, id, list, status, priority, estHrs, cuLoggedHrs, wvrLoggedHrs, totLoggedHrs, assignees, tags, created, closed, parentId].join(','));
             });
 
             const csvContent = rows.join('\n');
@@ -2317,7 +2324,6 @@
             document.body.removeChild(link);
         };
         
-        // --- STREAMING_CHUNK:Integration UI Output ---
         const integrationUI = (
           <div className="animate-in fade-in duration-500 w-full">
             {integrationStep === 'idle' && mappedWorkflows.length === 0 && (
@@ -2416,7 +2422,6 @@
           </div>
         );
 
-        // --- STREAMING_CHUNK:Main Layout Return ---
         return (
           <div className="min-h-screen bg-slate-950 font-sans text-slate-100 relative">
             <WebNestBackground opacity={0.35} />
@@ -3541,7 +3546,6 @@
         );
       }
 
-      // --- STREAMING_CHUNK:Public Landing Page Return ---
       return (
         <div className="min-h-screen bg-slate-900 flex font-sans relative overflow-hidden">
           <WebNestBackground opacity={0.85} />
