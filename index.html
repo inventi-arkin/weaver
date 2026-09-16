@@ -1541,8 +1541,8 @@
         const totalEstHours = Math.round(totalEstimateMs / 3600000) || 1;
         const totalRemHours = Math.round(totalRemainingMs / 3600000);
         
-        const burnedHours = totalEstHours - totalRemHours;
-        const completionPercentage = Math.min(100, Math.round((burnedHours / totalEstHours) * 100));
+        const totalMainTasks = backlogBreakdown.mothers + activeBreakdown.mothers + completedBreakdown.mothers;
+        const completionPercentage = totalMainTasks > 0 ? Math.round((completedBreakdown.mothers / totalMainTasks) * 100) : 0;
 
         const formatDuration = (ms) => {
             const hrs = Math.floor(ms / 3600000);
@@ -2941,7 +2941,7 @@
                           <div className="text-lg font-semibold text-white flex items-center flex-wrap gap-2">
                             Sprint Completion
                             <div className="hover:z-[99999]">
-                              <MetricTooltip align="left" text="Visual classification of your entire scope into Backlog, Active, and Resolved." formula="Segments represent the proportion of task counts in each status category.">
+                              <MetricTooltip align="left" text="Percentage of completed main tasks, alongside visual status distribution." formula="Percentage: (Completed Main Tasks / Total Main Tasks) * 100. Segments: Proportion of total task counts.">
                                 <InfoIcon className="h-4 w-4 text-slate-500 transition-colors" />
                               </MetricTooltip>
                             </div>
