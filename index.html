@@ -217,6 +217,7 @@
       Bug, ShieldAlert, Zap, Info as InfoIcon, Download, Image as ImageIcon
     } from 'lucide-react';
 
+    // --- STREAMING_CHUNK:Firebase Setup ---
     const firebaseConfig = {
       apiKey: "AIzaSyCzNMczm3bQ_1rnpoxvDswGDy4PE7XXCnI",
       authDomain: "weaver-2b8f6.firebaseapp.com",
@@ -233,6 +234,7 @@
     const googleProvider = new GoogleAuthProvider();
     const appId = typeof __app_id !== 'undefined' ? __app_id : 'weaver-default-app';
 
+    // --- STREAMING_CHUNK:Defining UI Helpers ---
     const SpiderNetworkIcon = ({ className }) => (
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
         <path d="M12 3 L19 7 L21 14 L17 20 L12 21 L7 20 L3 14 L5 7 Z" strokeWidth="1" strokeDasharray="2 2" opacity="0.3" />
@@ -292,6 +294,36 @@
             )}
             <div className={`absolute border-[6px] border-transparent ${pointerAlignClasses} ${pointerVerticalClasses}`}></div>
           </div>
+        </div>
+      );
+    };
+
+    // --- STREAMING_CHUNK:Collapsible Group Component ---
+    const CollapsibleGroup = ({ title, children, count, color, defaultOpen = true }) => {
+      const [isOpen, setIsOpen] = useState(defaultOpen);
+      
+      return (
+        <div className="mb-4 bg-slate-900/40 rounded-xl border border-white/5 overflow-hidden transition-all duration-300">
+          <div 
+            onClick={() => setIsOpen(!isOpen)} 
+            className="flex items-center justify-between p-3 bg-slate-800/40 cursor-pointer hover:bg-slate-800/60 transition-colors border-b border-white/5 select-none"
+          >
+            <div className="flex items-center gap-2">
+              <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${isOpen ? 'rotate-90' : ''}`} />
+              {color && <div className="w-2.5 h-2.5 rounded-full shadow-lg" style={{ backgroundColor: color, boxShadow: `0 0 8px ${color}` }}></div>}
+              <h3 className="font-semibold text-slate-200 capitalize tracking-wide">{title}</h3>
+            </div>
+            {count !== undefined && (
+              <span className="text-xs font-medium text-slate-400 bg-slate-900/60 px-2 py-0.5 rounded-full border border-white/5 shadow-inner">
+                {count} {count === 1 ? 'Task' : 'Tasks'}
+              </span>
+            )}
+          </div>
+          {isOpen && (
+            <div className="p-3 space-y-2 bg-slate-900/20">
+              {children}
+            </div>
+          )}
         </div>
       );
     };
@@ -370,34 +402,7 @@
       );
     };
 
-    const CollapsibleGroup = ({ title, children, count, color }) => {
-      const [isOpen, setIsOpen] = useState(true);
-      return (
-        <div className="mb-4 bg-slate-900/40 rounded-xl border border-white/5 overflow-hidden">
-          <div 
-            onClick={() => setIsOpen(!isOpen)} 
-            className="flex items-center justify-between p-3 bg-slate-800/40 cursor-pointer hover:bg-slate-800/60 transition-colors border-b border-white/5"
-          >
-            <div className="flex items-center gap-2">
-              <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${isOpen ? 'rotate-90' : ''}`} />
-              <div className="w-2.5 h-2.5 rounded-full shadow-lg" style={{ backgroundColor: color || '#6366f1', boxShadow: `0 0 8px ${color || '#6366f1'}` }}></div>
-              <h3 className="font-semibold text-slate-200 capitalize">{title}</h3>
-            </div>
-            {count !== undefined && (
-              <span className="text-xs font-medium text-slate-400 bg-slate-900/60 px-2 py-0.5 rounded-full border border-white/5">
-                {count} {count === 1 ? 'Task' : 'Tasks'}
-              </span>
-            )}
-          </div>
-          {isOpen && (
-            <div className="p-3 space-y-2">
-              {children}
-            </div>
-          )}
-        </div>
-      );
-    };
-
+    // --- STREAMING_CHUNK:Canvas Background ---
     const WebNestBackground = ({ opacity }) => {
       const canvasRef = useRef(null);
 
@@ -571,6 +576,7 @@
       return <canvas ref={canvasRef} className="fixed top-0 left-0 w-full h-full block z-0 transition-opacity duration-1000 pointer-events-none" style={{ opacity }} />;
     };
 
+    // --- STREAMING_CHUNK:Mock Data ---
     const MOCK_CLICKUP_DATA = {
       teams: [{ id: 'mock_team_1', name: 'Acme Corp Workspace' }],
       spaces: { 'mock_team_1': [{ id: 'mock_space_1', name: 'Engineering' }, { id: 'mock_space_2', name: 'Customer Support' }] },
@@ -588,6 +594,7 @@
       }
     };
 
+    // --- STREAMING_CHUNK:App Component Initialization ---
     function App() {
       const [user, setUser] = useState(null);
       const [isLoggingIn, setIsLoggingIn] = useState(false);
@@ -744,6 +751,7 @@
       const mappedWorkflowsRef = useRef(mappedWorkflows);
       useEffect(() => { mappedWorkflowsRef.current = mappedWorkflows; }, [mappedWorkflows]);
 
+      // --- STREAMING_CHUNK:Integration Handlers ---
       const handleMockClickUpData = () => {
         setTeams(MOCK_CLICKUP_DATA.teams);
         setClickUpToken('mock_token');
@@ -914,6 +922,13 @@
         const folderName = selectedFolder ? (folders.find(f => f.id === selectedFolder)?.name || 'Folder') : 'No Folder';
         const listName = availableLists.find(l => l.id === selectedList)?.name || 'Task List';
 
+        // Check if the list is already connected
+        if (mappedWorkflows.some(wf => wf.listId === selectedList)) {
+           setClickUpError("This list is already connected to Weaver.");
+           setIntegrationStep('selecting');
+           return;
+        }
+
         let initialTasks = [];
         let listStartDate = null;
         let listDueDate = null;
@@ -953,7 +968,7 @@
             setWarpStage('flash');
             
             setMappedWorkflows(prev => {
-              const nextWorkflows = [newWorkflow]; // Replace instead of append
+              const nextWorkflows = [...prev, newWorkflow]; // Append the new workflow
               localStorage.setItem(`weaver_workflows_${appId}`, JSON.stringify(nextWorkflows));
               if (user && !user.isMock) {
                 const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
@@ -1074,6 +1089,7 @@
         }
       };
 
+      // --- STREAMING_CHUNK:Authentication Handlers ---
       useEffect(() => {
         let isInitialAuthCheck = true;
 
@@ -1302,6 +1318,7 @@
         }
       };
 
+      // --- STREAMING_CHUNK:Dashboard Processing Engine ---
       if (!authInitialized) {
         return (
           <div className="min-h-screen bg-slate-950 flex items-center justify-center">
@@ -1622,6 +1639,7 @@
             formatDate(maxDate)
         ];
         
+        // --- STREAMING_CHUNK:Monotonic Burndown Logic ---
         let initialBurnedMs = 0;
         const validEvents = [];
         
@@ -1751,6 +1769,7 @@
         const latestX = burndownPointsData.length > 0 ? burndownPointsData[burndownPointsData.length-1].x : currentX;
         const areaPath = smoothLinePath ? smoothLinePath + ` L ${latestX},100 L 0,100 Z` : "";
 
+        // --- STREAMING_CHUNK:Daily Burnup Logic ---
         let initialLoggedMs = 0;
         const logEvents = [];
         
@@ -1859,6 +1878,7 @@
         const clampedPlottedY = Math.max(0, Math.min(100, plottedY));
         const plottedPath = `M 0,${clampedPlottedY} L 100,${clampedPlottedY}`;
 
+        // --- STREAMING_CHUNK:Drill Down Modal Calculation ---
         const renderAssigneeDrillDown = (assigneeUsername) => {
            const assigneeTasks = allFlatTasks.filter(t => t.assignees?.some(a => a.username === assigneeUsername));
            if (!assigneeTasks || assigneeTasks.length === 0) return null;
@@ -2286,6 +2306,7 @@
           .sort((a, b) => (now - (parseInt(b.date_created) || now)) - (now - (parseInt(a.date_created) || now)))
           .slice(0, 5);
 
+        // --- STREAMING_CHUNK:CSV Export Logic ---
         const handleExportCSV = () => {
             const escapeCSV = (str) => {
                 if (str === null || str === undefined) return '""';
@@ -2352,6 +2373,7 @@
             document.body.removeChild(link);
         };
         
+        // --- STREAMING_CHUNK:Integration UI Output ---
         const integrationUI = (
           <div className="animate-in fade-in duration-500 w-full">
             {integrationStep === 'idle' && mappedWorkflows.length === 0 && (
@@ -2450,6 +2472,7 @@
           </div>
         );
 
+        // --- STREAMING_CHUNK:Main Layout Return ---
         return (
           <div className="min-h-screen bg-slate-950 font-sans text-slate-100 relative">
             <WebNestBackground opacity={0.35} />
@@ -2969,7 +2992,7 @@
                           <div className="text-lg font-semibold text-white flex items-center flex-wrap gap-2">
                             Sprint Completion
                             <div className="hover:z-[99999]">
-                              <MetricTooltip align="left" text="Percentage of completed main tasks, alongside visual status distribution." formula="Percentage: (Completed Main Tasks / Total Main Tasks) * 100. Segments: Proportion of total task counts.">
+                              <MetricTooltip align="left" text="Visual classification of your entire scope into Backlog, Active, and Resolved." formula="Segments represent the proportion of task counts in each status category.">
                                 <InfoIcon className="h-4 w-4 text-slate-500 transition-colors" />
                               </MetricTooltip>
                             </div>
@@ -3501,41 +3524,14 @@
                     {activeWorkflows.map(workflow => {
                       const mainTasksOnly = (workflow.tasks || []).filter(t => !(t.name || '').toLowerCase().includes('qa bugs'));
                       const rootTasksByTags = buildFilteredTree(mainTasksOnly, false);
-                      
-                      if (rootTasksByTags.length === 0) return null;
-
-                      // Group by status
-                      const groupedTasks = rootTasksByTags.reduce((acc, task) => {
-                        const statusName = task.status?.status || 'Open';
-                        if (!acc[statusName]) {
-                          acc[statusName] = {
-                            color: task.status?.color || '#6366f1',
-                            tasks: []
-                          };
-                        }
-                        acc[statusName].tasks.push(task);
-                        return acc;
-                      }, {});
-
                       return (
-                        <div key={workflow.id} className="mb-6 last:mb-0">
-                          {mappedWorkflows.length > 1 && <h3 className="text-sm font-semibold text-slate-400 mb-3 uppercase tracking-wider">{workflow.list}</h3>}
-                          {Object.entries(groupedTasks)
-                            .sort((a, b) => a[0].localeCompare(b[0]))
-                            .map(([statusName, group]) => (
-                            <CollapsibleGroup key={statusName} title={statusName} count={group.tasks.length} color={group.color}>
-                              {group.tasks.map(task => (
-                                <TaskItem key={task.id} task={task} expandedTasks={expandedTasks} toggleTaskExpand={toggleTaskExpand} />
-                              ))}
-                            </CollapsibleGroup>
-                          ))}
+                        <div key={workflow.id}>
+                          <div className="space-y-2">
+                            {rootTasksByTags.map(task => <TaskItem key={task.id} task={task} expandedTasks={expandedTasks} toggleTaskExpand={toggleTaskExpand} />)}
+                          </div>
                         </div>
                       )
                     })}
-                    {activeWorkflows.every(workflow => {
-                      const mainTasksOnly = (workflow.tasks || []).filter(t => !(t.name || '').toLowerCase().includes('qa bugs'));
-                      return buildFilteredTree(mainTasksOnly, false).length === 0;
-                    }) && <div className="text-center text-sm text-slate-500 italic py-4">No active tasks match your filters yet.</div>}
                   </div>
                 </div>
 
@@ -3601,6 +3597,7 @@
         );
       }
 
+      // --- STREAMING_CHUNK:Public Landing Page Return ---
       return (
         <div className="min-h-screen bg-slate-900 flex font-sans relative overflow-hidden">
           <WebNestBackground opacity={0.85} />
