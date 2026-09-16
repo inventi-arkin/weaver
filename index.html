@@ -370,6 +370,34 @@
       );
     };
 
+    const CollapsibleGroup = ({ title, children, count, color }) => {
+      const [isOpen, setIsOpen] = useState(true);
+      return (
+        <div className="mb-4 bg-slate-900/40 rounded-xl border border-white/5 overflow-hidden">
+          <div 
+            onClick={() => setIsOpen(!isOpen)} 
+            className="flex items-center justify-between p-3 bg-slate-800/40 cursor-pointer hover:bg-slate-800/60 transition-colors border-b border-white/5"
+          >
+            <div className="flex items-center gap-2">
+              <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${isOpen ? 'rotate-90' : ''}`} />
+              <div className="w-2.5 h-2.5 rounded-full shadow-lg" style={{ backgroundColor: color || '#6366f1', boxShadow: `0 0 8px ${color || '#6366f1'}` }}></div>
+              <h3 className="font-semibold text-slate-200 capitalize">{title}</h3>
+            </div>
+            {count !== undefined && (
+              <span className="text-xs font-medium text-slate-400 bg-slate-900/60 px-2 py-0.5 rounded-full border border-white/5">
+                {count} {count === 1 ? 'Task' : 'Tasks'}
+              </span>
+            )}
+          </div>
+          {isOpen && (
+            <div className="p-3 space-y-2">
+              {children}
+            </div>
+          )}
+        </div>
+      );
+    };
+
     const WebNestBackground = ({ opacity }) => {
       const canvasRef = useRef(null);
 
@@ -3473,14 +3501,41 @@
                     {activeWorkflows.map(workflow => {
                       const mainTasksOnly = (workflow.tasks || []).filter(t => !(t.name || '').toLowerCase().includes('qa bugs'));
                       const rootTasksByTags = buildFilteredTree(mainTasksOnly, false);
+                      
+                      if (rootTasksByTags.length === 0) return null;
+
+                      // Group by status
+                      const groupedTasks = rootTasksByTags.reduce((acc, task) => {
+                        const statusName = task.status?.status || 'Open';
+                        if (!acc[statusName]) {
+                          acc[statusName] = {
+                            color: task.status?.color || '#6366f1',
+                            tasks: []
+                          };
+                        }
+                        acc[statusName].tasks.push(task);
+                        return acc;
+                      }, {});
+
                       return (
-                        <div key={workflow.id}>
-                          <div className="space-y-2">
-                            {rootTasksByTags.map(task => <TaskItem key={task.id} task={task} expandedTasks={expandedTasks} toggleTaskExpand={toggleTaskExpand} />)}
-                          </div>
+                        <div key={workflow.id} className="mb-6 last:mb-0">
+                          {mappedWorkflows.length > 1 && <h3 className="text-sm font-semibold text-slate-400 mb-3 uppercase tracking-wider">{workflow.list}</h3>}
+                          {Object.entries(groupedTasks)
+                            .sort((a, b) => a[0].localeCompare(b[0]))
+                            .map(([statusName, group]) => (
+                            <CollapsibleGroup key={statusName} title={statusName} count={group.tasks.length} color={group.color}>
+                              {group.tasks.map(task => (
+                                <TaskItem key={task.id} task={task} expandedTasks={expandedTasks} toggleTaskExpand={toggleTaskExpand} />
+                              ))}
+                            </CollapsibleGroup>
+                          ))}
                         </div>
                       )
                     })}
+                    {activeWorkflows.every(workflow => {
+                      const mainTasksOnly = (workflow.tasks || []).filter(t => !(t.name || '').toLowerCase().includes('qa bugs'));
+                      return buildFilteredTree(mainTasksOnly, false).length === 0;
+                    }) && <div className="text-center text-sm text-slate-500 italic py-4">No active tasks match your filters yet.</div>}
                   </div>
                 </div>
 
