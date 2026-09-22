@@ -80,7 +80,7 @@
       pointer-events: none;
     }
 
-    /* General Glowing Interactables (Inputs, Selects, Checkboxes) */
+    /* General Glowing Interactables */
     .neon-input {
       transition: all 0.4s ease;
     }
@@ -119,7 +119,7 @@
       outline: none;
     }
 
-    /* Neon Border / Background Glow for Badges & Icon Buttons */
+    /* Neon Border / Background Glow */
     .neon-border-emerald { transition: all 0.3s ease; }
     .neon-border-emerald:hover {
       border-color: #10b981 !important;
@@ -155,7 +155,6 @@
       color: #e2e8f0 !important;
     }
 
-    /* Synced Pill Badge Specific Emerald Glow */
     .pill-neon-emerald { transition: all 0.5s ease; }
     .pill-neon-emerald:hover {
       color: #ffffff !important;
@@ -166,7 +165,6 @@
       outline: none;
     }
 
-    /* Floating Card Lift and Glow */
     .neon-card { transition: all 0.3s ease; }
     .neon-card:hover {
       transform: translateY(-5px);
@@ -176,7 +174,7 @@
     }
   </style>
 
-  <!-- Configure Babel to use the classic JSX runtime (React.createElement) natively -->
+  <!-- Configure Babel -->
   <script>
     Babel.registerPreset("react-classic", {
       presets: [
@@ -217,7 +215,6 @@
       Bug, ShieldAlert, Zap, Info as InfoIcon, Download, Image as ImageIcon
     } from 'lucide-react';
 
-    // --- STREAMING_CHUNK:Firebase Setup ---
     const firebaseConfig = {
       apiKey: "AIzaSyCzNMczm3bQ_1rnpoxvDswGDy4PE7XXCnI",
       authDomain: "weaver-2b8f6.firebaseapp.com",
@@ -234,7 +231,6 @@
     const googleProvider = new GoogleAuthProvider();
     const appId = typeof __app_id !== 'undefined' ? __app_id : 'weaver-default-app';
 
-    // --- STREAMING_CHUNK:Defining UI Helpers ---
     const SpiderNetworkIcon = ({ className }) => (
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
         <path d="M12 3 L19 7 L21 14 L17 20 L12 21 L7 20 L3 14 L5 7 Z" strokeWidth="1" strokeDasharray="2 2" opacity="0.3" />
@@ -298,7 +294,6 @@
       );
     };
 
-    // --- STREAMING_CHUNK:Collapsible Group Component ---
     const CollapsibleGroup = ({ title, children, count, color, defaultOpen = true }) => {
       const [isOpen, setIsOpen] = useState(defaultOpen);
       
@@ -346,7 +341,6 @@
         <div className={`transition-all ${isParent ? 'bg-slate-900/60 border border-white/5 rounded-xl neon-card' : 'bg-slate-900/40 rounded-r-lg border-l-2'}`} style={!isParent ? { borderLeftColor: `${themeColor}40` } : {}}>
           <div className={`flex flex-col p-3 gap-1.5 ${!isParent ? 'pl-4' : ''}`}>
             
-            {/* Top Row: Title */}
             <div className="flex items-start space-x-3 w-full group cursor-help relative">
               <div className="w-2.5 h-2.5 rounded-full shrink-0 shadow-lg mt-1.5" style={{ backgroundColor: themeColor, boxShadow: `0 0 8px ${themeColor}` }} />
               <div className="relative min-w-0 flex-1">
@@ -354,7 +348,6 @@
               </div>
             </div>
             
-            {/* Bottom Row: Metadata */}
             <div className="flex items-center shrink-0 space-x-3 pl-5 overflow-x-auto overflow-y-hidden py-0.5">
               {hasSubtasks && (
                 <button onClick={() => toggleTaskExpand(task.id)} className="flex items-center space-x-1.5 px-2 py-0.5 rounded bg-indigo-500/10 text-[10px] text-indigo-300 font-bold border border-transparent transition-all shrink-0 neon-border-indigo">
@@ -402,7 +395,6 @@
       );
     };
 
-    // --- STREAMING_CHUNK:Canvas Background ---
     const WebNestBackground = ({ opacity }) => {
       const canvasRef = useRef(null);
 
@@ -576,7 +568,6 @@
       return <canvas ref={canvasRef} className="fixed top-0 left-0 w-full h-full block z-0 transition-opacity duration-1000 pointer-events-none" style={{ opacity }} />;
     };
 
-    // --- STREAMING_CHUNK:Mock Data ---
     const MOCK_CLICKUP_DATA = {
       teams: [{ id: 'mock_team_1', name: 'Acme Corp Workspace' }],
       spaces: { 'mock_team_1': [{ id: 'mock_space_1', name: 'Engineering' }, { id: 'mock_space_2', name: 'Customer Support' }] },
@@ -594,15 +585,13 @@
       }
     };
 
-    // --- STREAMING_CHUNK:App Component Initialization ---
     function App() {
       const [user, setUser] = useState(null);
       const [isLoggingIn, setIsLoggingIn] = useState(false);
       const [authInitialized, setAuthInitialized] = useState(false);
       const [errorMessage, setErrorMessage] = useState(null);
 
-      // Core App State
-      const [warpStage, setWarpStage] = useState('idle'); // 'idle', 'weaving', 'flash', 'fade'
+      const [warpStage, setWarpStage] = useState('idle');
       const [integrationStep, setIntegrationStep] = useState('idle');
       const [clickUpToken, setClickUpToken] = useState(() => localStorage.getItem(`weaver_clickup_token_${appId}`) || '');
       const [tempToken, setTempToken] = useState('');
@@ -617,7 +606,6 @@
 
       const [isAutoSyncing, setIsAutoSyncing] = useState(false);
       
-      // Filtering & Settings State
       const [completionFilterType, setCompletionFilterType] = useState('none');
       const [selectedTagFilter, setSelectedTagFilter] = useState('');
       const [selectedAssigneeFilter, setSelectedAssigneeFilter] = useState('');
@@ -635,7 +623,6 @@
         try { const val = JSON.parse(localStorage.getItem(`weaver_settings_${appId}_${activeListId}`) || '{}').qaHoursPerDay; return val !== undefined ? val : 7; } catch(e) { return 7; }
       });
       
-      // Blocker State
       const [isBlockerModalOpen, setIsBlockerModalOpen] = useState(false);
       const [dateBlockers, setDateBlockers] = useState(() => {
         if (!activeListId) return [];
@@ -645,22 +632,18 @@
       const [newBlockerRemark, setNewBlockerRemark] = useState('Holiday');
       const [newBlockerAssignee, setNewBlockerAssignee] = useState('');
       
-      // Modal & Expanding State
       const [isSwitchModalOpen, setIsSwitchModalOpen] = useState(false);
       const [isUnifiedModalOpen, setIsUnifiedModalOpen] = useState(false);
       const [isLogFormOpen, setIsLogFormOpen] = useState(false);
       const [expandedTasks, setExpandedTasks] = useState({});
       const toggleTaskExpand = (taskId) => setExpandedTasks(prev => ({ ...prev, [taskId]: !prev[taskId] }));
       
-      // New Drill-Down State
       const [selectedDrillDownAssignee, setSelectedDrillDownAssignee] = useState(null);
 
-      // Profile Edit State
       const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
       const [newProfilePicUrl, setNewProfilePicUrl] = useState('');
       const [profileUpdateError, setProfileUpdateError] = useState(null);
 
-      // Time Ledger State
       const [globalTimeLedger, setGlobalTimeLedger] = useState(() => {
         try {
           const saved = localStorage.getItem(`weaver_ledger_${appId}`);
@@ -677,13 +660,11 @@
       
       const [activeChartHover, setActiveChartHover] = useState(null);
 
-      // Notifications State & Transactions
       const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
       const [visibleTxCount, setVisibleTxCount] = useState(10);
       const notificationsRef = useRef(null);
       const bellButtonRef = useRef(null);
       
-      // Hook to handle clicking outside of the notifications panel
       useEffect(() => {
         const handleClickOutside = (event) => {
           if (
@@ -737,7 +718,6 @@
         }
       };
 
-      // ClickUp Mapping State
       const [teams, setTeams] = useState([]);
       const [spaces, setSpaces] = useState([]);
       const [folders, setFolders] = useState([]);
@@ -751,7 +731,6 @@
       const mappedWorkflowsRef = useRef(mappedWorkflows);
       useEffect(() => { mappedWorkflowsRef.current = mappedWorkflows; }, [mappedWorkflows]);
 
-      // --- STREAMING_CHUNK:Integration Handlers ---
       const handleMockClickUpData = () => {
         setTeams(MOCK_CLICKUP_DATA.teams);
         setClickUpToken('mock_token');
@@ -763,7 +742,6 @@
           if (token === 'mock_token') return {};
           const targetUrl = `https://api.clickup.com/api/v2/${endpoint}`;
           
-          // 1. Attempt direct fetch first (Works instantly if you have a CORS extension)
           try {
               const directRes = await fetch(targetUrl, {
                   method,
@@ -780,10 +758,7 @@
               if (e.isDefinitive) throw e;
           }
 
-          // 2. Route through your Personal Cloudflare Worker
           const myCloudflareWorkerUrl = 'https://weaver.arkin-paroan.workers.dev';
-          
-          // Remove trailing slash if present, then build proxy URL
           const cleanProxyBase = myCloudflareWorkerUrl.replace(/\/$/, '');
           const proxyUrl = `${cleanProxyBase}/?url=${encodeURIComponent(targetUrl)}`;
           
@@ -922,13 +897,6 @@
         const folderName = selectedFolder ? (folders.find(f => f.id === selectedFolder)?.name || 'Folder') : 'No Folder';
         const listName = availableLists.find(l => l.id === selectedList)?.name || 'Task List';
 
-        // Check if the list is already connected
-        if (mappedWorkflows.some(wf => wf.listId === selectedList)) {
-           setClickUpError("This list is already connected to Weaver.");
-           setIntegrationStep('selecting');
-           return;
-        }
-
         let initialTasks = [];
         let listStartDate = null;
         let listDueDate = null;
@@ -960,7 +928,6 @@
           id: Date.now().toString(), team: teamName, space: spaceName, folder: folderName, list: listName, listId: selectedList, tasks: initialTasks, lastSynced: Date.now(), listStartDate, listDueDate
         };
 
-        // DIMENSION WARP SEQUENCE
         setWarpStage('weaving');
         setIsSwitchModalOpen(false);
 
@@ -968,7 +935,7 @@
             setWarpStage('flash');
             
             setMappedWorkflows(prev => {
-              const nextWorkflows = [...prev, newWorkflow]; // Append the new workflow
+              const nextWorkflows = [newWorkflow]; // Replace instead of append
               localStorage.setItem(`weaver_workflows_${appId}`, JSON.stringify(nextWorkflows));
               if (user && !user.isMock) {
                 const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
@@ -1067,10 +1034,9 @@
         setIsAutoSyncing(false);
       };
 
-      // Background synchronization loop
       useEffect(() => {
         if (mappedWorkflows.length === 0 || !clickUpToken) return;
-        const syncInterval = setInterval(runSyncSequence, 30000); // 30 seconds
+        const syncInterval = setInterval(runSyncSequence, 30000); 
         return () => clearInterval(syncInterval);
       }, [mappedWorkflows.length, clickUpToken, user]);
 
@@ -1089,16 +1055,13 @@
         }
       };
 
-      // --- STREAMING_CHUNK:Authentication Handlers ---
       useEffect(() => {
         let isInitialAuthCheck = true;
 
         const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
           if (currentUser) {
-            
-            // Logic to fallback from the default Google silhouette
             let finalAvatar = currentUser.photoURL;
-            const isDefaultSilhouette = finalAvatar && finalAvatar.includes('AAAAAAAAAAI/AAAAAAAAAAA'); // Google's default empty photo signature
+            const isDefaultSilhouette = finalAvatar && finalAvatar.includes('AAAAAAAAAAI/AAAAAAAAAAA'); 
             
             if (!finalAvatar || isDefaultSilhouette) {
                 finalAvatar = `https://ui-avatars.com/api/?name=${encodeURIComponent(currentUser.displayName || 'User')}&background=random`;
@@ -1184,7 +1147,6 @@
             const data = snapshot.data();
             if (data.mappedWorkflows) {
                setMappedWorkflows(prev => {
-                   // Ensure we don't rollback to an older server state if our local state just updated
                    const localSync = prev[0]?.lastSynced || 0;
                    const serverSync = data.mappedWorkflows[0]?.lastSynced || 0;
                    if (serverSync >= localSync || prev.length === 0) {
@@ -1318,7 +1280,6 @@
         }
       };
 
-      // --- STREAMING_CHUNK:Dashboard Processing Engine ---
       if (!authInitialized) {
         return (
           <div className="min-h-screen bg-slate-950 flex items-center justify-center">
@@ -1639,7 +1600,20 @@
             formatDate(maxDate)
         ];
         
-        // --- STREAMING_CHUNK:Monotonic Burndown Logic ---
+        const allMotherTasks = activeWorkflows.flatMap(wf => wf.tasks || []).filter(t => !(t.name || '').toLowerCase().includes('qa bugs'));
+        let filteredMotherTasks = allMotherTasks.filter(checkGlobalFilter);
+        const plottedScopeCount = filteredMotherTasks.length;
+        
+        const plottedScopeEstHours = Math.round(filteredMotherTasks.reduce((sum, t) => {
+            const est = parseInt(t.time_estimate) || 0;
+            const spent = parseInt(t.time_spent) || 0;
+            return sum + Math.max(est, spent);
+        }, 0) / 3600000);
+        
+        const completedMotherTasks = filteredMotherTasks.filter(t => doneStatuses.includes((t.status?.status || '').toLowerCase()));
+        const completedMotherCount = completedMotherTasks.length;
+        const completedMotherEstHours = Math.round(completedMotherTasks.reduce((sum, t) => sum + (parseInt(t.time_estimate) || 0), 0) / 3600000);
+
         let initialBurnedMs = 0;
         const validEvents = [];
         
@@ -1733,7 +1707,6 @@
             burndownPointsData.push({ x: Math.max(0, Math.min(100, burndownFinalX)), y: Math.max(0, Math.min(100, burndownFinalY)), date: now, value: totalEstimateMs - historicalBurnedMs });
         }
 
-
         const generateSmoothPath = (points) => {
             if (points.length === 0) return "";
             if (points.length === 1) return `M ${points[0].x},${points[0].y}`;
@@ -1769,116 +1742,65 @@
         const latestX = burndownPointsData.length > 0 ? burndownPointsData[burndownPointsData.length-1].x : currentX;
         const areaPath = smoothLinePath ? smoothLinePath + ` L ${latestX},100 L 0,100 Z` : "";
 
-        // --- STREAMING_CHUNK:Daily Burnup Logic ---
-        let initialLoggedMs = 0;
-        const logEvents = [];
+        let initialCompletedTasks = 0;
+        const completionEvents = [];
         
-        independentTasks.forEach(t => {
+        filteredMotherTasks.forEach(t => {
             const isDone = doneStatuses.includes((t.status?.status || '').toLowerCase());
-            let est = t.time_estimate ? Number(t.time_estimate) : 0;
-            let totalSpent = Number(t.time_spent) || 0;
-            
-            if (isDone && totalSpent === 0) totalSpent = est;
-            if (totalSpent > est) est = totalSpent;
-
-            const localAdded = Number(t._totalLocalAddedMs) || 0;
-            const nativeSpent = Math.max(0, totalSpent - localAdded);
-            
-            if (isDone && nativeSpent > 0) {
+            if (isDone) {
                 let dDate = parseDateMs(t.date_closed) || parseDateMs(t.date_updated) || parseDateMs(t.date_created) || minDate;
                 if (dDate <= minDate) {
-                    initialLoggedMs += nativeSpent;
+                    initialCompletedTasks += 1;
                 } else {
-                    logEvents.push({ date: dDate, logged: nativeSpent });
-                }
-            } else if (!isDone && nativeSpent > 0) {
-                let cDate = parseDateMs(t.date_created) || minDate;
-                let uDate = parseDateMs(t.date_updated) || now;
-                if (cDate < minDate) cDate = minDate;
-                if (uDate > now) uDate = now;
-                if (uDate < cDate) uDate = cDate;
-                
-                const duration = Math.max(1, uDate - cDate);
-                const slices = 10;
-                for (let i = 1; i <= slices; i++) {
-                    const sliceDate = cDate + (duration * (i/slices));
-                    if (sliceDate <= minDate) {
-                        initialLoggedMs += (nativeSpent / slices);
-                    } else {
-                        logEvents.push({ date: sliceDate, logged: nativeSpent / slices });
-                    }
+                    completionEvents.push({ date: dDate, count: 1 });
                 }
             }
         });
-
-        const extractLedgerEntries = (tasks) => {
-            tasks.forEach(t => {
-               const entries = t.localLedger || [];
-               entries.forEach(entry => {
-                   const eDate = parseDateMs(entry.timestamp);
-                   if (eDate <= minDate) {
-                       initialLoggedMs += Number(entry.ms);
-                   } else {
-                       logEvents.push({ date: eDate, logged: Number(entry.ms) });
-                   }
-               });
-               if (t.subtasks) extractLedgerEntries(t.subtasks);
-            });
-        };
-        extractLedgerEntries(independentTasks);
         
-        logEvents.sort((a,b) => a.date - b.date);
+        completionEvents.sort((a,b) => a.date - b.date);
 
-        const maxBurnupMs = Math.max(totalEstimateMs, devCapacityHours * 3600000, totalSpentMs, 3600000);
-        const maxBurnupHours = Math.round(maxBurnupMs / 3600000);
+        const maxBurnupY = Math.max(plottedScopeCount, 1);
 
-        let cumulativeLoggedMs = initialLoggedMs;
-        const startBurnupY = 100 - (initialLoggedMs / maxBurnupMs) * 100;
-        const burnupPointsData = [{ x: 0, y: Math.max(0, Math.min(100, startBurnupY)), date: minDate, value: initialLoggedMs }];
+        let cumulativeCompletedTasks = initialCompletedTasks;
+        const startBurnupY = 100 - (initialCompletedTasks / maxBurnupY) * 100;
+        const burnupPointsData = [{ x: 0, y: Math.max(0, Math.min(100, startBurnupY)), date: minDate, value: initialCompletedTasks }];
 
         let currentBurnupDayMs = minDate + oneDayMs;
-        let logEventIdx = 0;
+        let compEventIdx = 0;
 
         while (currentBurnupDayMs <= endChartDate) {
-            while (logEventIdx < logEvents.length && logEvents[logEventIdx].date <= currentBurnupDayMs) {
-                cumulativeLoggedMs += logEvents[logEventIdx].logged;
-                logEventIdx++;
+            while (compEventIdx < completionEvents.length && completionEvents[compEventIdx].date <= currentBurnupDayMs) {
+                cumulativeCompletedTasks += completionEvents[compEventIdx].count;
+                compEventIdx++;
             }
             const stepX = ((currentBurnupDayMs - minDate) / totalDurationMs) * 100;
-            const stepY = 100 - (cumulativeLoggedMs / maxBurnupMs) * 100;
-            burnupPointsData.push({ x: Math.max(0, Math.min(100, stepX)), y: Math.max(0, Math.min(100, stepY)), date: currentBurnupDayMs, value: cumulativeLoggedMs });
+            const stepY = 100 - (cumulativeCompletedTasks / maxBurnupY) * 100;
+            burnupPointsData.push({ x: Math.max(0, Math.min(100, stepX)), y: Math.max(0, Math.min(100, stepY)), date: currentBurnupDayMs, value: cumulativeCompletedTasks });
             currentBurnupDayMs += oneDayMs;
         }
 
-        while (logEventIdx < logEvents.length) {
-            cumulativeLoggedMs += logEvents[logEventIdx].logged;
-            logEventIdx++;
+        while (compEventIdx < completionEvents.length) {
+            cumulativeCompletedTasks += completionEvents[compEventIdx].count;
+            compEventIdx++;
         }
         const burnupFinalX = now >= maxDate ? 100 : ((now - minDate) / totalDurationMs) * 100;
-        const burnupFinalY = 100 - (cumulativeLoggedMs / maxBurnupMs) * 100;
+        const burnupFinalY = 100 - (cumulativeCompletedTasks / maxBurnupY) * 100;
 
         if (burnupPointsData.length > 0 && (burnupFinalX - burnupPointsData[burnupPointsData.length - 1].x) < 2) {
             burnupPointsData[burnupPointsData.length - 1].y = Math.max(0, Math.min(100, burnupFinalY));
             burnupPointsData[burnupPointsData.length - 1].x = Math.max(0, Math.min(100, burnupFinalX));
             burnupPointsData[burnupPointsData.length - 1].date = now;
-            burnupPointsData[burnupPointsData.length - 1].value = cumulativeLoggedMs;
+            burnupPointsData[burnupPointsData.length - 1].value = cumulativeCompletedTasks;
         } else {
-            burnupPointsData.push({ x: Math.max(0, Math.min(100, burnupFinalX)), y: Math.max(0, Math.min(100, burnupFinalY)), date: now, value: cumulativeLoggedMs });
+            burnupPointsData.push({ x: Math.max(0, Math.min(100, burnupFinalX)), y: Math.max(0, Math.min(100, burnupFinalY)), date: now, value: cumulativeCompletedTasks });
         }
 
         const smoothBurnupLinePath = generateSmoothPath(burnupPointsData);
         const latestBurnupX = burnupPointsData.length > 0 ? burnupPointsData[burnupPointsData.length-1].x : currentX;
         const burnupAreaPath = smoothBurnupLinePath ? smoothBurnupLinePath + ` L ${latestBurnupX},100 L 0,100 Z` : "";
         
-        const idealCapacityY = 100 - ((devCapacityHours * 3600000) / maxBurnupMs) * 100;
-        const clampedIdealY = Math.max(0, Math.min(100, idealCapacityY));
-        const idealCapacityPath = `M 0,${clampedIdealY} L 100,${clampedIdealY}`;
-        
-        const plottedY = 100 - (totalEstimateMs / maxBurnupMs) * 100;
-        const clampedPlottedY = Math.max(0, Math.min(100, plottedY));
-        const plottedPath = `M 0,${clampedPlottedY} L 100,${clampedPlottedY}`;
+        const plottedPath = `M 0,0 L 100,0`;
 
-        // --- STREAMING_CHUNK:Drill Down Modal Calculation ---
         const renderAssigneeDrillDown = (assigneeUsername) => {
            const assigneeTasks = allFlatTasks.filter(t => t.assignees?.some(a => a.username === assigneeUsername));
            if (!assigneeTasks || assigneeTasks.length === 0) return null;
@@ -2089,20 +2011,6 @@
            );
         };
 
-        const allMotherTasks = activeWorkflows.flatMap(wf => wf.tasks || []).filter(t => !(t.name || '').toLowerCase().includes('qa bugs'));
-        let filteredMotherTasks = allMotherTasks.filter(checkGlobalFilter);
-        const plottedScopeCount = filteredMotherTasks.length;
-        
-        const plottedScopeEstHours = Math.round(filteredMotherTasks.reduce((sum, t) => {
-            const est = parseInt(t.time_estimate) || 0;
-            const spent = parseInt(t.time_spent) || 0;
-            return sum + Math.max(est, spent);
-        }, 0) / 3600000);
-        
-        const completedMotherTasks = filteredMotherTasks.filter(t => doneStatuses.includes((t.status?.status || '').toLowerCase()));
-        const completedMotherCount = completedMotherTasks.length;
-        const completedMotherEstHours = Math.round(completedMotherTasks.reduce((sum, t) => sum + (parseInt(t.time_estimate) || 0), 0) / 3600000);
-
         const spillOverTasks = filteredMotherTasks.filter(t => {
             const isDone = doneStatuses.includes((t.status?.status || '').toLowerCase());
             if (isDone) return false;
@@ -2306,7 +2214,6 @@
           .sort((a, b) => (now - (parseInt(b.date_created) || now)) - (now - (parseInt(a.date_created) || now)))
           .slice(0, 5);
 
-        // --- STREAMING_CHUNK:CSV Export Logic ---
         const handleExportCSV = () => {
             const escapeCSV = (str) => {
                 if (str === null || str === undefined) return '""';
@@ -2373,7 +2280,6 @@
             document.body.removeChild(link);
         };
         
-        // --- STREAMING_CHUNK:Integration UI Output ---
         const integrationUI = (
           <div className="animate-in fade-in duration-500 w-full">
             {integrationStep === 'idle' && mappedWorkflows.length === 0 && (
@@ -2472,46 +2378,32 @@
           </div>
         );
 
-        // --- STREAMING_CHUNK:Main Layout Return ---
         return (
           <div className="min-h-screen bg-slate-950 font-sans text-slate-100 relative">
             <WebNestBackground opacity={0.35} />
 
-            {/* Dimension Warp Splash Screen */}
             {warpStage !== 'idle' && (
               <div className="fixed inset-0 z-[999999] pointer-events-none flex flex-col items-center justify-center overflow-hidden">
-                
-                {/* Main Dark Background - fades out during 'fade' */}
                 <div className={`absolute inset-0 bg-slate-950 transition-opacity ${warpStage === 'fade' ? 'opacity-0 duration-[1500ms] ease-in-out' : 'opacity-100 duration-300'}`}></div>
-
-                {/* The exploding bright light core (Behind Spider) */}
                 <div className={`absolute rounded-full transition-all ease-in-out ${warpStage === 'flash' || warpStage === 'fade' ? 'w-[150vw] h-[150vw] bg-indigo-100 blur-[100px] opacity-100 duration-[400ms]' : 'w-[20vw] h-[20vw] bg-indigo-600/20 blur-[80px] opacity-100 animate-pulse duration-0'}`}></div>
-
-                {/* Spider and Rings - fades out during 'fade' */}
                 <div className={`relative flex items-center justify-center transition-opacity ${warpStage === 'fade' ? 'opacity-0 duration-[1000ms] ease-in-out' : 'opacity-100'}`}>
                     <div className={`absolute rounded-full border transition-all animate-[spin_4s_linear_infinite] ${warpStage === 'flash' || warpStage === 'fade' ? 'w-[120vw] h-[120vw] border-indigo-100/80 duration-[400ms]' : 'w-[40vw] h-[40vw] border-indigo-500/20 duration-0'}`}></div>
                     <div className={`absolute rounded-full border transition-all animate-[spin_3s_linear_infinite_reverse] ${warpStage === 'flash' || warpStage === 'fade' ? 'w-[90vw] h-[90vw] border-indigo-100/90 duration-[400ms]' : 'w-[30vw] h-[30vw] border-indigo-400/30 duration-0'}`}></div>
                     <div className={`absolute rounded-full border transition-all animate-[spin_2s_linear_infinite] ${warpStage === 'flash' || warpStage === 'fade' ? 'w-[60vw] h-[60vw] border-white duration-[400ms]' : 'w-[20vw] h-[20vw] border-indigo-300/40 duration-0'}`}></div>
-                    
                     <div className={`relative p-8 rounded-full border-2 transition-all duration-[400ms] ${warpStage === 'flash' || warpStage === 'fade' ? 'border-white shadow-[0_0_150px_rgba(255,255,255,1)] bg-indigo-400' : 'bg-slate-900 border-indigo-500 shadow-[0_0_100px_rgba(99,102,241,1)]'}`}>
                       <SpiderNetworkIcon className={`h-24 w-24 transition-colors duration-[400ms] ${warpStage === 'flash' || warpStage === 'fade' ? 'text-white drop-shadow-[0_0_10px_rgba(255,255,255,1)]' : 'text-indigo-400'} ${warpStage === 'weaving' ? 'animate-pulse' : ''}`} />
                     </div>
                 </div>
-
-                {/* Text Elements - fades out during 'flash' */}
                 <div className={`relative mt-12 flex flex-col items-center transition-opacity duration-300 ${warpStage === 'flash' || warpStage === 'fade' ? 'opacity-0' : 'opacity-100'}`}>
                   <h2 className="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-emerald-400 tracking-[0.2em] animate-pulse">
                     Weaving Dimension
                   </h2>
                   <p className="mt-4 text-indigo-300/70 font-mono text-sm tracking-widest uppercase">Synchronizing Neural Link...</p>
                 </div>
-                
-                {/* Overpowering Light Wash - blends the screen brightly, then fades */}
                 <div className={`absolute inset-0 transition-opacity pointer-events-none mix-blend-screen bg-[radial-gradient(circle_at_center,rgba(255,255,255,1)_0%,rgba(199,210,254,0.6)_40%,rgba(99,102,241,0)_100%)] ${warpStage === 'flash' ? 'opacity-100 duration-[400ms] ease-in' : warpStage === 'fade' ? 'opacity-0 duration-[1500ms] ease-out' : 'opacity-0 duration-0 hidden'}`}></div>
               </div>
             )}
 
-            {/* Profile Update Modal */}
             {isProfileModalOpen && (
                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200">
                   <div className="bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl w-full max-w-sm flex flex-col overflow-hidden animate-in zoom-in-95">
@@ -2542,7 +2434,6 @@
                </div>
             )}
 
-            {/* Change Connection Modal */}
             {isSwitchModalOpen && mappedWorkflows.length > 0 && (
               <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
                  <div className="bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden relative animate-in zoom-in-95 duration-200">
@@ -2555,14 +2446,12 @@
               </div>
             )}
 
-            {/* Drill Down Modal */}
             {selectedDrillDownAssignee && (
               <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md" onClick={() => setSelectedDrillDownAssignee(null)}>
                  {renderAssigneeDrillDown(selectedDrillDownAssignee)}
               </div>
             )}
 
-            {/* Unified Tasks & Time Modal */}
             {isUnifiedModalOpen && (
               <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
                 <div className="bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl w-full max-w-7xl h-[85vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
@@ -2571,8 +2460,6 @@
                       <button onClick={() => setIsUnifiedModalOpen(false)} className="text-slate-400 p-2 rounded neon-border-slate transition-colors"><X className="h-6 w-6"/></button>
                    </div>
                    <div className="flex flex-col lg:flex-row flex-1 overflow-hidden">
-                      
-                      {/* Left Pane: Task Tree */}
                       <div className="w-full lg:w-[55%] border-r border-slate-700/80 p-6 flex flex-col bg-slate-900/50">
                          <h3 className="text-sm font-semibold text-slate-400 mb-4 uppercase tracking-wider flex items-center"><FolderOpen className="h-4 w-4 mr-2"/> Active Hierarchy</h3>
                          <div className="mb-4 space-y-3">
@@ -2620,7 +2507,6 @@
                                               )}
                                               <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: task.status?.color || '#cbd5e1' }} />
                                               
-                                              {/* Truncated Name with Tooltip logic */}
                                               <div className="relative min-w-0 flex-1">
                                                  <span className={`block text-sm font-medium truncate ${isSelected ? 'text-indigo-100' : 'text-slate-200'}`} title={task.name}>{task.name}</span>
                                               </div>
@@ -2648,21 +2534,9 @@
                                   </div>
                                );
                             })}
-                            {mappedWorkflows.every(wf => {
-                               const filterNodeForLedger = (node) => {
-                                 const matchesSearch = taskSearchQuery.trim() === '' || (node.name || '').toLowerCase().includes(taskSearchQuery.toLowerCase());
-                                 const isAssignedToMe = node.assignees && node.assignees.some(a => (a.username || '') === user?.name);
-                                 const matchesMyTasks = !showMyTasksOnly || isAssignedToMe;
-                                 const validSubtasks = (node.subtasks || []).map(filterNodeForLedger).filter(Boolean);
-                                 if ((matchesSearch && matchesMyTasks) || validSubtasks.length > 0) return { ...node, subtasks: validSubtasks };
-                                 return null;
-                               };
-                               return (wf.tasks || []).map(filterNodeForLedger).filter(Boolean).length === 0;
-                            }) && <div className="text-slate-500 italic text-sm text-center mt-6">No tasks match your filter.</div>}
                          </div>
                       </div>
 
-                      {/* Right Pane: Time Logging & Feed */}
                       <div className="w-full lg:w-[45%] flex flex-col bg-slate-950/30">
                          <div className="p-5 border-b border-slate-700/80 flex justify-between items-center bg-slate-900/60 shrink-0">
                             <div className="flex items-center space-x-3">
@@ -2762,7 +2636,6 @@
                   </div>
                 )}
 
-            {/* Capacity Settings Blocker Modal */}
             {isBlockerModalOpen && (
               <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200">
                 <div className="bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden animate-in zoom-in-95">
@@ -2830,7 +2703,6 @@
               </div>
             )}
 
-            {/* Top Navigation */}
             <nav className="relative z-30 bg-slate-950/50 backdrop-blur-md border-b border-white/10 sticky top-0">
               <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                 <div className="flex justify-between h-16">
@@ -2852,7 +2724,6 @@
               </div>
             </nav>
 
-            {/* Notifications Panel */}
             {isNotificationsOpen && (
               <div ref={notificationsRef} className="fixed top-16 right-4 sm:right-6 lg:right-8 w-80 bg-slate-900 border border-slate-700/80 rounded-xl shadow-[0_0_20px_rgba(99,102,241,0.3)] z-50 flex flex-col max-h-[80vh] overflow-hidden animate-in slide-in-from-top-4 duration-200">
                 <div className="p-4 border-b border-slate-700/80 bg-slate-800/50 flex items-center justify-between shrink-0">
@@ -2992,7 +2863,7 @@
                           <div className="text-lg font-semibold text-white flex items-center flex-wrap gap-2">
                             Sprint Completion
                             <div className="hover:z-[99999]">
-                              <MetricTooltip align="left" text="Visual classification of your entire scope into Backlog, Active, and Resolved." formula="Segments represent the proportion of task counts in each status category.">
+                              <MetricTooltip align="left" text="Percentage of completed main tasks, alongside visual status distribution." formula="Percentage: (Completed Main Tasks / Total Main Tasks) * 100. Segments: Proportion of total task counts.">
                                 <InfoIcon className="h-4 w-4 text-slate-500 transition-colors" />
                               </MetricTooltip>
                             </div>
@@ -3195,37 +3066,36 @@
                     </div>
                   </div>
 
-                  {/* Effort Burnup */}
+                  {/* Main Tasks Burnup */}
                   <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl flex flex-col justify-between">
                     <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start mb-6 gap-4">
                       <div>
                         <div className="flex items-center flex-wrap space-x-2 mb-1">
                           <TrendingUp className="h-5 w-5 text-emerald-400 shrink-0" />
                           <div className="text-lg font-semibold text-white flex items-center flex-wrap gap-2">
-                            Effort Burnup (Logged Hours)
+                            Sprint Burnup
                             <div className="hover:z-[99999]">
-                              <MetricTooltip align="left" text="Cumulative tracked hours against realistic capacity." formula="Y-Axis: Total logged hours. Ideal Line: (Developers × Daily Hours) × (Sprint Days - Blockers).">
+                              <MetricTooltip align="left" text="Cumulative completed main tasks against total scope." formula="Y-Axis: Total completed tasks. Ideal Line: Total planned tasks.">
                                 <InfoIcon className="h-4 w-4 text-slate-500 transition-colors" />
                               </MetricTooltip>
                             </div>
                           </div>
                         </div>
-                        <p className="text-sm text-slate-400">Tracking cumulative time entries vs available capacity.</p>
+                        <p className="text-sm text-slate-400">Tracking cumulative completed tasks vs total scope.</p>
                       </div>
                       <div className="flex flex-row sm:flex-col gap-4 sm:gap-1.5 text-sm bg-slate-900/60 px-3 py-2 rounded-lg border border-white/5 shrink-0">
-                        <div className="flex items-center text-slate-400 font-medium"><div className="w-4 h-0 border-t-2 border-dashed border-slate-500 mr-2"></div> Capacity ({devCapacityHours}h)</div>
-                        <div className="flex items-center text-slate-400 font-medium"><div className="w-4 h-0 border-t-2 border-dotted border-blue-400 mr-2"></div> Plotted ({totalEstHours}h)</div>
-                        <div className="flex items-center text-slate-400 font-medium"><div className="w-3 h-3 bg-emerald-500 rounded-full mr-2 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div> Logged Time</div>
+                        <div className="flex items-center text-slate-400 font-medium"><div className="w-4 h-0 border-t-2 border-dotted border-blue-400 mr-2"></div> Total Scope ({plottedScopeCount})</div>
+                        <div className="flex items-center text-slate-400 font-medium"><div className="w-3 h-3 bg-emerald-500 rounded-full mr-2 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div> Completed Tasks</div>
                       </div>
                     </div>
                     
                     <div className="relative h-56 w-full hover:z-[99999] group/chart">
                       <div className="absolute left-0 top-0 bottom-6 w-8 flex flex-col justify-between text-xs font-medium text-slate-500 text-right pr-2">
-                        <span>{maxBurnupHours}h</span>
-                        <span>{Math.round(maxBurnupHours * 0.75)}h</span>
-                        <span>{Math.round(maxBurnupHours * 0.5)}h</span>
-                        <span>{Math.round(maxBurnupHours * 0.25)}h</span>
-                        <span>0h</span>
+                        <span>{plottedScopeCount}</span>
+                        <span>{Math.round(plottedScopeCount * 0.75)}</span>
+                        <span>{Math.round(plottedScopeCount * 0.5)}</span>
+                        <span>{Math.round(plottedScopeCount * 0.25)}</span>
+                        <span>0</span>
                       </div>
                       
                       <div className="absolute left-10 right-2 top-2 bottom-6 cursor-crosshair z-10 group-hover/chart:z-[999999]"
@@ -3248,7 +3118,6 @@
                               <line x1="66.6" y1="0" x2="66.6" y2="100" stroke="#111827" strokeWidth="1" vectorEffect="non-scaling-stroke" />
                               <line x1="100" y1="0" x2="100" y2="100" stroke="#111827" strokeWidth="1" vectorEffect="non-scaling-stroke" />
                               
-                              <path d={idealCapacityPath} stroke="#475569" strokeWidth="2" strokeDasharray="6 6" vectorEffect="non-scaling-stroke" fill="none" />
                               <path d={plottedPath} stroke="#60a5fa" strokeWidth="2" strokeDasharray="2 4" vectorEffect="non-scaling-stroke" fill="none" />
                               
                               {burnupAreaPath && <path d={burnupAreaPath} fill="url(#burnupGradient)" />}
@@ -3268,7 +3137,7 @@
                                       }}>
                                     <div className="bg-slate-800 border border-emerald-500/50 text-white rounded-lg px-3 py-1.5 shadow-[0_0_15px_rgba(16,185,129,0.5)] whitespace-nowrap flex flex-col items-center">
                                        <span className="font-bold text-[10px] uppercase tracking-wider text-emerald-400 mb-0.5">{new Date(activeChartHover.dateMs).toLocaleDateString()}</span>
-                                       <span className="text-xs font-semibold text-slate-100">{Math.max(0, Math.round(activeChartHover.value / 3600000))}h Logged</span>
+                                       <span className="text-xs font-semibold text-slate-100">{activeChartHover.value} Tasks Completed</span>
                                     </div>
                                     <div className="w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-t-[6px] border-t-emerald-500/50"></div>
                                  </div>
@@ -3517,18 +3386,36 @@
                   </div>
                 )}
 
-                {/* Active Explorer */}
+                {/* Active Explorer (Grouped by Status) */}
                 <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl mb-8">
                   <div className="px-6 py-4 border-b border-white/5 bg-slate-900/30 rounded-t-2xl"><h2 className="text-sm font-bold text-white flex items-center gap-2"><ListTodo className="h-4 w-4 text-indigo-400" /> Active Tasks Explorer</h2></div>
                   <div className="p-6">
                     {activeWorkflows.map(workflow => {
                       const mainTasksOnly = (workflow.tasks || []).filter(t => !(t.name || '').toLowerCase().includes('qa bugs'));
                       const rootTasksByTags = buildFilteredTree(mainTasksOnly, false);
+                      
+                      const groupedByStatus = {};
+                      rootTasksByTags.forEach(task => {
+                        const status = task.status?.status || 'Open';
+                        if (!groupedByStatus[status]) groupedByStatus[status] = [];
+                        groupedByStatus[status].push(task);
+                      });
+                      const sortedStatuses = Object.keys(groupedByStatus).sort();
+
                       return (
-                        <div key={workflow.id}>
-                          <div className="space-y-2">
-                            {rootTasksByTags.map(task => <TaskItem key={task.id} task={task} expandedTasks={expandedTasks} toggleTaskExpand={toggleTaskExpand} />)}
-                          </div>
+                        <div key={workflow.id} className="space-y-4">
+                          {sortedStatuses.map(status => (
+                            <CollapsibleGroup 
+                              key={status} 
+                              title={status} 
+                              count={groupedByStatus[status].length}
+                              color={groupedByStatus[status][0]?.status?.color}
+                            >
+                              {groupedByStatus[status].map(task => (
+                                <TaskItem key={task.id} task={task} expandedTasks={expandedTasks} toggleTaskExpand={toggleTaskExpand} />
+                              ))}
+                            </CollapsibleGroup>
+                          ))}
                         </div>
                       )
                     })}
@@ -3561,7 +3448,7 @@
                   </div>
                 </div>
 
-                {/* Legacy Active Workflows list summary */}
+                {/* Active Connections */}
                 <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl mb-8">
                   <div className="px-6 py-4 border-b border-white/5 bg-slate-900/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-t-2xl">
                     <div className="flex items-center space-x-3">
@@ -3597,37 +3484,7 @@
         );
       }
 
-      // --- STREAMING_CHUNK:Public Landing Page Return ---
-      return (
-        <div className="min-h-screen bg-slate-900 flex font-sans relative overflow-hidden">
-          <WebNestBackground opacity={0.85} />
-          <div className="absolute inset-0 bg-radial-vignette pointer-events-none z-10" style={{ background: 'radial-gradient(circle, transparent 30%, rgba(9, 13, 22, 0.4) 100%)' }}></div>
-          <div className="hidden lg:flex lg:w-1/2 items-center justify-center p-12 relative z-20">
-            <div className="max-w-md relative bg-slate-900/40 backdrop-blur-md p-8 rounded-[2rem] border border-white/5 shadow-2xl">
-              <div className="flex items-center mb-8"><div className="bg-indigo-600 p-2.5 rounded-xl"><SpiderNetworkIcon className="h-8 w-8 text-white" /></div><span className="ml-3 text-3xl font-extrabold text-white">Weaver</span></div>
-              <h1 className="text-4xl font-bold text-white leading-tight mb-6">Thread your support and development together.</h1>
-              <p className="text-lg text-slate-300 mb-8 font-medium">Weaver creates a seamless bridge between your front-line ticketing apps and your back-office task managers.</p>
-            </div>
-          </div>
-          <div className="w-full lg:w-1/2 flex items-center justify-center p-8 relative z-20 bg-slate-950/20 backdrop-blur-[4px] border-l border-white/10 shadow-[-20px_0_50px_rgba(0,0,0,0.3)]">
-            <div className="w-full max-w-sm space-y-8 bg-slate-900/30 backdrop-blur-2xl p-10 rounded-[2.5rem] border border-white/10 shadow-2xl">
-              <div><h2 className="text-3xl font-bold text-white">Welcome back</h2><p className="mt-2 text-sm text-slate-400">Sign in to your account.</p></div>
-              <button onClick={handleGoogleLogin} disabled={isLoggingIn} className="w-full btn-neon btn-neon-indigo mt-4">
-                {isLoggingIn ? <span>Connecting...</span> : <span>Sign in with Google</span>}
-              </button>
-              
-              {errorMessage && (
-                <div className="mt-4 p-3 bg-rose-500/10 border border-rose-500/20 rounded-lg text-xs text-rose-300">
-                  <AlertTriangle className="h-4 w-4 inline mr-1 mb-0.5" />
-                  {errorMessage.includes('auth/unauthorized-domain') 
-                    ? "Domain unauthorized. Falling back to Local Offline mode. To enable cross-device sync, please replace the firebaseConfig in the HTML with your own Firebase project credentials."
-                    : errorMessage}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      );
+      return null;
     }
 
     const root = createRoot(document.getElementById('root'));
