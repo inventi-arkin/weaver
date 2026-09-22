@@ -935,7 +935,8 @@
             setWarpStage('flash');
             
             setMappedWorkflows(prev => {
-              const nextWorkflows = [newWorkflow]; // Replace instead of append
+              const filteredPrev = prev.filter(w => w.listId !== newWorkflow.listId);
+              const nextWorkflows = [...filteredPrev, newWorkflow].slice(-2); // Allow up to 2 lists
               localStorage.setItem(`weaver_workflows_${appId}`, JSON.stringify(nextWorkflows));
               if (user && !user.isMock) {
                 const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
@@ -3474,8 +3475,13 @@
                   <div className="px-6 py-4 border-b border-white/5 bg-slate-900/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-t-2xl">
                     <div className="flex items-center space-x-3">
                       <h2 className="text-lg font-semibold text-white">Active Connections</h2>
-                      <span className="flex items-center text-xs font-medium text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20"><div className="h-2 w-2 rounded-full bg-emerald-400 mr-1.5 animate-pulse"></div> Linked</span>
+                      <span className="flex items-center text-xs font-medium text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20"><div className="h-2 w-2 rounded-full bg-emerald-400 mr-1.5 animate-pulse"></div> Linked ({mappedWorkflows.length}/2 Max)</span>
                     </div>
+                    {mappedWorkflows.length < 2 && (
+                      <button onClick={handleConnectClickUp} className="btn-neon btn-neon-indigo btn-neon-sm">
+                        <Plus className="w-3.5 h-3.5 mr-1" /> Add Another List
+                      </button>
+                    )}
                   </div>
                   <ul className="divide-y divide-white/5">
                     {mappedWorkflows.map(workflow => (
