@@ -12,6 +12,9 @@
   <!-- Babel Standalone (Compiles JSX in the browser) -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   
+  <!-- html2canvas for High-Res Image Export -->
+  <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
+  
   <!-- Custom Styles -->
   <style>
     ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -1448,6 +1451,42 @@
             return !isNaN(n) ? n : new Date(d).getTime() || 0;
         };
 
+        const calculateWorkingMs = (startMs, endMs) => {
+            if (!startMs || !endMs || startMs >= endMs) return 0;
+            
+            const start = new Date(startMs);
+            const end = new Date(endMs);
+            
+            let totalMs = 0;
+            let current = new Date(start);
+
+            while (current < end) {
+                const day = current.getDay();
+                
+                // Skip weekends (0 = Sunday, 6 = Saturday)
+                if (day !== 0 && day !== 6) {
+                    const workStart = new Date(current);
+                    workStart.setHours(10, 0, 0, 0); // 10:00 AM
+                    
+                    const workEnd = new Date(current);
+                    workEnd.setHours(17, 0, 0, 0); // 5:00 PM
+                    
+                    const periodStart = current > workStart ? current : workStart;
+                    const periodEnd = end < workEnd ? end : workEnd;
+                    
+                    if (periodStart < periodEnd) {
+                        totalMs += periodEnd.getTime() - periodStart.getTime();
+                    }
+                }
+                
+                // Move to next day at midnight
+                current.setDate(current.getDate() + 1);
+                current.setHours(0, 0, 0, 0);
+            }
+            
+            return totalMs;
+        };
+
         const filteredTaskIds = new Set(filteredTasks.map(t => t.id));
         const independentTasks = filteredTasks.filter(t => !t.parent || !filteredTaskIds.has(t.parent));
 
@@ -1760,6 +1799,20 @@
             return d;
         };
 
+        // Helper to prevent duplicate Y-axis labels
+        const generateYAxisLabels = (maxVal, suffix = '') => {
+            const vals = [maxVal, Math.round(maxVal * 0.75), Math.round(maxVal * 0.5), Math.round(maxVal * 0.25), 0];
+            const result = [`${maxVal}${suffix}`, '', '', '', '0'];
+            let lastShown = maxVal;
+            for (let i = 1; i <= 3; i++) {
+                if (vals[i] < lastShown && vals[i] > 0) {
+                    result[i] = `${vals[i]}${suffix}`;
+                    lastShown = vals[i];
+                }
+            }
+            return result;
+        };
+
         const smoothLinePath = generateSmoothPath(burndownPointsData);
         const latestX = burndownPointsData.length > 0 ? burndownPointsData[burndownPointsData.length-1].x : currentX;
         const areaPath = smoothLinePath ? smoothLinePath + ` L ${latestX},100 L 0,100 Z` : "";
@@ -1968,9 +2021,7 @@
                           </div>
                           <div className="relative h-48 w-full mt-2 group/chart">
                             <div className="absolute left-0 top-0 bottom-6 w-8 flex flex-col justify-between text-xs font-medium text-slate-500 text-right pr-2">
-                              <span>{drillMaxBurnupHours}h</span>
-                              <span>{Math.round(drillMaxBurnupHours * 0.5)}h</span>
-                              <span>0h</span>
+                              {generateYAxisLabels(drillMaxBurnupHours, 'h').map((label, idx) => (<span key={idx}>{label}</span>))}
                             </div>
                             <div className="absolute left-10 right-2 top-2 bottom-6 cursor-crosshair z-10 group-hover/chart:z-[999999]"
                                  onMouseMove={(e) => handleChartMouseMove(e, 'drill', drillPoints)}
@@ -2125,7 +2176,7 @@
 
             if (!isDone && !excludedStatusesForAccuracy.includes(statusName)) {
                 const lastUpdated = t.date_updated ? parseDateMs(t.date_updated) : (t.date_created ? parseDateMs(t.date_created) : referenceNow);
-                const timeInCurrent = Math.max(0, referenceNow - lastUpdated);
+                const timeInCurrent = calculateWorkingMs(lastUpdated, referenceNow);
                 if (timeInCurrent > 0) {
                     if (!timeInStatusStats[statusName]) timeInStatusStats[statusName] = { sum: 0, count: 0 };
                     timeInStatusStats[statusName].sum += timeInCurrent;
@@ -2146,7 +2197,8 @@
                         statusLogs.forEach(log => {
                             const changeDate = parseDateMs(log.date);
                             if (lastDate > 0 && changeDate >= lastDate) {
-                                parsedTimeInStatus[currentStatus] = (parsedTimeInStatus[currentStatus] || 0) + (changeDate - lastDate);
+                                const workingMs = calculateWorkingMs(lastDate, changeDate);
+                                parsedTimeInStatus[currentStatus] = (parsedTimeInStatus[currentStatus] || 0) + workingMs;
                             }
                             currentStatus = (log.after?.status || log.after || currentStatus).toString().toLowerCase();
                             lastDate = changeDate;
@@ -2155,7 +2207,8 @@
                         if (t.date_closed && lastDate > 0) {
                             const closedDate = parseDateMs(t.date_closed);
                             if (closedDate >= lastDate) {
-                                parsedTimeInStatus[currentStatus] = (parsedTimeInStatus[currentStatus] || 0) + (closedDate - lastDate);
+                                const workingMs = calculateWorkingMs(lastDate, closedDate);
+                                parsedTimeInStatus[currentStatus] = (parsedTimeInStatus[currentStatus] || 0) + workingMs;
                             }
                         }
                     }
@@ -2192,7 +2245,7 @@
                 } else {
                     const end_date = t.date_closed ? parseDateMs(t.date_closed) : (t.date_updated ? parseDateMs(t.date_updated) : minDate);
                     const start_date = t.start_date ? parseDateMs(t.start_date) : (t.date_created ? parseDateMs(t.date_created) : end_date);
-                    actualRunningMs = Math.max(0, end_date - start_date);
+                    actualRunningMs = calculateWorkingMs(start_date, end_date);
                 }
 
                 const estimateMs = t.time_estimate ? parseDateMs(t.time_estimate) : 0;
@@ -2211,8 +2264,10 @@
 
         const avgTimeInStatusList = Object.entries(timeInStatusStats).map(([status, data]) => {
             const avgMs = data.sum / data.count;
-            const days = Math.floor(avgMs / 86400000);
-            const hours = Math.floor((avgMs % 86400000) / 3600000);
+            // A "working day" is 7 hours (10am to 5pm)
+            const workingDayMs = 7 * 60 * 60 * 1000;
+            const days = Math.floor(avgMs / workingDayMs);
+            const hours = Math.floor((avgMs % workingDayMs) / 3600000);
             const mins = Math.floor((avgMs % 3600000) / 60000);
             let timeDisplay = days > 0 ? `${days}d ${hours}h` : (hours > 0 ? `${hours}h ${mins}m` : `${mins}m`);
             return { status, timeDisplay, avgMs };
@@ -2300,6 +2355,37 @@
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
+        };
+        
+        const downloadChartAsImage = async (chartContainerId, fileName) => {
+            const element = document.getElementById(chartContainerId);
+            if (!element) return;
+            
+            try {
+                // Ensure chart renders completely before snapshot
+                await new Promise(resolve => setTimeout(resolve, 50));
+                
+                const canvas = await html2canvas(element, {
+                    backgroundColor: '#0f172a', // Tailwind slate-950
+                    scale: 2, // High resolution
+                    logging: false,
+                    onclone: (clonedDoc) => {
+                       const clonedElement = clonedDoc.getElementById(chartContainerId);
+                       if(clonedElement) {
+                           clonedElement.style.borderRadius = '16px';
+                           clonedElement.style.padding = '24px';
+                       }
+                    }
+                });
+                
+                const dataUrl = canvas.toDataURL('image/png');
+                const link = document.createElement('a');
+                link.download = `${fileName}.png`;
+                link.href = dataUrl;
+                link.click();
+            } catch (err) {
+                console.error("Error capturing chart:", err);
+            }
         };
         
         const integrationUI = (
@@ -2989,7 +3075,7 @@
                 {/* 2. Charts Row (Burndown & Burnup) */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
                   {/* Sprint Burndown */}
-                  <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl flex flex-col justify-between">
+                  <div id="chart-burndown" className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl flex flex-col justify-between group/card relative">
                     <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start mb-6 gap-4">
                       <div>
                         <div className="flex items-center flex-wrap space-x-2 mb-1">
@@ -3005,24 +3091,24 @@
                         </div>
                         <p className="text-sm text-slate-400">Tracking actual time remaining over scheduled timeline.</p>
                       </div>
-                      <div className="flex flex-row sm:flex-col gap-4 sm:gap-1.5 text-sm bg-slate-900/60 px-3 py-2 rounded-lg border border-white/5 shrink-0">
+                      <div className="flex flex-row sm:flex-col gap-4 sm:gap-1.5 text-sm bg-slate-900/60 px-3 py-2 rounded-lg border border-white/5 shrink-0 relative">
                         <div className="flex items-center text-slate-400 font-medium"><div className="w-4 h-0 border-t-2 border-dashed border-slate-500 mr-2"></div> Ideal Effort</div>
                         <div className="flex items-center text-slate-400 font-medium"><div className="w-3 h-3 bg-indigo-500 rounded-full mr-2"></div> Remaining Time</div>
+                        <button onClick={() => downloadChartAsImage('chart-burndown', 'sprint_burndown')} className="absolute -top-10 right-0 sm:top-0 sm:-left-32 sm:right-auto opacity-0 invisible group-hover/card:opacity-100 group-hover:visible bg-slate-800 border border-slate-600 hover:border-indigo-500 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-3 py-1.5 rounded-lg shadow-lg transition-all flex items-center gap-1.5 whitespace-nowrap">
+                           <Download className="w-3.5 h-3.5" /> Export PNG
+                        </button>
                       </div>
                     </div>
                     
                     <div className="relative h-56 w-full hover:z-[99999] group/chart">
                       <div className="absolute left-0 top-0 bottom-6 w-8 flex flex-col justify-between text-xs font-medium text-slate-500 text-right pr-2">
-                        <span>{totalEstHours}h</span>
-                        <span>{Math.round(totalEstHours * 0.75)}h</span>
-                        <span>{Math.round(totalEstHours * 0.5)}h</span>
-                        <span>{Math.round(totalEstHours * 0.25)}h</span>
-                        <span>0h</span>
+                         {generateYAxisLabels(totalEstHours, 'h').map((label, idx) => (<span key={idx}>{label}</span>))}
                       </div>
                       
                       <div className="absolute left-10 right-2 top-2 bottom-6 cursor-crosshair z-10 group-hover/chart:z-[999999]"
                            onMouseMove={(e) => handleChartMouseMove(e, 'burndown', burndownPointsData)}
-                           onMouseLeave={() => setActiveChartHover(null)}>
+                           onMouseLeave={() => setActiveChartHover(null)}
+                           onClick={() => activeChartHover?.chart === 'burndown' && downloadChartAsImage('chart-burndown', `sprint_burndown_${new Date(activeChartHover.dateMs).toISOString().split('T')[0]}`)}>
                         <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="w-full h-full overflow-visible">
                           <defs>
                             <linearGradient id="burndownGradient" x1="0" y1="0" x2="0" y2="1">
@@ -3089,7 +3175,7 @@
                   </div>
 
                   {/* Main Tasks Burnup */}
-                  <div className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl flex flex-col justify-between">
+                  <div id="chart-burnup" className="bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-white/5 shadow-xl flex flex-col justify-between group/card relative">
                     <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start mb-6 gap-4">
                       <div>
                         <div className="flex items-center flex-wrap space-x-2 mb-1">
@@ -3105,24 +3191,24 @@
                         </div>
                         <p className="text-sm text-slate-400">Tracking cumulative completed tasks vs total scope.</p>
                       </div>
-                      <div className="flex flex-row sm:flex-col gap-4 sm:gap-1.5 text-sm bg-slate-900/60 px-3 py-2 rounded-lg border border-white/5 shrink-0">
+                      <div className="flex flex-row sm:flex-col gap-4 sm:gap-1.5 text-sm bg-slate-900/60 px-3 py-2 rounded-lg border border-white/5 shrink-0 relative">
                         <div className="flex items-center text-slate-400 font-medium"><div className="w-4 h-0 border-t-2 border-dotted border-blue-400 mr-2"></div> Total Scope ({plottedScopeCount})</div>
                         <div className="flex items-center text-slate-400 font-medium"><div className="w-3 h-3 bg-emerald-500 rounded-full mr-2 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div> Completed Tasks</div>
+                        <button onClick={() => downloadChartAsImage('chart-burnup', 'sprint_burnup')} className="absolute -top-10 right-0 sm:top-0 sm:-left-32 sm:right-auto opacity-0 invisible group-hover/card:opacity-100 group-hover:visible bg-slate-800 border border-slate-600 hover:border-emerald-500 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-3 py-1.5 rounded-lg shadow-lg transition-all flex items-center gap-1.5 whitespace-nowrap">
+                           <Download className="w-3.5 h-3.5" /> Export PNG
+                        </button>
                       </div>
                     </div>
                     
                     <div className="relative h-56 w-full hover:z-[99999] group/chart">
                       <div className="absolute left-0 top-0 bottom-6 w-8 flex flex-col justify-between text-xs font-medium text-slate-500 text-right pr-2">
-                        <span>{plottedScopeCount}</span>
-                        <span>{Math.round(plottedScopeCount * 0.75)}</span>
-                        <span>{Math.round(plottedScopeCount * 0.5)}</span>
-                        <span>{Math.round(plottedScopeCount * 0.25)}</span>
-                        <span>0</span>
+                         {generateYAxisLabels(plottedScopeCount).map((label, idx) => (<span key={idx}>{label}</span>))}
                       </div>
                       
                       <div className="absolute left-10 right-2 top-2 bottom-6 cursor-crosshair z-10 group-hover/chart:z-[999999]"
                            onMouseMove={(e) => handleChartMouseMove(e, 'burnup', burnupPointsData)}
-                           onMouseLeave={() => setActiveChartHover(null)}>
+                           onMouseLeave={() => setActiveChartHover(null)}
+                           onClick={() => activeChartHover?.chart === 'burnup' && downloadChartAsImage('chart-burnup', `sprint_burnup_${new Date(activeChartHover.dateMs).toISOString().split('T')[0]}`)}>
                             <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="w-full h-full overflow-visible">
                               <defs>
                                 <linearGradient id="burnupGradient" x1="0" y1="0" x2="0" y2="1">
@@ -3273,7 +3359,7 @@
 
                     <div className="flex-1 border-t md:border-t-0 md:border-l border-white/5 pt-6 md:pt-0 md:pl-8 lg:pl-12">
                       <div className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4 flex items-center flex-wrap gap-2">
-                        Average Time in Status <div className="hover:z-[99999]"><MetricTooltip align="center" text="Average time completed tasks spend in intermediate phases." formula="Parses the task's Activity Logs timeline, calculates duration between status changes, and averages it."><InfoIcon className="h-3.5 w-3.5 text-slate-500 transition-colors" /></MetricTooltip></div>
+                        Average Time in Status <div className="hover:z-[99999]"><MetricTooltip align="center" text="Average working time tasks spend in intermediate phases." formula="Parses Activity Logs, calculates time between changes (counting only 10am-5pm on weekdays), and averages it."><InfoIcon className="h-3.5 w-3.5 text-slate-500 transition-colors" /></MetricTooltip></div>
                       </div>
                       
                       {avgTimeInStatusList.length > 0 ? (
