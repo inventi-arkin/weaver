@@ -1885,47 +1885,56 @@
             const createdDate = parseDateMs(task.date_created);
             if (createdDate > 0 && dateMs < createdDate) return null; // Not created yet
 
-            // Reconstruct timeline from activity logs
+            let currentStatus = {
+                status: (task.status?.status || 'open').toString().toLowerCase(),
+                color: task.status?.color || '#94a3b8'
+            };
+
+            // Reconstruct timeline strictly from activity logs if available
             if (task.activity_logs && Array.isArray(task.activity_logs)) {
                  const statusLogs = task.activity_logs
                      .filter(l => l.field === 'status')
                      .sort((a,b) => parseDateMs(a.date) - parseDateMs(b.date));
                  
-                 let foundLog = null;
-                 for (let i = statusLogs.length - 1; i >= 0; i--) {
-                     if (parseDateMs(statusLogs[i].date) <= dateMs) {
-                         foundLog = statusLogs[i];
-                         break;
+                 if (statusLogs.length > 0) {
+                     // Start with the 'before' status of the very first log
+                     let historicalStatus = { 
+                         status: (statusLogs[0].before?.status || statusLogs[0].before || 'open').toString().toLowerCase(), 
+                         color: statusLogs[0].before?.color || '#cbd5e1' 
+                     };
+
+                     // Walk forward through history until we pass the queried date
+                     for (let i = 0; i < statusLogs.length; i++) {
+                         if (parseDateMs(statusLogs[i].date) <= dateMs) {
+                             historicalStatus = {
+                                 status: (statusLogs[i].after?.status || statusLogs[i].after || 'open').toString().toLowerCase(),
+                                 color: statusLogs[i].after?.color || statusLogs[i].after?.status?.color || '#cbd5e1'
+                             };
+                         } else {
+                             break; // We've passed the target date
+                         }
                      }
-                 }
-                 
-                 if (foundLog) {
-                     return {
-                         status: (foundLog.after?.status || foundLog.after || 'open').toString().toLowerCase(),
-                         color: foundLog.after?.color || task.status?.color || '#cbd5e1'
-                     };
-                 } else if (statusLogs.length > 0) {
-                     return {
-                         status: (statusLogs[0].before?.status || statusLogs[0].before || 'open').toString().toLowerCase(),
-                         color: statusLogs[0].before?.color || '#cbd5e1'
-                     };
+                     return historicalStatus;
                  }
             }
             
-            // Fallback to closed logic if no exact logs are available
+            // Fallback timeline logic if no explicit activity logs are found
             const closedDate = parseDateMs(task.date_closed);
-            if (closedDate > 0 && dateMs >= closedDate) {
-                return {
-                    status: (task.status?.status || 'closed').toString().toLowerCase(),
-                    color: task.status?.color || '#10b981'
-                };
+            if (closedDate > 0) {
+                if (dateMs >= closedDate) {
+                    return {
+                        status: (task.status?.status || 'closed').toString().toLowerCase(),
+                        color: task.status?.color || '#10b981'
+                    };
+                } else {
+                    // Task is closed NOW, but we are querying a date BEFORE it was closed.
+                    // We assume it was in an active state.
+                    return { status: 'open', color: '#cbd5e1' };
+                }
             }
             
-            // Otherwise, project current status (or default to 'open')
-            return {
-                status: (task.status?.status || 'open').toString().toLowerCase(),
-                color: task.status?.color || '#94a3b8'
-            };
+            // If it's not closed and has no logs, it has been in its current state since creation
+            return currentStatus;
         };
 
         const dailyStatusData = [];
