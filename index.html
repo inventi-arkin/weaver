@@ -1885,60 +1885,63 @@
             const createdDate = parseDateMs(task.date_created);
             if (createdDate > 0 && dateMs < createdDate) return null; // Not created yet
 
-            // 1. Reconstruct timeline strictly from explicit activity logs (if provided)
+            // Reconstruct timeline strictly from activity logs if they exist
             if (task.activity_logs && Array.isArray(task.activity_logs)) {
                  const statusLogs = task.activity_logs
                      .filter(l => l.field === 'status')
                      .sort((a,b) => parseDateMs(a.date) - parseDateMs(b.date));
                  
                  if (statusLogs.length > 0) {
-                     let historicalStatus = { 
-                         status: (statusLogs[0].before?.status || statusLogs[0].before || 'open').toString().toLowerCase(), 
-                         color: statusLogs[0].before?.color || '#cbd5e1' 
-                     };
-                     for (let i = 0; i < statusLogs.length; i++) {
+                     let foundLog = null;
+                     for (let i = statusLogs.length - 1; i >= 0; i--) {
                          if (parseDateMs(statusLogs[i].date) <= dateMs) {
-                             historicalStatus = {
-                                 status: (statusLogs[i].after?.status || statusLogs[i].after || 'open').toString().toLowerCase(),
-                                 color: statusLogs[i].after?.color || statusLogs[i].after?.status?.color || '#cbd5e1'
-                             };
-                         } else { break; }
+                             foundLog = statusLogs[i];
+                             break;
+                         }
                      }
-                     return historicalStatus;
+                     
+                     if (foundLog) {
+                         return {
+                             status: (foundLog.after?.status || foundLog.after || 'open').toString().toLowerCase(),
+                             color: foundLog.after?.color || task.status?.color || '#cbd5e1'
+                         };
+                     } else {
+                         // Before the first status change, it was in the "before" state of the first log
+                         return {
+                             status: (statusLogs[0].before?.status || statusLogs[0].before || 'open').toString().toLowerCase(),
+                             color: statusLogs[0].before?.color || '#cbd5e1'
+                         };
+                     }
                  }
             }
             
-            // 2. Intelligent timeline approximation for standard API payloads
+            // If no activity logs exist, use mathematical inference
             const currentStatusStr = (task.status?.status || 'open').toString().toLowerCase();
             const currentColor = task.status?.color || '#94a3b8';
-            const isDone = ['closed', 'complete', 'done', 'resolved'].includes(currentStatusStr);
+            const isDone = doneStatuses.includes(currentStatusStr);
             
             const closedDate = parseDateMs(task.date_closed);
             const startDate = parseDateMs(task.start_date);
             const updatedDate = parseDateMs(task.date_updated);
             
             if (isDone && closedDate > 0) {
-                // If the day is on or after the day it was closed
                 if (dateMs >= closedDate) return { status: currentStatusStr, color: currentColor };
                 
                 // If it's before it closed, infer it was 'In Progress' for a period
                 const activeMarker = startDate > 0 ? startDate : Math.floor(createdDate + (closedDate - createdDate) * 0.3);
                 if (dateMs >= activeMarker) return { status: 'in progress', color: '#3b82f6' };
                 
-                // If it's before it even became active, it was open
                 return { status: 'open', color: '#cbd5e1' };
             }
             
-            // If the task is NOT done, it's currently sitting in its state
-            // We assume it transitioned into its current state at either start_date or date_updated
+            // Task is not done
             const transitionDate = startDate > 0 ? startDate : (updatedDate > 0 ? updatedDate : createdDate);
             
             if (dateMs >= transitionDate) {
                 return { status: currentStatusStr, color: currentColor };
-            } else {
-                // Before it transitioned, it was just open/pending
-                return { status: 'open', color: '#cbd5e1' };
             }
+            
+            return { status: 'open', color: '#cbd5e1' };
         };
 
         const dailyStatusData = [];
@@ -1948,10 +1951,12 @@
         while (dDateMs <= endChartDate) {
             const endOfDayMs = dDateMs + 86399999;
             const dayBreakdown = {};
+            let hasAnyTasks = false;
             
             filteredMotherTasks.forEach(t => {
                 const sObj = getTaskStatusOnDate(t, endOfDayMs);
                 if (sObj) {
+                    hasAnyTasks = true;
                     const sName = sObj.status;
                     if (!dayBreakdown[sName]) dayBreakdown[sName] = { count: 0, color: sObj.color };
                     dayBreakdown[sName].count++;
@@ -1962,7 +1967,7 @@
                 }
             });
             
-            dailyStatusData.push({ date: dDateMs, breakdown: dayBreakdown });
+            dailyStatusData.push({ date: dDateMs, breakdown: dayBreakdown, hasData: hasAnyTasks });
             dDateMs += oneDayMs;
         }
         
@@ -1972,20 +1977,35 @@
         const handleBarChartMouseMove = (e) => {
             const rect = e.currentTarget.getBoundingClientRect();
             const mouseX = e.clientX - rect.left;
-            const daysCount = dailyStatusData.length;
-            if (daysCount === 0) return;
+            const xPct = (mouseX / rect.width) * 100;
             
-            const dayIndex = Math.min(daysCount - 1, Math.max(0, Math.floor((mouseX / rect.width) * daysCount)));
-            const hoveredData = dailyStatusData[dayIndex];
+            if (dailyStatusData.length === 0 || totalDurationMs <= 0) return;
             
-            if (hoveredData) {
+            const hoverTime = minDate + (xPct / 100) * totalDurationMs;
+            
+            let closestDay = null;
+            let minDiff = Infinity;
+            for (const d of dailyStatusData) {
+                const diff = Math.abs(d.date - hoverTime);
+                if (diff < minDiff) {
+                    minDiff = diff;
+                    closestDay = d;
+                }
+            }
+            
+            if (closestDay && closestDay.hasData) {
+                 const dayPct = ((closestDay.date - minDate) / totalDurationMs) * 100;
+                 const dayWidthPct = (oneDayMs / totalDurationMs) * 100;
                  setActiveChartHover({
                      chart: 'status-bar',
-                     xPct: (dayIndex + 0.5) * (100 / daysCount),
+                     xPct: dayPct + (dayWidthPct / 2),
                      yPct: 10,
-                     dateMs: hoveredData.date,
-                     breakdown: hoveredData.breakdown
+                     dateMs: closestDay.date,
+                     breakdown: closestDay.breakdown,
+                     barWidth: dayWidthPct
                  });
+            } else {
+                 setActiveChartHover(null);
             }
         };
 
@@ -3418,10 +3438,12 @@
                              <line x1="0" y1="100" x2="100" y2="100" stroke="#334155" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
                              
                              {dailyStatusData.map((dayData, i) => {
-                                 const barWidth = 100 / dailyStatusData.length;
-                                 const x = i * barWidth;
-                                 const innerWidth = barWidth * 0.7;
-                                 const innerX = x + (barWidth * 0.15);
+                                 if (!dayData.hasData) return null; // Skip drawing bars if there's no data
+
+                                 const dayWidthPct = totalDurationMs > 0 ? (oneDayMs / totalDurationMs) * 100 : 0;
+                                 const xPct = totalDurationMs > 0 ? ((dayData.date - minDate) / totalDurationMs) * 100 : 0;
+                                 const innerWidth = dayWidthPct * 0.7;
+                                 const innerX = xPct + (dayWidthPct * 0.15);
                                  
                                  let currentY = 100;
                                  
