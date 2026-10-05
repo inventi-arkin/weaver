@@ -1445,10 +1445,10 @@
         const completedBreakdown = getBreakdown(completedTasks);
         const completedFilteredTasksCount = completedBreakdown.total;
 
-        const totalDistTasks = backlogBreakdown.total + activeBreakdown.total + completedBreakdown.total;
-        const backlogDistPct = totalDistTasks > 0 ? (backlogBreakdown.total / totalDistTasks) * 100 : 0;
-        const activeDistPct = totalDistTasks > 0 ? (activeBreakdown.total / totalDistTasks) * 100 : 0;
-        const resolvedDistPct = totalDistTasks > 0 ? (completedBreakdown.total / totalDistTasks) * 100 : 0;
+        const totalMainTasks = backlogBreakdown.mothers + activeBreakdown.mothers + completedBreakdown.mothers;
+        const backlogDistPct = totalMainTasks > 0 ? (backlogBreakdown.mothers / totalMainTasks) * 100 : 0;
+        const activeDistPct = totalMainTasks > 0 ? (activeBreakdown.mothers / totalMainTasks) * 100 : 0;
+        const resolvedDistPct = totalMainTasks > 0 ? (completedBreakdown.mothers / totalMainTasks) * 100 : 0;
 
         const parseDateMs = (d) => {
             if (!d) return 0;
@@ -1613,7 +1613,6 @@
         const totalEstHours = Math.round(totalEstimateMs / 3600000) || 1;
         const totalRemHours = Math.round(totalRemainingMs / 3600000);
         
-        const totalMainTasks = backlogBreakdown.mothers + activeBreakdown.mothers + completedBreakdown.mothers;
         const completionPercentage = totalMainTasks > 0 ? Math.round((completedBreakdown.mothers / totalMainTasks) * 100) : 0;
 
         const formatDuration = (ms) => {
@@ -3104,7 +3103,7 @@
                           <div className="text-lg font-semibold text-white flex items-center flex-wrap gap-2">
                             Sprint Completion
                             <div className="hover:z-[99999]">
-                              <MetricTooltip align="left" text="Percentage of completed main tasks, alongside visual status distribution." formula="Percentage: (Completed Main Tasks / Total Main Tasks) * 100. Segments: Proportion of total task counts.">
+                              <MetricTooltip align="left" text="Percentage of completed main tasks, alongside visual status distribution." formula="Percentage: (Completed Main Tasks / Total Main Tasks) * 100. Segments: Proportion of main task counts.">
                                 <InfoIcon className="h-4 w-4 text-slate-500 transition-colors" />
                               </MetricTooltip>
                             </div>
@@ -3116,8 +3115,8 @@
                             <span className="text-5xl font-extrabold text-white leading-none">{completionPercentage}%</span>
                           </div>
                           <div className="flex flex-col space-y-1.5 w-full">
-                            <div className="flex items-center justify-between text-xs text-slate-400 bg-slate-900/60 px-2.5 py-1 rounded-md border border-white/5" title="Completed vs Total Items">
-                              <div className="flex items-center"><CheckCircle2 className="h-3.5 w-3.5 mr-1.5 text-emerald-400 shrink-0" /> <span className="text-white font-medium mr-1">{completedBreakdown.total}</span> / {totalDistTasks} Items</div>
+                            <div className="flex items-center justify-between text-xs text-slate-400 bg-slate-900/60 px-2.5 py-1 rounded-md border border-white/5" title="Completed vs Total Main Tasks">
+                              <div className="flex items-center"><CheckCircle2 className="h-3.5 w-3.5 mr-1.5 text-emerald-400 shrink-0" /> <span className="text-white font-medium mr-1">{completedBreakdown.mothers}</span> / {totalMainTasks} Tasks</div>
                             </div>
                             <div className="flex items-center justify-between text-[11px] text-slate-400 bg-slate-900/60 px-2.5 py-1 rounded-md border border-white/5 whitespace-nowrap" title="Logged vs Estimated Hours">
                               <div className="flex items-center"><Clock className="h-3.5 w-3.5 mr-1.5 text-indigo-400 shrink-0" /> <span className="text-white font-medium mr-1">{formatDuration(totalSpentMs)}</span> / {formatDuration(totalEstimateMs)} Logged</div>
@@ -3126,9 +3125,9 @@
                         </div>
                         
                         <div className="w-full bg-slate-900/60 border border-white/5 rounded-full h-3 flex overflow-hidden">
-                          <div className="bg-emerald-500 h-full transition-all duration-1000 ease-out border-r border-slate-900/60" style={{ width: `${resolvedDistPct}%` }} title={`Resolved: ${completedBreakdown.total}`}></div>
-                          <div className="bg-indigo-500 h-full transition-all duration-1000 ease-out border-r border-slate-900/60" style={{ width: `${activeDistPct}%` }} title={`Active: ${activeBreakdown.total}`}></div>
-                          <div className="bg-blue-500 h-full transition-all duration-1000 ease-out" style={{ width: `${backlogDistPct}%` }} title={`Backlog: ${backlogBreakdown.total}`}></div>
+                          <div className="bg-emerald-500 h-full transition-all duration-1000 ease-out border-r border-slate-900/60" style={{ width: `${resolvedDistPct}%` }} title={`Resolved: ${completedBreakdown.mothers}`}></div>
+                          <div className="bg-indigo-500 h-full transition-all duration-1000 ease-out border-r border-slate-900/60" style={{ width: `${activeDistPct}%` }} title={`Active: ${activeBreakdown.mothers}`}></div>
+                          <div className="bg-blue-500 h-full transition-all duration-1000 ease-out" style={{ width: `${backlogDistPct}%` }} title={`Backlog: ${backlogBreakdown.mothers}`}></div>
                         </div>
                         
                         <div className="flex items-center justify-between mt-3 text-[10px] font-bold uppercase tracking-wider px-1">
