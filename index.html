@@ -1978,26 +1978,20 @@
             const mouseX = e.clientX - rect.left;
             const xPct = (mouseX / rect.width) * 100;
             
-            if (dailyStatusData.length === 0 || totalDurationMs <= 0) return;
+            if (dailyStatusData.length === 0) return;
             
-            const hoverTime = minDate + (xPct / 100) * totalDurationMs;
+            const N = dailyStatusData.length;
+            const dayWidthPct = 100 / N;
             
-            let closestDay = null;
-            let minDiff = Infinity;
-            for (const d of dailyStatusData) {
-                const diff = Math.abs(d.date - hoverTime);
-                if (diff < minDiff) {
-                    minDiff = diff;
-                    closestDay = d;
-                }
-            }
+            let hoveredIndex = Math.floor(xPct / dayWidthPct);
+            hoveredIndex = Math.max(0, Math.min(N - 1, hoveredIndex));
+            
+            const closestDay = dailyStatusData[hoveredIndex];
             
             if (closestDay && closestDay.hasData) {
-                 const dayPct = ((closestDay.date - minDate) / totalDurationMs) * 100;
-                 const dayWidthPct = (oneDayMs / totalDurationMs) * 100;
                  setActiveChartHover({
                      chart: 'status-bar',
-                     xPct: dayPct + (dayWidthPct / 2),
+                     xPct: (hoveredIndex * dayWidthPct) + (dayWidthPct / 2),
                      yPct: 10,
                      dateMs: closestDay.date,
                      breakdown: closestDay.breakdown,
@@ -3439,8 +3433,9 @@
                              {dailyStatusData.map((dayData, i) => {
                                  if (!dayData.hasData) return null; // Skip drawing bars if there's no data
 
-                                 const dayWidthPct = totalDurationMs > 0 ? (oneDayMs / totalDurationMs) * 100 : 0;
-                                 const xPct = totalDurationMs > 0 ? ((dayData.date - minDate) / totalDurationMs) * 100 : 0;
+                                 const N = dailyStatusData.length;
+                                 const dayWidthPct = N > 0 ? 100 / N : 0;
+                                 const xPct = i * dayWidthPct;
                                  const innerWidth = dayWidthPct * 0.7;
                                  const innerX = xPct + (dayWidthPct * 0.15);
                                  
@@ -3473,7 +3468,7 @@
                          
                          {activeChartHover?.chart === 'status-bar' && (
                               <>
-                                <div className="absolute top-0 bottom-0 w-full pointer-events-none bg-white/5 border-x border-white/10" style={{ left: `${activeChartHover.xPct - (100 / dailyStatusData.length)/2}%`, width: `${100 / dailyStatusData.length}%` }} />
+                                <div className="absolute top-0 bottom-0 w-full pointer-events-none bg-white/5 border-x border-white/10" style={{ left: `${activeChartHover.xPct - (activeChartHover.barWidth || 0)/2}%`, width: `${activeChartHover.barWidth || 0}%` }} />
                                 <div className="absolute pointer-events-none flex flex-col items-center drop-shadow-lg z-50"
                                      style={{ 
                                        left: `${activeChartHover.xPct}%`, 
