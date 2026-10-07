@@ -742,13 +742,29 @@
 
       // Menu navigation + Portfolio (saved ClickUp connections, kept in this browser only)
       const [activeView, setActiveView] = useState('dashboard');
-      const portfolioKey = `weaver_portfolio_${appId}`;
-      const [portfolio, setPortfolio] = useState(() => {
+      // Portfolio is stored per user (Firebase uid) so it survives sign-out/sign-in. Preview/anonymous sessions share a 'guest' bucket.
+      const portfolioUserKey = user ? ((user.isMock || user.isAnonymous || !user.uid) ? 'guest' : user.uid) : null;
+      const portfolioKey = portfolioUserKey ? `weaver_portfolio_${appId}_${portfolioUserKey}` : null;
+      const portfolioKeyRef = useRef(portfolioKey);
+      portfolioKeyRef.current = portfolioKey;
+      const [portfolio, setPortfolio] = useState([]);
+      useEffect(() => {
+        if (!portfolioKey) { setPortfolio([]); return; }
         try {
-          const saved = JSON.parse(localStorage.getItem(portfolioKey) || '[]');
-          return Array.isArray(saved) ? saved : [];
-        } catch (e) { return []; }
-      });
+          let saved = JSON.parse(localStorage.getItem(portfolioKey) || 'null');
+          if (!Array.isArray(saved)) {
+            // One-time migration of the old browser-wide portfolio into the first user who signs in
+            const legacyKey = `weaver_portfolio_${appId}`;
+            const legacy = JSON.parse(localStorage.getItem(legacyKey) || '[]');
+            saved = Array.isArray(legacy) ? legacy : [];
+            if (saved.length) {
+              localStorage.setItem(portfolioKey, JSON.stringify(saved));
+              localStorage.removeItem(legacyKey);
+            }
+          }
+          setPortfolio(saved);
+        } catch (e) { setPortfolio([]); }
+      }, [portfolioKey]);
       const [editingConnId, setEditingConnId] = useState(null);
       const [editingConnName, setEditingConnName] = useState('');
       const pendingSyncRef = useRef(false);
@@ -1083,8 +1099,8 @@
       // ---- Portfolio: saved connections (API tokens stay in this browser's localStorage, never Firestore) ----
       const updatePortfolio = (fn) => setPortfolio(prev => {
         const next = fn(prev);
-        if (next !== prev) {
-          try { localStorage.setItem(portfolioKey, JSON.stringify(next)); } catch (e) { console.warn(e); }
+        if (next !== prev && portfolioKeyRef.current) {
+          try { localStorage.setItem(portfolioKeyRef.current, JSON.stringify(next)); } catch (e) { console.warn(e); }
         }
         return next;
       });
@@ -1361,7 +1377,8 @@
         const keysToRemove = [];
         for (let i = 0; i < localStorage.length; i++) {
           const key = localStorage.key(i);
-          if (key && key.startsWith('weaver_') && key.includes(appId)) {
+          // Keep saved portfolios: they belong to the user and must still be there after signing back in
+          if (key && key.startsWith('weaver_') && key.includes(appId) && !key.startsWith('weaver_portfolio_')) {
              keysToRemove.push(key);
           }
         }
