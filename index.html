@@ -215,7 +215,8 @@
       CheckCircle2, ArrowRight, Ticket, CheckSquare, LogOut, Settings, Bell, Box,
       FolderOpen, ListTodo, Plus, Trash2, ChevronRight, RefreshCw, Key, AlertTriangle,
       Clock, Calendar, Flag, Users, TrendingDown, TrendingUp, Target, Tag, X, Activity, PieChart,
-      Bug, ShieldAlert, Zap, Info as InfoIcon, Download, Image as ImageIcon, BarChart2
+      Bug, ShieldAlert, Zap, Info as InfoIcon, Download, Image as ImageIcon, BarChart2,
+      LayoutDashboard, Briefcase, Pencil, Check
     } from 'lucide-react';
 
     const firebaseConfig = {
@@ -739,6 +740,20 @@
       const mappedWorkflowsRef = useRef(mappedWorkflows);
       useEffect(() => { mappedWorkflowsRef.current = mappedWorkflows; }, [mappedWorkflows]);
 
+      // Menu navigation + Portfolio (saved ClickUp connections, kept in this browser only)
+      const [activeView, setActiveView] = useState('dashboard');
+      const portfolioKey = `weaver_portfolio_${appId}`;
+      const [portfolio, setPortfolio] = useState(() => {
+        try {
+          const saved = JSON.parse(localStorage.getItem(portfolioKey) || '[]');
+          return Array.isArray(saved) ? saved : [];
+        } catch (e) { return []; }
+      });
+      const [editingConnId, setEditingConnId] = useState(null);
+      const [editingConnName, setEditingConnName] = useState('');
+      const pendingSyncRef = useRef(false);
+      const activeConnection = portfolio.find(c => c.token === clickUpToken) || null;
+
       const handleMockClickUpData = () => {
         setTeams(MOCK_CLICKUP_DATA.teams);
         setClickUpToken('mock_token');
@@ -854,6 +869,13 @@
         setIsSwitchModalOpen(true);
         if (clickUpToken && teams.length > 0) {
           setIntegrationStep('selecting');
+        } else if (clickUpToken && clickUpToken !== 'mock_token') {
+          // Saved token but workspaces not loaded yet (e.g. after a reload or a portfolio switch): reuse it
+          setIntegrationStep('connecting');
+          setClickUpError(null);
+          fetchClickUp('team', clickUpToken)
+            .then(data => { setTeams(data.teams || []); setIntegrationStep('selecting'); })
+            .catch(err => { setClickUpError(err.message); setIntegrationStep('entering_token'); });
         } else {
           setIntegrationStep('entering_token');
         }
@@ -873,8 +895,14 @@
         try {
           const data = await fetchClickUp('team', tempToken);
           setTeams(data.teams || []);
+          if (tempToken !== clickUpToken && mappedWorkflowsRef.current.length > 0) {
+            // A different account: park the current connection in the Portfolio and start with a clean mapping
+            persistConnection(clickUpToken, mappedWorkflowsRef.current);
+            commitWorkflows([]);
+          }
           setClickUpToken(tempToken);
           localStorage.setItem(`weaver_clickup_token_${appId}`, tempToken);
+          setActiveView('dashboard');
           setIntegrationStep('selecting');
         } catch (err) {
           setClickUpError(err.message);
@@ -944,7 +972,7 @@
             
             setMappedWorkflows(prev => {
               const filteredPrev = prev.filter(w => w.listId !== newWorkflow.listId);
-              const nextWorkflows = [...filteredPrev, newWorkflow].slice(-2); // Allow up to 2 lists
+              const nextWorkflows = [...filteredPrev, newWorkflow];
               localStorage.setItem(`weaver_workflows_${appId}`, JSON.stringify(nextWorkflows));
               if (user && !user.isMock) {
                 const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
@@ -956,6 +984,8 @@
               return nextWorkflows;
             });
 
+            persistConnection(clickUpToken, [...mappedWorkflowsRef.current.filter(w => w.listId !== newWorkflow.listId), newWorkflow]);
+            setActiveView('dashboard');
             logTransaction('Connection Established', `Warped to dimension: ${listName}`, 'link');
             setSelectedTeam(''); setSelectedSpace(''); setSelectedFolder(''); setSelectedList('');
             setIntegrationStep('idle');
@@ -972,6 +1002,7 @@
       };
 
       const removeMapping = async (id) => {
+        persistConnection(clickUpToken, mappedWorkflowsRef.current.filter(w => w.id !== id));
         setMappedWorkflows(prev => {
           const wfToRemove = prev.find(w => w.id === id);
           if (wfToRemove) logTransaction('Connection Removed', `Unmapped ClickUp list: ${wfToRemove.list}`, 'unlink');
@@ -1048,6 +1079,111 @@
         const syncInterval = setInterval(runSyncSequence, 30000); 
         return () => clearInterval(syncInterval);
       }, [mappedWorkflows.length, clickUpToken, user]);
+
+      // ---- Portfolio: saved connections (API tokens stay in this browser's localStorage, never Firestore) ----
+      const updatePortfolio = (fn) => setPortfolio(prev => {
+        const next = fn(prev);
+        if (next !== prev) {
+          try { localStorage.setItem(portfolioKey, JSON.stringify(next)); } catch (e) { console.warn(e); }
+        }
+        return next;
+      });
+
+      // Save or refresh the connection that owns `token`. Only list metadata is stored; tasks are re-synced on switch.
+      const persistConnection = (token, workflows) => {
+        if (!token || token === 'mock_token') return;
+        const meta = (workflows || []).map(({ id, team, space, folder, list, listId, listStartDate, listDueDate }) => (
+          { id, team, space, folder, list, listId, listStartDate, listDueDate }
+        ));
+        updatePortfolio(prev => {
+          const idx = prev.findIndex(c => c.token === token);
+          if (idx === -1) {
+            if (meta.length === 0) return prev;
+            return [...prev, {
+              id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
+              name: meta[0].team || 'Connection',
+              token,
+              workflows: meta,
+              savedAt: Date.now(),
+              lastUsed: Date.now()
+            }];
+          }
+          const next = [...prev];
+          next[idx] = { ...prev[idx], workflows: meta };
+          return next;
+        });
+      };
+
+      const commitWorkflows = (next) => {
+        setMappedWorkflows(next);
+        mappedWorkflowsRef.current = next;
+        try { localStorage.setItem(`weaver_workflows_${appId}`, JSON.stringify(next)); } catch (e) { console.warn(e); }
+        if (user && !user.isMock) {
+          const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
+          setDoc(docRef, { mappedWorkflows: next }, { merge: true }).catch(err => console.error("Error saving workflows:", err));
+        }
+      };
+
+      const handleSwitchConnection = (conn) => {
+        if (!conn || warpStage !== 'idle') return;
+        if (conn.token === clickUpToken) { setActiveView('dashboard'); return; }
+        persistConnection(clickUpToken, mappedWorkflowsRef.current); // keep the connection we are leaving up to date
+        setWarpStage('weaving');
+        setTimeout(() => {
+          setWarpStage('flash');
+          setClickUpToken(conn.token);
+          localStorage.setItem(`weaver_clickup_token_${appId}`, conn.token);
+          setTeams([]); setSpaces([]); setFolders([]); setFolderlessLists([]); setLists([]);
+          setSelectedTeam(''); setSelectedSpace(''); setSelectedFolder(''); setSelectedList('');
+          setSelectedTagFilter(''); setSelectedAssigneeFilter(''); setCompletionFilterType('none'); setSelectedDrillDownAssignee(null);
+          setIntegrationStep('idle'); setIsSwitchModalOpen(false); setClickUpError(null); setTempToken('');
+          pendingSyncRef.current = true;
+          commitWorkflows((conn.workflows || []).map(w => ({ ...w, tasks: [], lastSynced: Date.now() })));
+          updatePortfolio(prev => prev.map(c => c.id === conn.id ? { ...c, lastUsed: Date.now() } : c));
+          setActiveView('dashboard');
+          logTransaction('Connection Switched', `Switched to portfolio connection: ${conn.name}`, 'link');
+          setTimeout(() => {
+            setWarpStage('fade');
+            setTimeout(() => setWarpStage('idle'), 1500);
+          }, 400);
+        }, 1500);
+      };
+
+      const handleNewConnection = () => {
+        setSelectedTeam(''); setSelectedSpace(''); setSelectedFolder(''); setSelectedList('');
+        setTempToken(''); setClickUpError(null);
+        setIntegrationStep('entering_token');
+        setIsSwitchModalOpen(true);
+        if (mappedWorkflows.length === 0) setActiveView('dashboard');
+      };
+
+      const handleRenameConnection = (id) => {
+        const name = editingConnName.trim();
+        if (name) updatePortfolio(prev => prev.map(c => c.id === id ? { ...c, name } : c));
+        setEditingConnId(null);
+        setEditingConnName('');
+      };
+
+      const handleRemoveConnection = (conn) => {
+        if (conn.token === clickUpToken) return;
+        if (!window.confirm(`Remove "${conn.name}" from your Portfolio? Its saved API token will be deleted from this browser.`)) return;
+        updatePortfolio(prev => prev.filter(c => c.id !== conn.id));
+        logTransaction('Portfolio Connection Removed', conn.name, 'unlink');
+      };
+
+      // Make sure the connection currently in use is always saved to the Portfolio
+      useEffect(() => {
+        if (!clickUpToken || mappedWorkflows.length === 0) return;
+        if (portfolio.some(c => c.token === clickUpToken)) return;
+        persistConnection(clickUpToken, mappedWorkflows);
+      }, [clickUpToken, mappedWorkflows.length]);
+
+      // After switching connection, pull fresh tasks right away
+      useEffect(() => {
+        if (!pendingSyncRef.current || !clickUpToken || mappedWorkflows.length === 0) return;
+        pendingSyncRef.current = false;
+        runSyncSequence();
+      }, [clickUpToken, mappedWorkflows]);
 
       const saveSettings = async (updates) => {
         if (!activeListId) return;
@@ -1234,6 +1370,9 @@
         
         // Reset local state to trigger UI refresh
         setMappedWorkflows([]);
+        setClickUpToken('');
+        setPortfolio([]);
+        setActiveView('dashboard');
         setGlobalTimeLedger([]);
         setTransactions([]);
         setIntegrationStep('idle');
@@ -2612,6 +2751,91 @@
           </div>
         );
 
+        const sortedPortfolio = [...portfolio].sort((a, b) => {
+          const aActive = a.token === clickUpToken, bActive = b.token === clickUpToken;
+          if (aActive !== bActive) return aActive ? -1 : 1;
+          return (b.lastUsed || 0) - (a.lastUsed || 0);
+        });
+
+        const portfolioUI = (
+          <main className="relative z-25 max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8 animate-in fade-in duration-500">
+            <div className="mb-8 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+              <div>
+                <h1 className="text-2xl font-bold text-white flex items-center gap-3"><Briefcase className="h-6 w-6 text-indigo-400" /> Portfolio</h1>
+                <p className="text-slate-400 text-sm mt-1">Your saved ClickUp connections. Switch between them without re-entering your API token.</p>
+              </div>
+              <button onClick={handleNewConnection} className="btn-neon btn-neon-indigo shrink-0">
+                <Plus className="h-3.5 w-3.5 mr-1.5" /> Add Connection
+              </button>
+            </div>
+
+            {sortedPortfolio.length === 0 ? (
+              <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl p-10 text-center">
+                <Briefcase className="h-10 w-10 text-slate-600 mx-auto mb-4" />
+                <h2 className="text-lg font-semibold text-white">No saved connections yet</h2>
+                <p className="text-slate-400 text-sm mt-2 max-w-md mx-auto">Connect ClickUp and map a list, and the connection is saved here automatically so you can come back to it later.</p>
+              </div>
+            ) : (
+              <ul className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {sortedPortfolio.map(conn => {
+                  const isActive = conn.token === clickUpToken;
+                  const isEditing = editingConnId === conn.id;
+                  return (
+                    <li key={conn.id} className={`bg-slate-900/40 backdrop-blur-md rounded-2xl border shadow-xl flex flex-col ${isActive ? 'border-emerald-500/30' : 'border-white/5'}`}>
+                      <div className="px-5 py-4 border-b border-white/5 bg-slate-900/30 rounded-t-2xl flex items-center justify-between gap-3">
+                        {isEditing ? (
+                          <div className="flex items-center gap-2 min-w-0 flex-1">
+                            <input autoFocus type="text" value={editingConnName} onChange={e => setEditingConnName(e.target.value)}
+                              onKeyDown={e => { if (e.key === 'Enter') handleRenameConnection(conn.id); if (e.key === 'Escape') { setEditingConnId(null); setEditingConnName(''); } }}
+                              className="min-w-0 flex-1 bg-slate-950/60 border border-transparent rounded-lg px-3 py-1.5 text-sm text-white neon-input neon-input-indigo" />
+                            <button onClick={() => handleRenameConnection(conn.id)} className="p-1.5 rounded-md text-emerald-400 neon-border-slate" title="Save name"><Check className="h-4 w-4" /></button>
+                            <button onClick={() => { setEditingConnId(null); setEditingConnName(''); }} className="p-1.5 rounded-md text-slate-400 neon-border-slate" title="Cancel"><X className="h-4 w-4" /></button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2 min-w-0">
+                            <h2 className="text-base font-semibold text-white truncate">{conn.name}</h2>
+                            <button onClick={() => { setEditingConnId(conn.id); setEditingConnName(conn.name); }} className="p-1 rounded-md text-slate-500 neon-border-slate shrink-0" title="Rename"><Pencil className="h-3.5 w-3.5" /></button>
+                          </div>
+                        )}
+                        {isActive && (
+                          <span className="flex items-center shrink-0 text-xs font-medium text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20"><div className="h-2 w-2 rounded-full bg-emerald-400 mr-1.5 animate-pulse"></div> Active</span>
+                        )}
+                      </div>
+                      <div className="p-5 flex-1 space-y-3">
+                        {(conn.workflows || []).length === 0 ? (
+                          <p className="text-sm text-slate-500 italic">No lists mapped yet. Switch to this connection and add a list.</p>
+                        ) : (
+                          (conn.workflows || []).map(w => (
+                            <div key={w.id || w.listId} className="flex flex-wrap items-center text-xs text-slate-300 gap-y-1.5">
+                              <span className="flex items-center"><Box className="h-3.5 w-3.5 mr-1.5 text-slate-500" /> {w.team} / {w.space}</span>
+                              {w.folder && w.folder !== 'No Folder' && <><ChevronRight className="h-3.5 w-3.5 mx-1 text-slate-600" /><span className="flex items-center"><FolderOpen className="h-3.5 w-3.5 mr-1 text-slate-500" /> {w.folder}</span></>}
+                              <ChevronRight className="h-3.5 w-3.5 mx-1 text-slate-600" />
+                              <span className="font-semibold text-indigo-400 flex items-center bg-indigo-500/10 px-2 py-0.5 rounded-md border border-indigo-500/20"><ListTodo className="h-3.5 w-3.5 mr-1" /> {w.list}</span>
+                            </div>
+                          ))
+                        )}
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 pt-1 text-[11px] text-slate-500">
+                          <span className="flex items-center"><Key className="h-3 w-3 mr-1" /> Token ••••{String(conn.token || '').slice(-4)}</span>
+                          <span className="flex items-center"><Clock className="h-3 w-3 mr-1" /> Last used {new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(conn.lastUsed || conn.savedAt || Date.now()))}</span>
+                        </div>
+                      </div>
+                      <div className="px-5 py-4 border-t border-white/5 flex items-center justify-between gap-3">
+                        <button onClick={() => handleRemoveConnection(conn)} disabled={isActive} className="text-slate-400 p-2 rounded-md neon-border-rose transition-colors disabled:opacity-30 disabled:pointer-events-none" title={isActive ? 'Switch to another connection before removing this one' : 'Remove from Portfolio'}><Trash2 className="h-4 w-4" /></button>
+                        {isActive ? (
+                          <button onClick={() => setActiveView('dashboard')} className="btn-neon btn-neon-emerald btn-neon-sm"><LayoutDashboard className="h-3.5 w-3.5 mr-1.5" /> Open Dashboard</button>
+                        ) : (
+                          <button onClick={() => handleSwitchConnection(conn)} disabled={warpStage !== 'idle'} className="btn-neon btn-neon-indigo btn-neon-sm"><ArrowRight className="h-3.5 w-3.5 mr-1.5" /> Switch to this</button>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            <p className="text-xs text-slate-600 mt-6">Saved connections and their API tokens are stored only in this browser. Signing out clears them.</p>
+          </main>
+        );
+
         return (
           <div className="min-h-screen bg-slate-950 font-sans text-slate-100 relative">
             <WebNestBackground opacity={0.35} />
@@ -2940,9 +3164,30 @@
             <nav className="relative z-30 bg-slate-950/50 backdrop-blur-md border-b border-white/10 sticky top-0">
               <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                 <div className="flex justify-between h-16">
-                  <div className="flex items-center">
-                    <SpiderNetworkIcon className="h-8 w-8 text-indigo-400" />
-                    <span className="ml-2 text-xl font-bold tracking-tight text-white">Weaver</span>
+                  <div className="flex items-center min-w-0">
+                    <div className="flex items-center cursor-pointer shrink-0" onClick={() => setActiveView('dashboard')}>
+                      <SpiderNetworkIcon className="h-8 w-8 text-indigo-400" />
+                      <span className="ml-2 text-xl font-bold tracking-tight text-white hidden sm:inline">Weaver</span>
+                    </div>
+                    <div className="ml-3 sm:ml-8 flex items-center gap-1">
+                      <button onClick={() => setActiveView('dashboard')} className={`px-3 py-1.5 rounded-lg border text-sm font-medium flex items-center transition-all neon-border-indigo ${activeView === 'dashboard' ? 'text-white bg-indigo-500/10 border-indigo-500/30' : 'text-slate-400 border-transparent'}`} title="Dashboard">
+                        <LayoutDashboard className="h-4 w-4 sm:mr-1.5" /><span className="hidden sm:inline">Dashboard</span>
+                      </button>
+                      <button onClick={() => setActiveView('portfolio')} className={`px-3 py-1.5 rounded-lg border text-sm font-medium flex items-center transition-all neon-border-indigo ${activeView === 'portfolio' ? 'text-white bg-indigo-500/10 border-indigo-500/30' : 'text-slate-400 border-transparent'}`} title="Portfolio: saved connections">
+                        <Briefcase className="h-4 w-4 sm:mr-1.5" /><span className="hidden sm:inline">Portfolio</span>
+                        {portfolio.length > 0 && <span className="ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300">{portfolio.length}</span>}
+                      </button>
+                      {mappedWorkflows.length > 0 && (
+                        <button onClick={() => setIsUnifiedModalOpen(true)} className="px-3 py-1.5 rounded-lg border border-transparent text-sm font-medium flex items-center transition-all neon-border-indigo text-slate-400" title="Manage Tasks & Time">
+                          <ListTodo className="h-4 w-4 sm:mr-1.5" /><span className="hidden sm:inline">Tasks</span>
+                        </button>
+                      )}
+                    </div>
+                    {activeConnection && (
+                      <span className="hidden lg:flex items-center ml-4 pl-4 border-l border-white/10 text-xs text-slate-400 truncate" title="Active connection">
+                        <div className="h-2 w-2 rounded-full bg-emerald-400 mr-2 shrink-0"></div><span className="truncate max-w-[200px]">{activeConnection.name}</span>
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center space-x-4">
                     <button ref={bellButtonRef} onClick={() => { setIsNotificationsOpen(!isNotificationsOpen); setVisibleTxCount(10); }} className={`p-1.5 rounded-lg border border-transparent transition-all neon-border-indigo relative ${isNotificationsOpen ? 'text-white' : 'text-slate-400'}`}>
@@ -3002,7 +3247,9 @@
               </div>
             )}
 
-            {mappedWorkflows.length === 0 ? (
+            {activeView === 'portfolio' ? (
+              portfolioUI
+            ) : mappedWorkflows.length === 0 ? (
           <main className="relative z-25 max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
             <div className="text-center mb-10">
               <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-indigo-500/10 mb-6 border border-indigo-500/20 shadow-[0_0_15px_rgba(99,102,241,0.2)]"><SpiderNetworkIcon className="h-8 w-8 text-indigo-400 animate-pulse" /></div>
@@ -3824,13 +4071,11 @@
                   <div className="px-6 py-4 border-b border-white/5 bg-slate-900/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-t-2xl">
                     <div className="flex items-center space-x-3">
                       <h2 className="text-lg font-semibold text-white">Active Connections</h2>
-                      <span className="flex items-center text-xs font-medium text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20"><div className="h-2 w-2 rounded-full bg-emerald-400 mr-1.5 animate-pulse"></div> Linked ({mappedWorkflows.length}/2 Max)</span>
+                      <span className="flex items-center text-xs font-medium text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20"><div className="h-2 w-2 rounded-full bg-emerald-400 mr-1.5 animate-pulse"></div> Linked ({mappedWorkflows.length})</span>
                     </div>
-                    {mappedWorkflows.length < 2 && (
-                      <button onClick={handleConnectClickUp} className="btn-neon btn-neon-indigo btn-neon-sm">
-                        <Plus className="w-3.5 h-3.5 mr-1" /> Add Another List
-                      </button>
-                    )}
+                    <button onClick={handleConnectClickUp} className="btn-neon btn-neon-indigo btn-neon-sm">
+                      <Plus className="w-3.5 h-3.5 mr-1" /> Add Another List
+                    </button>
                   </div>
                   <ul className="divide-y divide-white/5">
                     {mappedWorkflows.map(workflow => (
