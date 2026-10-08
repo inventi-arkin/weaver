@@ -231,6 +231,10 @@
 
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
+    // Separate Worker that holds ClickUp tokens (encrypted) and forwards read-only ClickUp calls
+    const API_BASE = 'https://weaver-api.arkin-paroan.workers.dev';
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+    const isLegacyToken = (t) => !!t && t !== 'mock_token' && !UUID_RE.test(t);
     const db = getFirestore(app);
     const googleProvider = new GoogleAuthProvider();
     const appId = typeof __app_id !== 'undefined' ? __app_id : 'weaver-default-app';
@@ -602,7 +606,11 @@
 
       const [warpStage, setWarpStage] = useState('idle');
       const [integrationStep, setIntegrationStep] = useState('idle');
-      const [clickUpToken, setClickUpToken] = useState(() => localStorage.getItem(`weaver_clickup_token_${appId}`) || '');
+      // clickUpToken holds the opaque connection id issued by weaver-api; the real ClickUp token never stays in the browser
+      const [clickUpToken, setClickUpToken] = useState(() => localStorage.getItem(`weaver_clickup_conn_${appId}`) || '');
+      const [needsReconnect, setNeedsReconnect] = useState(false);
+      const [reconnectConnId, setReconnectConnId] = useState(null);
+      const [migration, setMigration] = useState(null);
       const [tempToken, setTempToken] = useState('');
       const [clickUpError, setClickUpError] = useState(null);
       const [mappedWorkflows, setMappedWorkflows] = useState(() => {
@@ -777,58 +785,43 @@
         setIntegrationStep('selecting');
       };
 
-      const fetchClickUp = async (endpoint, token, method = 'GET', body = null) => {
-          if (token === 'mock_token') return {};
-          const targetUrl = `https://api.clickup.com/api/v2/${endpoint}`;
-          
+      // weaver-api verifies the Google sign-in, then adds the stored ClickUp token server-side
+      const callApi = async (path, { method = 'GET', connId, body } = {}) => {
+          const cu = auth.currentUser;
+          if (!cu || cu.isAnonymous) throw new Error('Sign in with Google to save a ClickUp connection.');
+          let res;
           try {
-              const directRes = await fetch(targetUrl, {
+              res = await fetch(`${API_BASE}/${path}`, {
                   method,
-                  headers: { 'Authorization': token, 'Content-Type': 'application/json' },
+                  headers: {
+                      'Authorization': `Bearer ${await cu.getIdToken()}`,
+                      ...(connId && { 'X-Weaver-Conn': connId }),
+                      ...(body && { 'Content-Type': 'application/json' })
+                  },
                   ...(body && { body: JSON.stringify(body) })
               });
-              if (directRes.ok) return await directRes.json();
-              if (directRes.status === 401) {
-                  const error = new Error('Invalid API Token. ClickUp rejected the connection.');
-                  error.isDefinitive = true;
-                  throw error;
-              }
           } catch (e) {
-              if (e.isDefinitive) throw e;
+              throw new Error("Can't reach Weaver's server. Check your connection.");
           }
-
-          const myCloudflareWorkerUrl = 'https://weaver.arkin-paroan.workers.dev';
-          const cleanProxyBase = myCloudflareWorkerUrl.replace(/\/$/, '');
-          const proxyUrl = `${cleanProxyBase}/?url=${encodeURIComponent(targetUrl)}`;
-          
-          const fetchOptions = {
-              method,
-              headers: { 'Authorization': token, 'Content-Type': 'application/json' },
-              ...(body && { body: JSON.stringify(body) })
-          };
-          
-          try {
-              const res = await fetch(proxyUrl, fetchOptions);
-              if (!res.ok) {
-                  let errText = '';
-                  try {
-                      const d = await res.json();
-                      errText = d.error || '';
-                  } catch (e) {
-                      errText = await res.text();
-                  }
-                  if (res.status === 401) {
-                      const error = new Error('Invalid API Token. ClickUp rejected the connection.');
-                      error.isDefinitive = true;
-                      throw error;
-                  }
-                  throw new Error(errText || `HTTP ${res.status}`);
-              }
-              return await res.json();
-          } catch (err) {
-              throw err;
-          }
+          if (res.ok) return res.json();
+          let msg = '';
+          try { msg = (await res.json()).error || ''; } catch (e) {}
+          let error;
+          if (res.status === 401 && msg === 'Invalid API Token') { error = new Error('Invalid API Token. ClickUp rejected the connection.'); error.isDefinitive = true; }
+          else if (res.status === 401) error = new Error('Your sign-in expired. Sign in again.');
+          else if (res.status === 403) error = new Error('Sign in with Google to save a ClickUp connection.');
+          else if (res.status === 404) { setNeedsReconnect(true); error = new Error('This connection needs to be reconnected.'); }
+          else if (res.status === 429) error = new Error(`ClickUp is rate limiting requests. Try again in ${res.headers.get('Retry-After') || 30}s.`);
+          else error = new Error(msg || `HTTP ${res.status}`);
+          throw error;
       };
+
+      const fetchClickUp = async (endpoint, connId) => {
+          if (connId === 'mock_token') return {};
+          return callApi(`clickup/${endpoint}`, { connId });
+      };
+
+      const saveConnection = (token) => callApi('connections', { method: 'POST', body: { token } });
 
       useEffect(() => {
         if (!selectedTeam || !clickUpToken) return;
@@ -877,13 +870,17 @@
 
       const availableLists = selectedFolder ? lists : folderlessLists;
 
+      const canSaveToken = !!user && !user.isMock && !user.isAnonymous;
+
       const handleConnectClickUp = () => {
         setSelectedTeam('');
         setSelectedSpace('');
         setSelectedFolder('');
         setSelectedList('');
         setIsSwitchModalOpen(true);
-        if (clickUpToken && teams.length > 0) {
+        if (!canSaveToken && clickUpToken !== 'mock_token') {
+          setIntegrationStep('signin_required');
+        } else if (clickUpToken && teams.length > 0) {
           setIntegrationStep('selecting');
         } else if (clickUpToken && clickUpToken !== 'mock_token') {
           // Saved token but workspaces not loaded yet (e.g. after a reload or a portfolio switch): reuse it
@@ -909,15 +906,37 @@
         setIntegrationStep('connecting');
         setClickUpError(null);
         try {
-          const data = await fetchClickUp('team', tempToken);
-          setTeams(data.teams || []);
-          if (tempToken !== clickUpToken && mappedWorkflowsRef.current.length > 0) {
+          const { connId, workspaces } = await saveConnection(tempToken);
+          setTempToken('');
+          if (reconnectConnId) {
+            // Re-entering the token of a saved connection: keep its lists, only swap the connection id
+            const target = portfolio.find(c => c.id === reconnectConnId);
+            setReconnectConnId(null);
+            if (target) {
+              updatePortfolio(prev => prev.map(c => c.id === target.id ? { ...c, token: connId } : c));
+              setIntegrationStep('idle'); setIsSwitchModalOpen(false);
+              if (target.token === clickUpToken || !clickUpToken) {
+                setClickUpToken(connId);
+                localStorage.setItem(`weaver_clickup_conn_${appId}`, connId);
+                setNeedsReconnect(false);
+                pendingSyncRef.current = true;
+                if (mappedWorkflowsRef.current.length === 0) commitWorkflows((target.workflows || []).map(w => ({ ...w, tasks: [], lastSynced: Date.now() })));
+                setActiveView('dashboard');
+              } else {
+                handleSwitchConnection({ ...target, token: connId });
+              }
+              return;
+            }
+          }
+          setTeams(workspaces || []);
+          if (connId !== clickUpToken && mappedWorkflowsRef.current.length > 0) {
             // A different account: park the current connection in the Portfolio and start with a clean mapping
             persistConnection(clickUpToken, mappedWorkflowsRef.current);
             commitWorkflows([]);
           }
-          setClickUpToken(tempToken);
-          localStorage.setItem(`weaver_clickup_token_${appId}`, tempToken);
+          setClickUpToken(connId);
+          localStorage.setItem(`weaver_clickup_conn_${appId}`, connId);
+          setNeedsReconnect(false);
           setActiveView('dashboard');
           setIntegrationStep('selecting');
         } catch (err) {
@@ -1092,7 +1111,7 @@
 
       useEffect(() => {
         if (mappedWorkflows.length === 0 || !clickUpToken) return;
-        const syncInterval = setInterval(runSyncSequence, 30000); 
+        const syncInterval = setInterval(runSyncSequence, 60000); 
         return () => clearInterval(syncInterval);
       }, [mappedWorkflows.length, clickUpToken, user]);
 
@@ -1148,7 +1167,8 @@
         setTimeout(() => {
           setWarpStage('flash');
           setClickUpToken(conn.token);
-          localStorage.setItem(`weaver_clickup_token_${appId}`, conn.token);
+          localStorage.setItem(`weaver_clickup_conn_${appId}`, conn.token);
+          setNeedsReconnect(false);
           setTeams([]); setSpaces([]); setFolders([]); setFolderlessLists([]); setLists([]);
           setSelectedTeam(''); setSelectedSpace(''); setSelectedFolder(''); setSelectedList('');
           setSelectedTagFilter(''); setSelectedAssigneeFilter(''); setCompletionFilterType('none'); setSelectedDrillDownAssignee(null);
@@ -1167,8 +1187,8 @@
 
       const handleNewConnection = () => {
         setSelectedTeam(''); setSelectedSpace(''); setSelectedFolder(''); setSelectedList('');
-        setTempToken(''); setClickUpError(null);
-        setIntegrationStep('entering_token');
+        setTempToken(''); setClickUpError(null); setReconnectConnId(null);
+        setIntegrationStep(canSaveToken ? 'entering_token' : 'signin_required');
         setIsSwitchModalOpen(true);
         if (mappedWorkflows.length === 0) setActiveView('dashboard');
       };
@@ -1182,10 +1202,59 @@
 
       const handleRemoveConnection = (conn) => {
         if (conn.token === clickUpToken) return;
-        if (!window.confirm(`Remove "${conn.name}" from your Portfolio? Its saved API token will be deleted from this browser.`)) return;
+        if (!window.confirm(`Remove "${conn.name}" from your Portfolio? Its ClickUp token will be deleted from Weaver's server. You'll need to paste it again to reconnect.`)) return;
+        if (UUID_RE.test(conn.token || '')) callApi(`connections/${conn.token}`, { method: 'DELETE' }).catch(e => console.warn(e.message));
         updatePortfolio(prev => prev.filter(c => c.id !== conn.id));
         logTransaction('Portfolio Connection Removed', conn.name, 'unlink');
       };
+
+      const handleReconnect = (conn) => {
+        setSelectedTeam(''); setSelectedSpace(''); setSelectedFolder(''); setSelectedList('');
+        setTempToken(''); setClickUpError(null);
+        setReconnectConnId(conn.id);
+        setIntegrationStep(canSaveToken ? 'entering_token' : 'signin_required');
+        setIsSwitchModalOpen(true);
+        if (mappedWorkflows.length === 0) setActiveView('dashboard');
+      };
+
+      // One-time move of tokens saved by older versions (plaintext in this browser) to weaver-api
+      const migratedForRef = useRef(null);
+      useEffect(() => {
+        if (!canSaveToken || !portfolioKey || migratedForRef.current === portfolioKey) return;
+        migratedForRef.current = portfolioKey;
+        (async () => {
+          const guestKey = `weaver_portfolio_${appId}_guest`;
+          const legacyActiveKey = `weaver_clickup_token_${appId}`;
+          const read = (k) => { try { const v = JSON.parse(localStorage.getItem(k) || 'null'); return Array.isArray(v) ? v : []; } catch (e) { return []; } };
+          const legacyActive = localStorage.getItem(legacyActiveKey) || '';
+          const own = read(portfolioKey), guest = read(guestKey);
+          const tokens = [...new Set([legacyActive, ...own.map(c => c.token), ...guest.map(c => c.token)].filter(isLegacyToken))];
+          if (tokens.length === 0) return;
+          setMigration({ status: 'running', total: tokens.length, failed: 0 });
+          const ids = {}; let failed = 0;
+          for (const tok of tokens) {
+            try { ids[tok] = (await saveConnection(tok)).connId; } catch (e) { failed++; }
+          }
+          const swap = (c) => ids[c.token] ? { ...c, token: ids[c.token] } : c;
+          const merged = [];
+          for (const c of [...read(portfolioKey).map(swap), ...guest.filter(c => ids[c.token]).map(swap)]) {
+            if (!merged.some(m => m.token === c.token)) merged.push(c);
+          }
+          try {
+            localStorage.setItem(portfolioKey, JSON.stringify(merged));
+            const keep = guest.filter(c => !ids[c.token]);
+            if (keep.length) localStorage.setItem(guestKey, JSON.stringify(keep)); else localStorage.removeItem(guestKey);
+            if (ids[legacyActive]) {
+              localStorage.setItem(`weaver_clickup_conn_${appId}`, ids[legacyActive]);
+              localStorage.removeItem(legacyActiveKey);
+            }
+          } catch (e) { console.warn(e); }
+          setPortfolio(merged);
+          if (ids[legacyActive]) setClickUpToken(prev => prev || ids[legacyActive]);
+          setMigration({ status: failed ? 'partial' : 'done', total: tokens.length, failed });
+          if (!failed) setTimeout(() => setMigration(null), 5000);
+        })();
+      }, [canSaveToken, portfolioKey]);
 
       // Make sure the connection currently in use is always saved to the Portfolio
       useEffect(() => {
@@ -1370,8 +1439,8 @@
         }
         setUser(null);
         
-        // Remove the specific ClickUp token
-        localStorage.removeItem(`weaver_clickup_token_${appId}`);
+        // Forget the active connection id (the token itself lives on weaver-api)
+        localStorage.removeItem(`weaver_clickup_conn_${appId}`);
         
         // Find and remove all cached data keys starting with 'weaver_' for this specific app instance
         const keysToRemove = [];
@@ -2672,6 +2741,20 @@
         
         const integrationUI = (
           <div className="animate-in fade-in duration-500 w-full">
+            {integrationStep === 'signin_required' && (
+              <div className="bg-slate-900/40 backdrop-blur-md rounded-xl border border-white/10 shadow-2xl p-8 animate-in fade-in slide-in-from-bottom-4">
+                <div className="flex items-center mb-6">
+                  <div className="bg-indigo-500/10 p-2.5 rounded-lg mr-4 border border-indigo-500/20"><Key className="h-6 w-6 text-indigo-400" /></div>
+                  <div><h3 className="text-lg font-semibold text-white">Sign in to connect ClickUp</h3><p className="text-sm text-slate-400 max-w-xl">Weaver stores your ClickUp token securely on the server, tied to your Google account. Anonymous and offline sessions can't save one.</p></div>
+                </div>
+                <div className="flex flex-col sm:flex-row sm:justify-end gap-3">
+                  <button onClick={handleCancelIntegration} className="px-4 py-2 text-sm font-medium text-slate-400 rounded-lg neon-border-slate transition-all">Cancel</button>
+                  <button onClick={handleMockClickUpData} className="px-4 py-2 text-sm font-medium text-slate-300 rounded-lg neon-border-slate transition-all">Use mock data</button>
+                  <button onClick={handleGoogleLogin} className="btn-neon btn-neon-indigo">Continue with Google</button>
+                </div>
+              </div>
+            )}
+
             {integrationStep === 'idle' && mappedWorkflows.length === 0 && (
               <div className="bg-slate-900/40 backdrop-blur-md rounded-xl border border-white/10 shadow-2xl overflow-hidden flex flex-col md:flex-row items-center justify-between p-8">
                 <div className="mb-4 md:mb-0">
@@ -2693,7 +2776,8 @@
                 <div className="space-y-4">
                   <div>
                     <label className="block text-sm font-medium text-slate-300 mb-1">Personal Access Token</label>
-                    <input type="password" value={tempToken} onChange={(e) => setTempToken(e.target.value)} placeholder="pk_123456789_..." className="w-full bg-slate-950/60 border border-transparent rounded-lg px-4 py-3 text-white neon-input neon-input-indigo" />
+                    <p className="text-xs text-slate-500 mb-2">Your token is sent once, checked with ClickUp and stored encrypted on Weaver's server. It is not kept in this browser.</p>
+                    <input type="password" autoComplete="off" value={tempToken} onChange={(e) => setTempToken(e.target.value)} placeholder="pk_123456789_..." className="w-full bg-slate-950/60 border border-transparent rounded-lg px-4 py-3 text-white neon-input neon-input-indigo" />
                   </div>
                   {clickUpError && (
                     <div className="p-4 bg-red-950/30 border border-red-900/50 rounded-xl text-sm text-red-300">
@@ -2796,6 +2880,7 @@
               <ul className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {sortedPortfolio.map(conn => {
                   const isActive = conn.token === clickUpToken;
+                  const connNeedsReconnect = !conn.token || isLegacyToken(conn.token) || (isActive && needsReconnect);
                   const isEditing = editingConnId === conn.id;
                   return (
                     <li key={conn.id} className={`bg-slate-900/40 backdrop-blur-md rounded-2xl border shadow-xl flex flex-col ${isActive ? 'border-emerald-500/30' : 'border-white/5'}`}>
@@ -2814,7 +2899,10 @@
                             <button onClick={() => { setEditingConnId(conn.id); setEditingConnName(conn.name); }} className="p-1 rounded-md text-slate-500 neon-border-slate shrink-0" title="Rename"><Pencil className="h-3.5 w-3.5" /></button>
                           </div>
                         )}
-                        {isActive && (
+                        {connNeedsReconnect && (
+                          <span className="flex items-center shrink-0 text-xs font-medium text-amber-300 bg-amber-950/30 px-2.5 py-1 rounded-full border border-amber-900/50"><AlertTriangle className="h-3 w-3 mr-1.5" /> Reconnect needed</span>
+                        )}
+                        {isActive && !connNeedsReconnect && (
                           <span className="flex items-center shrink-0 text-xs font-medium text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20"><div className="h-2 w-2 rounded-full bg-emerald-400 mr-1.5 animate-pulse"></div> Active</span>
                         )}
                       </div>
@@ -2832,13 +2920,15 @@
                           ))
                         )}
                         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 pt-1 text-[11px] text-slate-500">
-                          <span className="flex items-center"><Key className="h-3 w-3 mr-1" /> Token ••••{String(conn.token || '').slice(-4)}</span>
+                          <span className="flex items-center"><Key className="h-3 w-3 mr-1" /> Stored securely on server</span>
                           <span className="flex items-center"><Clock className="h-3 w-3 mr-1" /> Last used {new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(conn.lastUsed || conn.savedAt || Date.now()))}</span>
                         </div>
                       </div>
                       <div className="px-5 py-4 border-t border-white/5 flex items-center justify-between gap-3">
                         <button onClick={() => handleRemoveConnection(conn)} disabled={isActive} className="text-slate-400 p-2 rounded-md neon-border-rose transition-colors disabled:opacity-30 disabled:pointer-events-none" title={isActive ? 'Switch to another connection before removing this one' : 'Remove from Portfolio'}><Trash2 className="h-4 w-4" /></button>
-                        {isActive ? (
+                        {connNeedsReconnect ? (
+                          <button onClick={() => handleReconnect(conn)} className="btn-neon btn-neon-indigo btn-neon-sm"><RefreshCw className="h-3.5 w-3.5 mr-1.5" /> Reconnect</button>
+                        ) : isActive ? (
                           <button onClick={() => setActiveView('dashboard')} className="btn-neon btn-neon-emerald btn-neon-sm"><LayoutDashboard className="h-3.5 w-3.5 mr-1.5" /> Open Dashboard</button>
                         ) : (
                           <button onClick={() => handleSwitchConnection(conn)} disabled={warpStage !== 'idle'} className="btn-neon btn-neon-indigo btn-neon-sm"><ArrowRight className="h-3.5 w-3.5 mr-1.5" /> Switch to this</button>
@@ -2849,7 +2939,7 @@
                 })}
               </ul>
             )}
-            <p className="text-xs text-slate-600 mt-6">Saved connections and their API tokens are stored only in this browser. Signing out clears them.</p>
+            <p className="text-xs text-slate-600 mt-6">ClickUp tokens are stored encrypted on Weaver's server, linked to your Google account. Removing a connection deletes its token.</p>
           </main>
         );
 
@@ -3264,6 +3354,17 @@
               </div>
             )}
 
+            {migration && (
+              <div role="status" className={`mb-4 p-4 rounded-xl border text-sm flex items-center justify-between gap-3 ${migration.status === 'partial' ? 'bg-amber-950/30 border-amber-900/50 text-amber-200' : migration.status === 'done' ? 'bg-emerald-950/30 border-emerald-900/50 text-emerald-300' : 'bg-slate-900/40 border-white/10 text-slate-300'}`}>
+                <span className="flex items-center">
+                  {migration.status === 'running' && <><RefreshCw className="h-4 w-4 mr-2 animate-spin" /> Moving your saved ClickUp connections to secure storage…</>}
+                  {migration.status === 'done' && <><Check className="h-4 w-4 mr-2" /> {migration.total} connection{migration.total === 1 ? '' : 's'} secured</>}
+                  {migration.status === 'partial' && <><AlertTriangle className="h-4 w-4 mr-2" /> {migration.failed} connection{migration.failed === 1 ? '' : 's'} couldn't be moved. Open Portfolio and choose Reconnect.</>}
+                </span>
+                {migration.status === 'partial' && <button onClick={() => { setActiveView('portfolio'); setMigration(null); }} className="btn-neon btn-neon-slate btn-neon-sm">Open Portfolio</button>}
+              </div>
+            )}
+
             {activeView === 'portfolio' ? (
               portfolioUI
             ) : mappedWorkflows.length === 0 ? (
@@ -3292,8 +3393,8 @@
                     )}
                   </div>
 
-                  {!clickUpToken && mappedWorkflows.length > 0 && (
-                    <button onClick={handleConnectClickUp} className="flex items-center px-3 py-1 rounded-full border border-transparent bg-rose-900/30 text-rose-400 text-xs font-medium cursor-pointer transition-all neon-border-rose" title="Your API token was lost from memory. Please reconnect to resume syncing.">
+                  {(!clickUpToken || needsReconnect) && mappedWorkflows.length > 0 && (
+                    <button onClick={() => { const c = portfolio.find(p => p.token === clickUpToken); c ? handleReconnect(c) : handleConnectClickUp(); }} className="flex items-center px-3 py-1 rounded-full border border-transparent bg-rose-900/30 text-rose-400 text-xs font-medium cursor-pointer transition-all neon-border-rose" title="Weaver can't find this connection's token. Reconnect to resume syncing.">
                       <AlertTriangle className="h-3 w-3 mr-1.5" /> Reconnect
                     </button>
                   )}
