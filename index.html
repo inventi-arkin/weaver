@@ -1231,23 +1231,22 @@
           const tokens = [...new Set([legacyActive, ...own.map(c => c.token), ...guest.map(c => c.token)].filter(isLegacyToken))];
           if (tokens.length === 0) return;
           setMigration({ status: 'running', total: tokens.length, failed: 0 });
-          const ids = {}; let failed = 0;
+          // A token ClickUp rejects is dead: drop it and leave its entry as "Reconnect needed". Other failures keep the token to retry next load.
+          const ids = {}; const dead = new Set(); let failed = 0;
           for (const tok of tokens) {
-            try { ids[tok] = (await saveConnection(tok)).connId; } catch (e) { failed++; }
+            try { ids[tok] = (await saveConnection(tok)).connId; } catch (e) { if (e.isDefinitive) dead.add(tok); failed++; }
           }
-          const swap = (c) => ids[c.token] ? { ...c, token: ids[c.token] } : c;
+          const swap = (c) => ids[c.token] ? { ...c, token: ids[c.token] } : dead.has(c.token) ? { ...c, token: '' } : c;
           const merged = [];
-          for (const c of [...read(portfolioKey).map(swap), ...guest.filter(c => ids[c.token]).map(swap)]) {
-            if (!merged.some(m => m.token === c.token)) merged.push(c);
+          for (const c of [...read(portfolioKey).map(swap), ...guest.filter(c => ids[c.token] || dead.has(c.token)).map(swap)]) {
+            if (!c.token || !merged.some(m => m.token === c.token)) merged.push(c);
           }
           try {
             localStorage.setItem(portfolioKey, JSON.stringify(merged));
-            const keep = guest.filter(c => !ids[c.token]);
+            const keep = guest.filter(c => !ids[c.token] && !dead.has(c.token));
             if (keep.length) localStorage.setItem(guestKey, JSON.stringify(keep)); else localStorage.removeItem(guestKey);
-            if (ids[legacyActive]) {
-              localStorage.setItem(`weaver_clickup_conn_${appId}`, ids[legacyActive]);
-              localStorage.removeItem(legacyActiveKey);
-            }
+            if (ids[legacyActive]) localStorage.setItem(`weaver_clickup_conn_${appId}`, ids[legacyActive]);
+            if (ids[legacyActive] || dead.has(legacyActive)) localStorage.removeItem(legacyActiveKey);
           } catch (e) { console.warn(e); }
           setPortfolio(merged);
           if (ids[legacyActive]) setClickUpToken(prev => prev || ids[legacyActive]);
@@ -3359,9 +3358,14 @@
                 <span className="flex items-center">
                   {migration.status === 'running' && <><RefreshCw className="h-4 w-4 mr-2 animate-spin" /> Moving your saved ClickUp connections to secure storage…</>}
                   {migration.status === 'done' && <><Check className="h-4 w-4 mr-2" /> {migration.total} connection{migration.total === 1 ? '' : 's'} secured</>}
-                  {migration.status === 'partial' && <><AlertTriangle className="h-4 w-4 mr-2" /> {migration.failed} connection{migration.failed === 1 ? '' : 's'} couldn't be moved. Open Portfolio and choose Reconnect.</>}
+                  {migration.status === 'partial' && <><AlertTriangle className="h-4 w-4 mr-2" /> {migration.failed} saved connection{migration.failed === 1 ? '' : 's'} couldn't be moved (the saved token may have expired). Open Portfolio and choose Reconnect.</>}
                 </span>
-                {migration.status === 'partial' && <button onClick={() => { setActiveView('portfolio'); setMigration(null); }} className="btn-neon btn-neon-slate btn-neon-sm">Open Portfolio</button>}
+                {migration.status === 'partial' && (
+                  <span className="flex items-center gap-2 shrink-0">
+                    <button onClick={() => { setActiveView('portfolio'); setMigration(null); }} className="btn-neon btn-neon-slate btn-neon-sm">Open Portfolio</button>
+                    <button onClick={() => setMigration(null)} className="p-1.5 rounded-md text-slate-400 neon-border-slate" aria-label="Dismiss" title="Dismiss"><X className="h-4 w-4" /></button>
+                  </span>
+                )}
               </div>
             )}
 
