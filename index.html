@@ -222,7 +222,7 @@
       FolderOpen, ListTodo, Plus, Trash2, ChevronRight, RefreshCw, Key, AlertTriangle,
       Clock, Calendar, Flag, Users, TrendingDown, TrendingUp, Target, Tag, X, Activity, PieChart,
       Bug, ShieldAlert, Zap, Info as InfoIcon, Download, Image as ImageIcon, BarChart2,
-      LayoutDashboard, Briefcase, Pencil, Check
+      LayoutDashboard, Briefcase, Pencil, Check, PauseCircle, WifiOff, CloudOff, ShieldCheck, ShieldX
     } from 'lucide-react';
 
     const firebaseConfig = {
@@ -239,6 +239,9 @@
     const auth = getAuth(app);
     // Separate Worker that holds ClickUp tokens (encrypted) and forwards read-only ClickUp calls
     const API_BASE = 'https://weaver-api.arkin-paroan.workers.dev';
+    const REQUEST_TIMEOUT_MS = 20000; // central-sync FR-22: a stuck request ends instead of hanging the sync
+    const REJECT_TRIES = 3; // central-sync FR-5: failed ticks before a token is paused
+    const OUTAGE_BANNER_MS = 10 * 60 * 1000; // central-sync FR-24
     const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
     const isLegacyToken = (t) => !!t && t !== 'mock_token' && !UUID_RE.test(t);
     const db = getFirestore(app);
@@ -899,6 +902,25 @@
       const activeListId = mappedWorkflows.length > 0 ? mappedWorkflows[0].listId : null;
 
       const [isAutoSyncing, setIsAutoSyncing] = useState(false);
+
+      // Central sync (specs/central-sync.md): one coordinator, one visible state
+      const [syncState, setSyncState] = useState({ state: 'idle' }); // idle, syncing, checking, synced, retrying, rate_limited, offline, unreachable, paused, failed
+      const syncStateRef = useRef({ state: 'idle' });
+      const applySync = (s) => { syncStateRef.current = s; setSyncState(s); };
+      const syncInFlightRef = useRef(false);
+      const runSyncRef = useRef(null);
+      const initialSyncRef = useRef(false);
+      const retryLocalRef = useRef(0);
+      const outageSinceRef = useRef(null);
+      const [outageLong, setOutageLong] = useState(false);
+      const [tokenStatuses, setTokenStatuses] = useState({}); // connId -> {connId, status, checkedAt, failCount}; read from weaver-api, never cached in the browser
+      const [tokenStatusLoading, setTokenStatusLoading] = useState(false);
+      const [, setSecondTick] = useState(0);
+      const DISMISS_KEY = `weaver_banners_dismissed_${appId}`; // only banner dismissal flags are kept, for this browser session
+      const [dismissedBanners, setDismissedBanners] = useState(() => { try { return JSON.parse(sessionStorage.getItem(DISMISS_KEY) || '[]'); } catch (e) { return []; } });
+      const saveDismissed = (next) => { try { sessionStorage.setItem(DISMISS_KEY, JSON.stringify(next)); } catch (e) {} return next; };
+      const dismissBanner = (key) => setDismissedBanners(prev => saveDismissed(prev.includes(key) ? prev : [...prev, key]));
+      const clearDismissed = (keys) => setDismissedBanners(prev => prev.some(k => keys.includes(k)) ? saveDismissed(prev.filter(k => !keys.includes(k))) : prev);
       
       const [completionFilterType, setCompletionFilterType] = useState('none');
       const [selectedTagFilter, setSelectedTagFilter] = useState('');
@@ -1062,14 +1084,18 @@
         setIntegrationStep('selecting');
       };
 
-      // weaver-api verifies the Google sign-in, then adds the stored ClickUp token server-side
+      // weaver-api verifies the Google sign-in, then adds the stored ClickUp token server-side.
+      // Errors carry kind/code/status/retryAfter so the sync coordinator can tell a rejected token from a network problem (central-sync FR-12, FR-22).
       const callApi = async (path, { method = 'GET', connId, body } = {}) => {
           const cu = auth.currentUser;
-          if (!cu || cu.isAnonymous) throw new Error('Sign in with Google to save a ClickUp connection.');
+          if (!cu || cu.isAnonymous) { const e = new Error('Sign in with Google to save a ClickUp connection.'); e.kind = 'auth'; throw e; }
           let res;
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS); // a stuck request ends instead of hanging the sync
           try {
               res = await fetch(`${API_BASE}/${path}`, {
                   method,
+                  signal: ctrl.signal,
                   headers: {
                       'Authorization': `Bearer ${await cu.getIdToken()}`,
                       ...(connId && { 'X-Weaver-Conn': connId }),
@@ -1078,19 +1104,27 @@
                   ...(body && { body: JSON.stringify(body) })
               });
           } catch (e) {
-              throw new Error("Can't reach Weaver's server. Check your connection.");
+              const unreachable = new Error("Can't reach Weaver's server. Check your connection.");
+              unreachable.kind = 'offline';
+              throw unreachable;
+          } finally {
+              clearTimeout(timer);
           }
           if (res.ok) return res.json();
-          let msg = '', code = '';
-          try { const body = await res.json(); msg = body.error || ''; code = body.code || ''; } catch (e) {}
-          let error;
-          if (res.status === 401 && msg === 'Invalid API Token') { error = new Error('Invalid API Token. ClickUp rejected the connection.'); error.isDefinitive = true; }
-          else if (res.status === 401) error = new Error('Your sign-in expired. Sign in again.');
-          else if (res.status === 403) error = new Error('Sign in with Google to save a ClickUp connection.');
-          else if (res.status === 404 && code === 'CLICKUP_NOT_FOUND') error = new Error('ClickUp could not find that list or task. It may have been deleted or renamed.');
-          else if (res.status === 404) { setNeedsReconnect(true); error = new Error('This connection needs to be reconnected.'); }
-          else if (res.status === 429) error = new Error(`ClickUp is rate limiting requests. Try again in ${res.headers.get('Retry-After') || 30}s.`);
+          let msg = '', code = '', retryAfter = null;
+          try { const body = await res.json(); msg = body.error || ''; code = body.code || ''; retryAfter = body.retryAfter ?? null; } catch (e) {}
+          let error, kind = 'other';
+          if (res.status === 401 && (code === 'TOKEN_REJECTED' || msg === 'Invalid API Token')) { error = new Error('Invalid API Token. ClickUp rejected the connection.'); error.isDefinitive = true; kind = 'token'; }
+          else if (res.status === 401) { error = new Error('Your sign-in expired. Sign in again.'); kind = 'auth'; }
+          else if (res.status === 403) { error = new Error('Sign in with Google to save a ClickUp connection.'); kind = 'auth'; }
+          else if (res.status === 404 && code === 'CLICKUP_NOT_FOUND') { error = new Error('ClickUp could not find that list or task. It may have been deleted or renamed.'); kind = 'notfound'; }
+          else if (res.status === 404) { setNeedsReconnect(true); error = new Error('This connection needs to be reconnected.'); kind = 'unknownconn'; }
+          else if (res.status === 409 && code === 'TOKEN_IN_USE') { error = new Error('This token is already saved as another connection.'); kind = 'inuse'; }
+          else if (res.status === 429 && code === 'RECHECK_COOLDOWN') { error = new Error(`Checked just now, try again in ${retryAfter || 60}s.`); kind = 'cooldown'; }
+          else if (res.status === 429) { retryAfter = Number(res.headers.get('Retry-After')) || 30; error = new Error(`ClickUp is rate limiting requests. Try again in ${retryAfter}s.`); kind = 'rate'; }
+          else if (res.status === 502 && code === 'CLICKUP_UNREACHABLE') { error = new Error('ClickUp is unreachable right now.'); kind = 'unreachable'; }
           else error = new Error(msg || `HTTP ${res.status}`);
+          error.kind = kind; error.code = code; error.status = res.status; error.retryAfter = retryAfter;
           throw error;
       };
 
@@ -1150,6 +1184,36 @@
 
       const canSaveToken = !!user && !user.isMock && !user.isAnonymous;
 
+      // FR-24: 10 minutes of continuous network failure (offline or ClickUp unreachable) raises the outage banner; any other result ends the outage
+      const noteOutage = (isOutage) => {
+        if (isOutage) {
+          if (!outageSinceRef.current) outageSinceRef.current = Date.now();
+          setOutageLong(Date.now() - outageSinceRef.current >= OUTAGE_BANNER_MS);
+        } else {
+          outageSinceRef.current = null;
+          setOutageLong(false);
+        }
+      };
+
+      // FR-7, FR-15: token status of every saved connection. Read on sign-in, switch, Portfolio open and after a failed sync; never polled or cached.
+      const refreshTokenStatuses = async () => {
+        if (!canSaveToken) { setTokenStatuses({}); return null; }
+        setTokenStatusLoading(true);
+        try {
+          const data = await callApi('connections/status');
+          const map = {};
+          (data.connections || []).forEach(c => { map[c.connId] = c; });
+          setTokenStatuses(map);
+          clearDismissed(Object.values(map).filter(c => c.status === 'valid').map(c => `${c.connId}:rejected`));
+          return map;
+        } catch (e) {
+          setTokenStatuses({}); // FR-18: show "Not checked yet" rather than an error
+          return null;
+        } finally {
+          setTokenStatusLoading(false);
+        }
+      };
+
       const handleConnectClickUp = () => {
         setSelectedTeam('');
         setSelectedSpace('');
@@ -1184,7 +1248,15 @@
         setIntegrationStep('connecting');
         setClickUpError(null);
         try {
-          const { connId, workspaces } = await saveConnection(tempToken);
+          // Re-entering the token of a saved connection replaces it on the server and keeps its id (central-sync FR-3);
+          // a connection the server no longer knows falls back to saving a new one
+          let saved = null;
+          const reconnectTarget = reconnectConnId ? portfolio.find(c => c.id === reconnectConnId) : null;
+          if (reconnectTarget && UUID_RE.test(reconnectTarget.token || '')) {
+            try { saved = await callApi(`connections/${reconnectTarget.token}`, { method: 'PUT', body: { token: tempToken } }); }
+            catch (e) { if (e.kind !== 'unknownconn') throw e; }
+          }
+          const { connId, workspaces } = saved || await saveConnection(tempToken);
           setTempToken('');
           if (reconnectConnId) {
             // Re-entering the token of a saved connection: keep its lists, only swap the connection id
@@ -1198,6 +1270,10 @@
                 localStorage.setItem(`weaver_clickup_conn_${appId}`, connId);
                 setNeedsReconnect(false);
                 pendingSyncRef.current = true;
+                applySync({ state: 'idle' }); retryLocalRef.current = 0; noteOutage(false);
+                clearDismissed([`${connId}:rejected`]);
+                refreshTokenStatuses();
+                setTimeout(() => { if (runSyncRef.current) runSyncRef.current(); }, 50); // the connection id is unchanged after a PUT, so no state change would start the sync
                 if (mappedWorkflowsRef.current.length === 0) commitWorkflows((target.workflows || []).map(w => ({ ...w, tasks: [], lastSynced: Date.now() })));
                 setActiveView('dashboard');
               } else {
@@ -1333,11 +1409,29 @@
         });
       };
 
+      const describeFailure = (f) => f.err.kind === 'notfound' ? `"${f.workflow.list}" not found in ClickUp` : `"${f.workflow.list}": ${f.err.message}`;
+
+      // The one sync coordinator (central-sync FR-10 to FR-16): one timer, one sync at a time, errors shown instead of swallowed
       const runSyncSequence = async () => {
+        if (syncInFlightRef.current) return; // FR-10: a second click or tick during a sync starts nothing
         const workflowsToSync = mappedWorkflowsRef.current;
-        if (workflowsToSync.length === 0 || !clickUpToken) return;
+        if (workflowsToSync.length === 0 || !clickUpToken) { applySync({ state: 'idle' }); return; }
+        const cur = syncStateRef.current;
+        if (cur.state === 'paused' || cur.state === 'checking') return; // FR-13: no automatic requests while the token is rejected
+        if (cur.state === 'rate_limited' && Date.now() < cur.until) return;
+        if (clickUpToken !== 'mock_token' && typeof navigator !== 'undefined' && navigator.onLine === false) { noteOutage(true); applySync({ state: 'offline' }); return; } // FR-23
+        syncInFlightRef.current = true;
         setIsAutoSyncing(true);
-        
+        applySync({ state: 'syncing' });
+        try {
+        let halt = false; // set by the first rejected-token answer: the rest of this cycle is not sent (FR-13)
+        const failures = [];
+        const request = async (endpoint) => {
+            if (halt) { const stop = new Error('Stopped after a rejected token.'); stop.kind = 'halted'; throw stop; }
+            try { return await fetchClickUp(endpoint, clickUpToken); }
+            catch (err) { if (err.kind === 'token') halt = true; throw err; }
+        };
+
         const updatedWorkflows = await Promise.all(workflowsToSync.map(async (workflow) => {
           let updatedTasks = workflow.tasks;
           let listStartDate = workflow.listStartDate || null;
@@ -1348,7 +1442,7 @@
             updatedTasks = buildTaskTree(MOCK_CLICKUP_DATA.tasks[workflow.listId] || MOCK_CLICKUP_DATA.tasks['mock_list_1']);
           } else {
             try {
-              const listDetail = await fetchClickUp(`list/${workflow.listId}`, clickUpToken);
+              const listDetail = await request(`list/${workflow.listId}`);
               if (listDetail.start_date) listStartDate = listDetail.start_date;
               if (listDetail.due_date) listDueDate = listDetail.due_date;
               if (listDetail.name) listName = listDetail.name;
@@ -1357,7 +1451,7 @@
 
               let page = 0, hasMore = true, allFetchedTasks = [];
               while (hasMore) {
-                  const data = await fetchClickUp(`list/${workflow.listId}/task?subtasks=true&include_closed=true&page=${page}`, clickUpToken);
+                  const data = await request(`list/${workflow.listId}/task?subtasks=true&include_closed=true&page=${page}`);
                   const tasksChunk = data.tasks || [];
                   allFetchedTasks.push(...tasksChunk);
                   if (tasksChunk.length === 100) page++; else hasMore = false;
@@ -1365,18 +1459,22 @@
               if (allFetchedTasks.length > 0) {
                   updatedTasks = buildTaskTree(allFetchedTasks);
               }
-            } catch (err) { console.error("Sync error:", err); }
+            } catch (err) {
+              // FR-12: this list keeps its last good data and its old sync time; the other lists carry on
+              failures.push({ workflow, err });
+              return workflow;
+            }
           }
           return { ...workflow, list: listName, space: spaceName, folder: folderName, tasks: updatedTasks, lastSynced: Date.now(), listStartDate, listDueDate };
         }));
-        
+
         setMappedWorkflows(prev => {
           const nextWorkflows = [...prev];
           updatedWorkflows.forEach(updatedWf => {
              const idx = nextWorkflows.findIndex(w => w.id === updatedWf.id);
              if (idx !== -1) nextWorkflows[idx] = updatedWf;
           });
-          
+
           localStorage.setItem(`weaver_workflows_${appId}`, JSON.stringify(nextWorkflows));
           if (user && !user.isMock) {
             const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
@@ -1387,18 +1485,119 @@
           }
           return nextWorkflows;
         });
-        
+
         // keep the saved connection's list metadata (Portfolio cards, Connections list) in step with the renamed lists
         persistConnection(clickUpToken, mappedWorkflowsRef.current.map(w => updatedWorkflows.find(u => u.id === w.id) || w));
 
-        setIsAutoSyncing(false);
+        // FR-11, FR-12: turn the outcome into one visible state
+        const real = failures.filter(f => f.err.kind !== 'halted');
+        const has = (kind) => real.some(f => f.err.kind === kind);
+        if (failures.length === 0) {
+          retryLocalRef.current = 0;
+          noteOutage(false);
+          clearDismissed(['outage', `${clickUpToken}:failed`]);
+          applySync({ state: 'synced', at: Date.now() });
+        } else if (has('token')) {
+          noteOutage(false);
+          const map = await refreshTokenStatuses(); // the Worker counts the tries (3 ticks, FR-4); read where this connection stands
+          const st = map && map[clickUpToken];
+          if (st && st.status === 'rejected') applySync({ state: 'paused' });
+          else { retryLocalRef.current += 1; applySync({ state: 'retrying', k: st ? Math.max(1, st.failCount) : Math.min(retryLocalRef.current, REJECT_TRIES) }); }
+        } else if (has('unknownconn')) {
+          noteOutage(false);
+          applySync({ state: 'paused', reason: 'reconnect' });
+        } else if (has('rate')) {
+          noteOutage(false);
+          applySync({ state: 'rate_limited', until: Date.now() + real.find(f => f.err.kind === 'rate').err.retryAfter * 1000 });
+        } else if (has('offline')) {
+          noteOutage(true);
+          applySync({ state: 'offline' });
+        } else if (has('unreachable')) {
+          noteOutage(true);
+          applySync({ state: 'unreachable' });
+        } else {
+          noteOutage(false);
+          applySync({ state: 'failed', reason: real.length === 1 ? describeFailure(real[0]) : `${real.length} lists failed` });
+        }
+        } finally {
+          syncInFlightRef.current = false;
+          setIsAutoSyncing(false);
+        }
+      };
+
+      const showPausedHint = (hint) => {
+        applySync({ state: 'paused', hint });
+        setTimeout(() => { if (syncStateRef.current.state === 'paused' && syncStateRef.current.hint === hint) applySync({ state: 'paused' }); }, 5000);
+      };
+
+      // FR-13, FR-25: Sync Now on a paused connection asks the Worker to check the token again (once a minute)
+      const handleRecheck = async () => {
+        if (!clickUpToken || clickUpToken === 'mock_token' || syncInFlightRef.current) return;
+        applySync({ state: 'checking' });
+        try {
+          const r = await callApi(`connections/${clickUpToken}/recheck`, { method: 'POST' });
+          setTokenStatuses(prev => ({ ...prev, [clickUpToken]: { ...(prev[clickUpToken] || {}), connId: clickUpToken, status: r.status, checkedAt: r.checkedAt, failCount: r.status === 'valid' ? 0 : (prev[clickUpToken]?.failCount || REJECT_TRIES) } }));
+          if (r.status === 'valid') {
+            clearDismissed([`${clickUpToken}:rejected`]);
+            retryLocalRef.current = 0;
+            applySync({ state: 'idle' });
+            await runSyncSequence();
+          } else {
+            showPausedHint('Token still rejected. Reconnect.');
+          }
+        } catch (err) {
+          if (err.kind === 'cooldown') showPausedHint(`Checked just now, try again in ${err.retryAfter || 60}s`);
+          else if (err.kind === 'offline') { noteOutage(true); applySync({ state: 'offline' }); }
+          else if (err.kind === 'unreachable') { noteOutage(true); applySync({ state: 'unreachable' }); }
+          else if (err.kind === 'unknownconn') applySync({ state: 'paused', reason: 'reconnect' });
+          else showPausedHint(err.message);
+        }
       };
 
       useEffect(() => {
         if (mappedWorkflows.length === 0 || !clickUpToken) return;
-        const syncInterval = setInterval(runSyncSequence, 60000); 
+        const syncInterval = setInterval(() => runSyncRef.current && runSyncRef.current(), 60000); 
         return () => clearInterval(syncInterval);
       }, [mappedWorkflows.length, clickUpToken, user]);
+
+      runSyncRef.current = runSyncSequence;
+
+      // A different connection starts from a clean sync state
+      useEffect(() => { applySync({ state: 'idle' }); noteOutage(false); retryLocalRef.current = 0; }, [clickUpToken]);
+
+      // Token statuses: on sign-in, after a switch, and when the Portfolio opens (FR-15, never polled)
+      useEffect(() => { if (canSaveToken) refreshTokenStatuses(); else setTokenStatuses({}); }, [canSaveToken, clickUpToken]);
+      useEffect(() => { if (activeView === 'portfolio' && canSaveToken) refreshTokenStatuses(); }, [activeView]);
+
+      // The server's word on the active token wins: rejected pauses syncing, valid (for example after the daily check) resumes it
+      useEffect(() => {
+        const st = tokenStatuses[clickUpToken];
+        const cur = syncStateRef.current;
+        if (st?.status === 'rejected' && cur.state !== 'paused' && cur.state !== 'checking') applySync({ state: 'paused' });
+        else if (st?.status === 'valid' && cur.state === 'paused' && !cur.reason) { applySync({ state: 'idle' }); runSyncSequence(); }
+      }, [tokenStatuses]);
+
+      // The first sync starts as soon as a signed-in user with a saved connection is ready, not a minute later; sign-out resets the coordinator
+      useEffect(() => {
+        if (!canSaveToken) { initialSyncRef.current = false; applySync({ state: 'idle' }); noteOutage(false); return; }
+        if (initialSyncRef.current || !clickUpToken || clickUpToken === 'mock_token' || mappedWorkflows.length === 0) return;
+        initialSyncRef.current = true;
+        runSyncSequence();
+      }, [canSaveToken, clickUpToken, mappedWorkflows.length]);
+
+      // FR-23: when the browser comes back online, sync at once instead of waiting for the next tick
+      useEffect(() => {
+        const onOnline = () => { if (['offline', 'unreachable', 'failed'].includes(syncStateRef.current.state) && runSyncRef.current) runSyncRef.current(); };
+        window.addEventListener('online', onOnline);
+        return () => window.removeEventListener('online', onOnline);
+      }, []);
+
+      // Countdown of the rate-limit pill
+      useEffect(() => {
+        if (syncState.state !== 'rate_limited') return;
+        const t = setInterval(() => setSecondTick(n => n + 1), 1000);
+        return () => clearInterval(t);
+      }, [syncState.state]);
 
       // ---- Portfolio: saved connections (API tokens stay in this browser's localStorage, never Firestore) ----
       const updatePortfolio = (fn) => setPortfolio(prev => {
@@ -3024,6 +3223,117 @@
             }
         };
         
+        // ---- Central sync UI: header pill, Portfolio token row, failure banners (central-sync FR-17 to FR-20, FR-24) ----
+        const fmtClock = (ts) => new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: 'numeric' }).format(new Date(ts));
+        const activeConn = portfolio.find(p => p.token === clickUpToken) || null;
+        const reconnectActive = () => { activeConn ? handleReconnect(activeConn) : handleConnectClickUp(); };
+
+        const SYNC_TONES = {
+          slate: ['bg-slate-800/50 border-white/10 text-slate-300', 'border-white/20'],
+          indigo: ['bg-indigo-900/30 border-indigo-500/30 text-indigo-300', 'border-indigo-500/30'],
+          emerald: ['bg-emerald-900/30 border-emerald-500/30 text-emerald-400', 'border-emerald-500/30'],
+          amber: ['bg-amber-900/30 border-amber-500/30 text-amber-400', 'border-amber-500/30'],
+          rose: ['bg-rose-900/30 border-rose-500/30 text-rose-400', 'border-rose-500/30'],
+        };
+
+        const renderSyncPill = () => {
+          const connectionMissing = (!clickUpToken || needsReconnect) && mappedWorkflows.length > 0;
+          const s = connectionMissing && syncState.state !== 'paused' ? { state: 'paused', reason: 'reconnect' } : syncState;
+          const secs = s.until ? Math.max(0, Math.ceil((s.until - Date.now()) / 1000)) : 0;
+          const reasonShort = (s.reason || '').length > 40 ? s.reason.slice(0, 39) + '…' : (s.reason || '');
+          const [tone, Icon, text, spin] = ({
+            idle: ['slate', CloudOff, 'Not syncing'],
+            syncing: ['indigo', RefreshCw, 'Syncing...', true],
+            checking: ['indigo', RefreshCw, 'Checking token...', true],
+            synced: ['emerald', null, `Synced ${fmtClock(s.at || mappedWorkflows[0]?.lastSynced || Date.now())}`],
+            retrying: ['amber', RefreshCw, `Retrying ${s.k || 1}/${REJECT_TRIES}`],
+            rate_limited: ['amber', Clock, `Rate limited, retry in ${secs}s`],
+            offline: ['slate', WifiOff, "Can't reach server, retrying"],
+            unreachable: ['slate', CloudOff, 'ClickUp unreachable, retrying'],
+            paused: ['rose', PauseCircle, s.hint || (s.reason === 'reconnect' ? 'Paused: reconnect needed' : 'Paused: token rejected')],
+            failed: ['rose', AlertTriangle, `Sync failed: ${reasonShort}`],
+          }[s.state] || ['slate', CloudOff, 'Not syncing']);
+          const [box, divider] = SYNC_TONES[tone];
+          const btn = `ml-2 pl-2 border-l ${divider} transition-opacity hover:opacity-70`;
+          return (
+            <span role="status" aria-live="polite" title={s.state === 'failed' ? s.reason : undefined} className={`inline-flex items-center px-3 py-1 rounded-full border text-xs font-medium cursor-default transition-colors duration-500 ${box}`}>
+              {Icon
+                ? <Icon className={`h-3.5 w-3.5 mr-2 ${spin ? 'animate-spin motion-reduce:animate-none' : ''}`} aria-hidden="true" />
+                : <span className="h-2 w-2 rounded-full mr-2 bg-emerald-400 animate-pulse motion-reduce:animate-none" aria-hidden="true"></span>}
+              {text}
+              {s.state === 'synced' && (
+                <button onClick={runSyncSequence} disabled={isAutoSyncing} className={`${btn} disabled:opacity-50`} title="Sync Now" aria-label="Sync now"><RefreshCw className="h-3.5 w-3.5" /></button>
+              )}
+              {(s.state === 'offline' || s.state === 'unreachable' || s.state === 'failed') && (
+                <button onClick={runSyncSequence} disabled={isAutoSyncing} className={btn} aria-label="Retry sync">Retry</button>
+              )}
+              {s.state === 'paused' && (
+                <>
+                  {s.reason !== 'reconnect' && <button onClick={handleRecheck} className={btn} title="Check the token again" aria-label="Check the token again"><RefreshCw className="h-3.5 w-3.5" /></button>}
+                  <button onClick={reconnectActive} className={btn} aria-label="Reconnect ClickUp">Reconnect</button>
+                </>
+              )}
+            </span>
+          );
+        };
+
+        const renderTokenRow = (conn) => {
+          if (!UUID_RE.test(conn.token || '')) return null;
+          const ts = tokenStatuses[conn.token];
+          if (!ts && tokenStatusLoading) return (
+            <div className="rounded-lg px-3 py-2 border bg-slate-800/40 border-white/5 animate-pulse motion-reduce:animate-none">
+              <span className="sr-only">Checking token...</span><div className="h-3 w-40 rounded bg-slate-700/60"></div>
+            </div>
+          );
+          const sameDay = ts?.checkedAt && new Date(ts.checkedAt).toDateString() === new Date().toDateString();
+          const checked = ts?.checkedAt ? ` · checked ${sameDay ? fmtClock(ts.checkedAt) : new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(ts.checkedAt))}` : '';
+          if (ts?.status === 'valid') return (
+            <div title={ts.checkedAt ? new Date(ts.checkedAt).toLocaleString() : undefined} className="flex items-center text-xs rounded-lg px-3 py-2 border bg-emerald-500/10 border-emerald-500/20 text-emerald-400">
+              <ShieldCheck className="h-3.5 w-3.5 mr-2" aria-hidden="true" /> Token OK{checked}
+            </div>
+          );
+          if (ts?.status === 'rejected') return (
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs rounded-lg px-3 py-2 border bg-rose-950/30 border-rose-900/50 text-rose-300">
+              <span className="flex items-center"><ShieldX className="h-3.5 w-3.5 mr-2" aria-hidden="true" /> Token rejected</span>
+              <button onClick={() => handleReconnect(conn)} className="px-2.5 py-1 rounded-md border border-rose-500/30 text-rose-300 neon-border-rose">Reconnect</button>
+            </div>
+          );
+          return (
+            <div className="flex items-center text-xs rounded-lg px-3 py-2 border bg-slate-800/40 border-white/5 text-slate-400">
+              <Clock className="h-3.5 w-3.5 mr-2" aria-hidden="true" /> Not checked yet
+            </div>
+          );
+        };
+
+        // FR-19, FR-24: one banner per connection and cause, dismissed for the browser session, at most two shown
+        const connName = (connId) => portfolio.find(p => p.token === connId)?.name || 'your connection';
+        const bannerItems = (() => {
+          const items = [];
+          const rejectedIds = new Set(Object.values(tokenStatuses).filter(t => t.status === 'rejected').map(t => t.connId));
+          if (syncState.state === 'paused' && clickUpToken) rejectedIds.add(clickUpToken);
+          rejectedIds.forEach(id => items.push({
+            key: `${id}:rejected`, tone: 'rose', role: 'alert',
+            text: <>Your ClickUp token for <b>{connName(id)}</b> was rejected. Reconnect to keep your data up to date.</>,
+            action: { label: 'Reconnect', onClick: () => { const c = portfolio.find(p => p.token === id); c ? handleReconnect(c) : handleConnectClickUp(); } }
+          }));
+          if (syncState.state === 'failed') items.push({ key: `${clickUpToken}:failed`, tone: 'amber', role: 'status', text: `Sync failed: ${syncState.reason}. The last good data is still shown.`, action: { label: 'Retry', onClick: runSyncSequence } });
+          if (outageLong) items.push({ key: 'outage', tone: 'amber', role: 'status', text: 'Weaver has not been able to sync for 10 minutes. Your data may be out of date. Weaver keeps trying.' });
+          return items.filter(i => !dismissedBanners.includes(i.key));
+        })();
+        const bannersUI = bannerItems.length === 0 ? null : (
+          <div className="relative z-30 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-4 space-y-3">
+            {bannerItems.slice(0, 2).map(b => (
+              <div key={b.key} role={b.role} className={`flex flex-wrap items-center gap-3 p-4 border rounded-xl text-sm ${b.tone === 'rose' ? 'bg-rose-950/30 border-rose-900/50 text-rose-200' : 'bg-amber-950/30 border-amber-900/50 text-amber-200'}`}>
+                <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
+                <p className="flex-1 min-w-[16rem]">{b.text}</p>
+                {b.action && <button onClick={b.action.onClick} className={`px-3 py-1.5 rounded-md border ${b.tone === 'rose' ? 'border-rose-500/30 text-rose-200 neon-border-rose' : 'border-amber-500/30 text-amber-200 neon-border-amber'}`}>{b.action.label}</button>}
+                <button onClick={() => dismissBanner(b.key)} className="p-1.5 opacity-80 hover:opacity-100" aria-label="Dismiss notification"><X className="h-4 w-4" /></button>
+              </div>
+            ))}
+            {bannerItems.length > 2 && <button onClick={() => setActiveView('portfolio')} className="text-xs text-slate-400 hover:text-slate-200">+{bannerItems.length - 2} more, open Portfolio</button>}
+          </div>
+        );
+
         const integrationUI = (
           <div className="animate-in fade-in duration-500 w-full">
             {integrationStep === 'signin_required' && (
@@ -3166,7 +3476,7 @@
               <ul className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {sortedPortfolio.map(conn => {
                   const isActive = conn.token === clickUpToken;
-                  const connNeedsReconnect = !conn.token || isLegacyToken(conn.token) || (isActive && needsReconnect);
+                  const connNeedsReconnect = !conn.token || isLegacyToken(conn.token) || (isActive && needsReconnect) || tokenStatuses[conn.token]?.status === 'rejected';
                   const isEditing = editingConnId === conn.id;
                   return (
                     <li key={conn.id} className={`bg-slate-900/40 backdrop-blur-md rounded-2xl border shadow-xl flex flex-col ${isActive ? 'border-emerald-500/30' : 'border-white/5'}`}>
@@ -3193,6 +3503,7 @@
                         )}
                       </div>
                       <div className="p-5 flex-1 space-y-3">
+                        {renderTokenRow(conn)}
                         {(conn.workflows || []).length === 0 ? (
                           <p className="text-sm text-slate-500 italic">No lists mapped yet. Switch to this connection and add a list.</p>
                         ) : (
@@ -3656,6 +3967,8 @@
               </div>
             )}
 
+            {bannersUI}
+
             {activeView === 'portfolio' ? (
               portfolioUI
             ) : mappedWorkflows.length === 0 ? (
@@ -3674,21 +3987,7 @@
                 <h1 className="text-2xl font-bold text-white flex items-center gap-3">
                   {mappedWorkflows.length > 1 ? `${mappedWorkflows.length} Active Workflows` : (mappedWorkflows[0]?.list || 'Your Workspace')}
                   
-                  <div className="flex items-center px-3 py-1 rounded-full border bg-emerald-900/30 border-emerald-500/30 text-emerald-400 text-xs font-medium cursor-default transition-all duration-500 hover:bg-[#10b981] hover:text-white hover:border-[#10b981] hover:shadow-[0_0_5px_#10b981,0_0_20px_#10b981,0_0_50px_#10b981,0_0_100px_#10b981] group">
-                    <div className={`h-2 w-2 rounded-full mr-2 ${isAutoSyncing ? 'bg-emerald-400 animate-pulse' : 'bg-emerald-500/50'} group-hover:bg-white transition-colors`}></div> 
-                    Synced: {new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: 'numeric', second: 'numeric' }).format(new Date(mappedWorkflows[0].lastSynced))}
-                    {clickUpToken && (
-                      <button onClick={runSyncSequence} disabled={isAutoSyncing} className="ml-2 pl-2 border-l border-emerald-500/30 transition-colors disabled:opacity-50 hover:opacity-70 group-hover:text-white group-hover:border-white/50" title="Sync Now">
-                        <RefreshCw className={`h-3.5 w-3.5 ${isAutoSyncing ? 'animate-spin' : ''}`} />
-                      </button>
-                    )}
-                  </div>
-
-                  {(!clickUpToken || needsReconnect) && mappedWorkflows.length > 0 && (
-                    <button onClick={() => { const c = portfolio.find(p => p.token === clickUpToken); c ? handleReconnect(c) : handleConnectClickUp(); }} className="flex items-center px-3 py-1 rounded-full border border-transparent bg-rose-900/30 text-rose-400 text-xs font-medium cursor-pointer transition-all neon-border-rose" title="Weaver can't find this connection's token. Reconnect to resume syncing.">
-                      <AlertTriangle className="h-3 w-3 mr-1.5" /> Reconnect
-                    </button>
-                  )}
+                  {renderSyncPill()}
                   {user?.isMock && (
                     <div className="ml-3 flex items-center px-3 py-1 rounded-full border border-transparent bg-amber-900/30 text-amber-400 text-[10px] font-bold uppercase tracking-wider cursor-help transition-all neon-border-amber" title="Running in Local Offline mode. Update firebaseConfig to enable global cross-device sync.">
                       <ShieldAlert className="h-3 w-3 mr-1" /> Offline
