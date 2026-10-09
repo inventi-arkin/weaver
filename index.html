@@ -483,9 +483,10 @@
       const pos = useRef(0), target = useRef(0), anim = useRef(null), centerKey = useRef(null), flashTimer = useRef(null);
       const chipDrag = useRef(null), swipe = useRef(null), skipClick = useRef(false), wheelAt = useRef(0), live = useRef({});
 
-      // Saved names first, in saved order; statuses never seen before follow in default (alphabetical) order
+      // Saved names first, in saved order; statuses never seen before follow in default order (open statuses A to Z, then done statuses A to Z)
       const orderBy = (list, order) => [...list].sort((x, y) => { const ix = order.indexOf(keyOf(x)), iy = order.indexOf(keyOf(y)); return (ix < 0 ? 1e6 : ix) - (iy < 0 ? 1e6 : iy); });
-      const byDefault = [...groups].sort((x, y) => (x.status < y.status ? -1 : x.status > y.status ? 1 : 0));
+      const doneFirst = (g) => (DONE_NAMES.includes(keyOf(g)) ? 1 : 0); // done statuses follow the open ones by default
+      const byDefault = [...groups].sort((x, y) => (doneFirst(x) - doneFirst(y)) || (x.status < y.status ? -1 : x.status > y.status ? 1 : 0));
       const cardData = orderBy(byDefault, saved);
       const chipData = orderBy(byDefault, chipOrder || saved);
       const isDefault = cardData.every((g, i) => g === byDefault[i]);
@@ -2102,7 +2103,7 @@
             let result = [];
             tasks.forEach(task => {
                 const isDone = doneStatuses.includes((task.status?.status || '').toLowerCase());
-                const matchesMode = isDoneMode ? isDone : !isDone;
+                const matchesMode = isDoneMode === 'all' ? true : (isDoneMode ? isDone : !isDone);
                 const matchesFilter = checkGlobalFilter(task);
                 let filteredSubtasks = task.subtasks ? buildFilteredTree(task.subtasks, isDoneMode) : [];
                 if ((matchesMode && matchesFilter) || filteredSubtasks.length > 0) {
@@ -3513,6 +3514,9 @@
                               {w.folder && w.folder !== 'No Folder' && <><ChevronRight className="h-3.5 w-3.5 mx-1 text-slate-600" /><span className="flex items-center"><FolderOpen className="h-3.5 w-3.5 mr-1 text-slate-500" /> {w.folder}</span></>}
                               <ChevronRight className="h-3.5 w-3.5 mx-1 text-slate-600" />
                               <span className="font-semibold text-indigo-400 flex items-center bg-indigo-500/10 px-2 py-0.5 rounded-md border border-indigo-500/20"><ListTodo className="h-3.5 w-3.5 mr-1" /> {w.list}</span>
+                              {isActive && (
+                                <button onClick={() => { if (window.confirm(`Unlink "${w.list}" from Weaver? Its tasks stay in ClickUp.`)) removeMapping(w.id); }} className="ml-auto p-1 rounded-md text-slate-500 neon-border-rose focus-visible:ring-2 focus-visible:ring-indigo-400" aria-label={`Unlink ${w.list}`} title="Unlink this list"><Trash2 className="h-3.5 w-3.5" /></button>
+                              )}
                             </div>
                           ))
                         )}
@@ -3994,7 +3998,11 @@
                     </div>
                   )}
                 </h1>
-                <p className="text-slate-400 text-sm mt-1">Dashboard metrics are dynamically synced and globally filtered.</p>
+                <p className="text-slate-400 text-sm mt-1 flex flex-wrap items-center gap-x-1.5">
+                  <span className="text-slate-300 font-medium truncate max-w-[16rem]">{activeConn?.name || 'Your workspace'}</span>
+                  <span>· {mappedWorkflows.length} {mappedWorkflows.length === 1 ? 'list' : 'lists'} linked ·</span>
+                  <button onClick={() => setActiveView('portfolio')} className="text-indigo-400 hover:underline">Manage in Portfolio →</button>
+                </p>
               </div>
               <div className="flex flex-row flex-wrap items-center gap-3">
                 <button onClick={handleExportCSV} className="btn-neon btn-neon-emerald" title="Export currently filtered tasks to CSV">
@@ -4712,22 +4720,25 @@
                   </div>
                 )}
 
-                {/* Active Explorer (Grouped by Status): carousel of status cards */}
+                {/* Tasks Explorer (grouped by status): one status carousel for open and done tasks */}
                 <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl mb-8 overflow-hidden">
-                  <div className="px-6 py-4 border-b border-white/5 bg-slate-900/30 rounded-t-2xl"><h2 className="text-sm font-bold text-white flex items-center gap-2"><ListTodo className="h-4 w-4 text-indigo-400" /> Active Tasks Explorer</h2></div>
+                  <div className="px-6 py-4 border-b border-white/5 bg-slate-900/30 flex items-center justify-between rounded-t-2xl">
+                    <h2 className="text-sm font-bold text-white flex items-center gap-2"><ListTodo className="h-4 w-4 text-indigo-400" /> Tasks Explorer</h2>
+                    <span className="text-xs font-medium text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20">{completedFilteredTasksCount} Resolved</span>
+                  </div>
                   {(() => {
                     const sections = activeWorkflows.map(workflow => {
                       const mainTasksOnly = (workflow.tasks || []).filter(t => !(t.name || '').toLowerCase().includes('qa bugs'));
                       const groupedByStatus = {};
-                      buildFilteredTree(mainTasksOnly, false).forEach(task => {
+                      buildFilteredTree(mainTasksOnly, 'all').forEach(task => {
                         const status = task.status?.status || 'Open';
                         if (!groupedByStatus[status]) groupedByStatus[status] = [];
                         groupedByStatus[status].push(task);
                       });
-                      const groups = Object.keys(groupedByStatus).map(status => ({ status, color: groupedByStatus[status][0]?.status?.color || '#38bdf8', tasks: groupedByStatus[status] }));
+                                                                  const groups = Object.keys(groupedByStatus).map(status => ({ status, color: groupedByStatus[status][0]?.status?.color || '#38bdf8', tasks: groupedByStatus[status] })); // the carousel puts done statuses after the open ones unless the user saved an order
                       return { workflow, groups };
                     }).filter(s => s.groups.length > 0);
-                    if (sections.length === 0) return <div className="text-center text-sm text-slate-500 italic py-8">No active tasks match your filters.</div>;
+                    if (sections.length === 0) return <div className="text-center text-sm text-slate-500 italic py-8">No tasks match your filters.</div>;
                     return sections.map(({ workflow, groups }) => (
                       <div key={workflow.id} className="pb-2">
                         {activeWorkflows.length > 1 && <div className="px-6 pt-4 text-[11px] uppercase tracking-wide text-slate-500">{workflow.list}</div>}
@@ -4735,68 +4746,6 @@
                       </div>
                     ));
                   })()}
-                </div>
-
-                {/* Completed Tasks Section: same carousel, done statuses */}
-                <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl mb-8 overflow-hidden">
-                  <div className="px-6 py-4 border-b border-white/5 bg-slate-900/30 flex items-center justify-between rounded-t-2xl">
-                    <h2 className="text-sm font-bold text-white flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-emerald-400" /> Completed Tasks Explorer</h2>
-                    <span className="text-xs font-medium text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20">{completedFilteredTasksCount} Resolved</span>
-                  </div>
-                  {(() => {
-                    const sections = activeWorkflows.map(workflow => {
-                      const mainTasksOnly = (workflow.tasks || []).filter(t => !(t.name || '').toLowerCase().includes('qa bugs'));
-                      const groupedByStatus = {};
-                      buildFilteredTree(mainTasksOnly, true).forEach(task => {
-                        const status = task.status?.status || 'Done';
-                        if (!groupedByStatus[status]) groupedByStatus[status] = [];
-                        groupedByStatus[status].push(task);
-                      });
-                      const groups = Object.keys(groupedByStatus).map(status => ({ status, color: groupedByStatus[status][0]?.status?.color || '#34d399', tasks: groupedByStatus[status] }));
-                      return { workflow, groups };
-                    }).filter(s => s.groups.length > 0);
-                    if (sections.length === 0) return <div className="text-center text-sm text-slate-500 italic py-8">No completed tasks match your filters yet.</div>;
-                    return sections.map(({ workflow, groups }) => (
-                      <div key={`completed-${workflow.id}`} className="pb-2">
-                        {activeWorkflows.length > 1 && <div className="px-6 pt-4 text-[11px] uppercase tracking-wide text-slate-500">{workflow.list}</div>}
-                        <StatusCarousel key={workflow.listId} groups={groups} storageKey={`weaver_status_order_${appId}_${portfolioUserKey || 'guest'}_${workflow.listId}_completed`} expandedTasks={expandedTasks} toggleTaskExpand={toggleTaskExpand} />
-                      </div>
-                    ));
-                  })()}
-                </div>
-
-                {/* Active Connections */}
-                <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl mb-8">
-                  <div className="px-6 py-4 border-b border-white/5 bg-slate-900/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-t-2xl">
-                    <div className="flex items-center space-x-3">
-                      <h2 className="text-lg font-semibold text-white">Active Connections</h2>
-                      <span className="flex items-center text-xs font-medium text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20"><div className="h-2 w-2 rounded-full bg-emerald-400 mr-1.5 animate-pulse"></div> Linked ({mappedWorkflows.length})</span>
-                    </div>
-                    <button onClick={handleConnectClickUp} className="btn-neon btn-neon-indigo btn-neon-sm">
-                      <Plus className="w-3.5 h-3.5 mr-1" /> Add Another List
-                    </button>
-                  </div>
-                  <ul className="divide-y divide-white/5">
-                    {mappedWorkflows.map(workflow => (
-                      <li key={workflow.id} className="p-6 hover:bg-white/5 transition-colors">
-                        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-                          <div className="flex items-start space-x-4">
-                            <div className="bg-indigo-500/10 p-2.5 rounded-lg hidden sm:block mt-1 border border-indigo-500/20"><SpiderNetworkIcon className="h-5 w-5 text-indigo-400" /></div>
-                            <div className="flex flex-col space-y-1.5 w-full">
-                              <div className="flex flex-wrap items-center text-sm text-slate-300 gap-y-2">
-                                <span className="font-semibold text-white flex items-center"><Box className="h-4 w-4 mr-1.5 text-slate-400" /> {workflow.team} / {workflow.space}</span>
-                                {workflow.folder !== 'No Folder' && <><ChevronRight className="h-4 w-4 mx-2 text-slate-600 hidden sm:block" /><span className="flex items-center text-slate-300"><FolderOpen className="h-4 w-4 mr-1.5 text-slate-400" /> {workflow.folder}</span></>}
-                                <ChevronRight className="h-4 w-4 mx-2 text-slate-600 hidden sm:block" />
-                                <span className="font-semibold text-indigo-400 flex items-center bg-indigo-500/10 px-2.5 py-1 rounded-md border border-indigo-500/20"><ListTodo className="h-4 w-4 mr-1.5" /> {workflow.list}</span>
-                              </div>
-                              <div className="flex items-center text-xs text-slate-500"><Clock className="h-3 w-3 mr-1" /> Last synced: {new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: 'numeric', second: 'numeric' }).format(new Date(workflow.lastSynced))}</div>
-                            </div>
-                          </div>
-                          <button onClick={() => removeMapping(workflow.id)} className="text-slate-400 p-2 rounded-md neon-border-rose transition-colors"><Trash2 className="h-5 w-5" /></button>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
                 </div>
               </main>
             )}
