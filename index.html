@@ -1342,6 +1342,7 @@
           let updatedTasks = workflow.tasks;
           let listStartDate = workflow.listStartDate || null;
           let listDueDate = workflow.listDueDate || null;
+          let listName = workflow.list, spaceName = workflow.space, folderName = workflow.folder;
 
           if (clickUpToken === 'mock_token') {
             updatedTasks = buildTaskTree(MOCK_CLICKUP_DATA.tasks[workflow.listId] || MOCK_CLICKUP_DATA.tasks['mock_list_1']);
@@ -1350,6 +1351,9 @@
               const listDetail = await fetchClickUp(`list/${workflow.listId}`, clickUpToken);
               if (listDetail.start_date) listStartDate = listDetail.start_date;
               if (listDetail.due_date) listDueDate = listDetail.due_date;
+              if (listDetail.name) listName = listDetail.name;
+              if (listDetail.space?.name) spaceName = listDetail.space.name;
+              if (listDetail.folder) folderName = listDetail.folder.hidden ? 'No Folder' : (listDetail.folder.name || folderName);
 
               let page = 0, hasMore = true, allFetchedTasks = [];
               while (hasMore) {
@@ -1363,7 +1367,7 @@
               }
             } catch (err) { console.error("Sync error:", err); }
           }
-          return { ...workflow, tasks: updatedTasks, lastSynced: Date.now(), listStartDate, listDueDate };
+          return { ...workflow, list: listName, space: spaceName, folder: folderName, tasks: updatedTasks, lastSynced: Date.now(), listStartDate, listDueDate };
         }));
         
         setMappedWorkflows(prev => {
