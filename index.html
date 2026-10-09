@@ -1081,12 +1081,13 @@
               throw new Error("Can't reach Weaver's server. Check your connection.");
           }
           if (res.ok) return res.json();
-          let msg = '';
-          try { msg = (await res.json()).error || ''; } catch (e) {}
+          let msg = '', code = '';
+          try { const body = await res.json(); msg = body.error || ''; code = body.code || ''; } catch (e) {}
           let error;
           if (res.status === 401 && msg === 'Invalid API Token') { error = new Error('Invalid API Token. ClickUp rejected the connection.'); error.isDefinitive = true; }
           else if (res.status === 401) error = new Error('Your sign-in expired. Sign in again.');
           else if (res.status === 403) error = new Error('Sign in with Google to save a ClickUp connection.');
+          else if (res.status === 404 && code === 'CLICKUP_NOT_FOUND') error = new Error('ClickUp could not find that list or task. It may have been deleted or renamed.');
           else if (res.status === 404) { setNeedsReconnect(true); error = new Error('This connection needs to be reconnected.'); }
           else if (res.status === 429) error = new Error(`ClickUp is rate limiting requests. Try again in ${res.headers.get('Retry-After') || 30}s.`);
           else error = new Error(msg || `HTTP ${res.status}`);
