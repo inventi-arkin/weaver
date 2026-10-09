@@ -175,6 +175,12 @@
       box-shadow: 0 10px 25px -5px rgba(99, 102, 241, 0.2), 0 8px 10px -6px rgba(99, 102, 241, 0.1) !important;
       z-index: 50;
     }
+
+    /* Status carousel cards */
+    .wv-card { position: absolute; left: 50%; top: 0; margin-left: -190px; width: 380px; height: 480px; will-change: transform, opacity; }
+    .wv-card:not([data-center="1"]) * { pointer-events: none; }
+    .wv-card:not([data-center="1"]) { cursor: pointer; }
+    .wv-tasks { overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: rgba(99,102,241,.4) transparent; }
   </style>
 
   <!-- Configure Babel -->
@@ -403,6 +409,276 @@
       );
     };
 
+    // ---- Status carousel: one floating card per status; status tabs can be dragged into a saved order ----
+    const PRIORITY_DOT = { urgent: '#f87171', high: '#fb923c', normal: '#38bdf8', low: '#64748b' };
+    const DONE_NAMES = ['closed', 'complete', 'done', 'resolved'];
+
+    const taskTimes = (task) => {
+      const est = task.time_estimate ? parseInt(task.time_estimate) : 0;
+      const isDone = DONE_NAMES.includes((task.status?.status || '').toLowerCase());
+      const spent = task.time_spent ? parseInt(task.time_spent) : (isDone ? est : 0);
+      return { est, spent };
+    };
+
+    const CarouselTask = ({ task, color, depth = 0, expandedTasks, toggleTaskExpand }) => {
+      const subs = task.subtasks || [];
+      const isOpen = !!expandedTasks[task.id];
+      const { est, spent } = taskTimes(task);
+      const pct = Math.round(100 * spent / Math.max(est, spent, 1));
+      const prio = (task.priority?.priority || '').toLowerCase();
+      const due = task.due_date ? new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(parseInt(task.due_date))) : null;
+      const hasTime = est > 0 || spent > 0;
+      return (
+        <div className={depth ? 'rounded-r-lg bg-slate-800/50 border-l-2 px-2.5 py-2' : 'rounded-lg bg-slate-800/60 border border-white/5 px-2.5 py-2'} style={depth ? { borderLeftColor: `${color}66` } : undefined}>
+          <div className="flex items-start gap-2">
+            <span className="mt-1.5 h-2 w-2 rounded-full shrink-0" style={{ background: PRIORITY_DOT[prio] || '#475569' }} title={prio ? `Priority: ${prio}` : 'No priority'} />
+            <span className={`${depth ? 'text-xs' : 'text-sm'} font-semibold text-slate-100 leading-5 flex-1 min-w-0 break-words`}>{task.name || 'Unnamed Task'}</span>
+            {!depth && (
+              <span className="flex -space-x-1.5 shrink-0 pl-1">
+                {(task.assignees || []).slice(0, 3).map((a, i) => (
+                  <img key={i} referrerPolicy="no-referrer" src={a.profilePicture || `https://ui-avatars.com/api/?name=${encodeURIComponent(a.username || 'U')}&background=random`} alt={a.username} title={a.username} className="h-5 w-5 rounded-full border border-slate-900 object-cover" />
+                ))}
+                {(!task.assignees || task.assignees.length === 0) && <span className="text-[10px] text-slate-600">Unassigned</span>}
+              </span>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 pl-4 mt-1 text-[11px] text-slate-400">
+            {hasTime ? <span className="flex items-center"><Clock className="h-3 w-3 mr-1 text-slate-500" />{Math.round(spent / 3600000)}h / {Math.round(est / 3600000)}h</span> : <span className="text-slate-600">No estimate</span>}
+            {due && <span className="flex items-center"><Calendar className="h-3 w-3 mr-1 text-slate-500" />{due}</span>}
+            {!depth && (task.tags || []).map((tag, i) => (
+              <span key={i} className="px-1.5 rounded font-semibold" style={{ color: tag.color || '#818cf8', backgroundColor: `${tag.color || '#818cf8'}15` }}>{tag.name}</span>
+            ))}
+            {subs.length > 0 && (
+              <button onClick={() => toggleTaskExpand(task.id)} aria-expanded={isOpen} className="flex items-center px-1.5 rounded bg-indigo-500/10 text-indigo-300 font-bold hover:bg-indigo-500/20">
+                <ChevronRight className={`h-3 w-3 mr-0.5 transition-transform ${isOpen ? 'rotate-90' : ''}`} /> {subs.length} subtask{subs.length > 1 ? 's' : ''}
+              </button>
+            )}
+          </div>
+          {!depth && hasTime && <div className="ml-4 mt-1.5 h-1 rounded bg-slate-900 overflow-hidden"><div className="h-full" style={{ width: `${pct}%`, background: color }} /></div>}
+          {isOpen && subs.length > 0 && (
+            <div className="mt-2 ml-3 pl-2 border-l border-dashed border-white/10 space-y-1.5">
+              {subs.map(s => <CarouselTask key={s.id} task={s} color={color} depth={depth + 1} expandedTasks={expandedTasks} toggleTaskExpand={toggleTaskExpand} />)}
+            </div>
+          )}
+        </div>
+      );
+    };
+
+    // groups: [{ status, color, tasks }]. storageKey: where this user's tab order is saved (per user, list and explorer).
+    const StatusCarousel = ({ groups, storageKey, expandedTasks, toggleTaskExpand }) => {
+      const SP = 170, EX = 130;
+      const keyOf = (g) => g.status.toLowerCase();
+      const readSaved = () => { try { const v = JSON.parse(localStorage.getItem(storageKey) || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; } };
+      const [saved, setSaved] = useState(readSaved);
+      const [chipOrder, setChipOrder] = useState(null); // tab order while a tab is being dragged
+      const [dragKey, setDragKey] = useState(null);
+      const [active, setActive] = useState(0);
+      const [scale, setScale] = useState(1);
+      const [savedFlash, setSavedFlash] = useState(false);
+      const [note, setNote] = useState('');
+      const frameRef = useRef(null), chipsRef = useRef(null), cardRefs = useRef([]);
+      const pos = useRef(0), target = useRef(0), anim = useRef(null), centerKey = useRef(null), flashTimer = useRef(null);
+      const chipDrag = useRef(null), swipe = useRef(null), skipClick = useRef(false), wheelAt = useRef(0), live = useRef({});
+
+      // Saved names first, in saved order; statuses never seen before follow in default (alphabetical) order
+      const orderBy = (list, order) => [...list].sort((x, y) => { const ix = order.indexOf(keyOf(x)), iy = order.indexOf(keyOf(y)); return (ix < 0 ? 1e6 : ix) - (iy < 0 ? 1e6 : iy); });
+      const byDefault = [...groups].sort((x, y) => (x.status < y.status ? -1 : x.status > y.status ? 1 : 0));
+      const cardData = orderBy(byDefault, saved);
+      const chipData = orderBy(byDefault, chipOrder || saved);
+      const isDefault = cardData.every((g, i) => g === byDefault[i]);
+      live.current = { cardData, chipData, saved };
+      cardRefs.current.length = cardData.length;
+
+      const layout = () => {
+        let best = 0, bd = 9;
+        cardRefs.current.forEach((el, i) => {
+          if (!el) return;
+          const o = i - pos.current, a = Math.abs(o), m = Math.min(a, 2), sgn = Math.sign(o) || 1, c = Math.max(0, 1 - a);
+          el.style.transform = `translateX(${sgn * (SP * a + EX * Math.min(a, 1))}px) translateZ(${-m * 60}px) rotateY(${-sgn * Math.min(a, 1.4) * 24}deg) scale(${1 - 0.13 * m})`;
+          el.style.opacity = Math.max(0.35, 1 - 0.25 * m);
+          el.style.zIndex = Math.round(100 - a * 10);
+          el.style.boxShadow = `0 ${8 + 28 * c}px ${18 + 36 * c}px rgba(0,0,0,${0.4 + 0.3 * c})`;
+          el.style.borderColor = c > 0.5 ? 'rgba(129,140,248,.65)' : 'rgba(255,255,255,.08)';
+          el.dataset.center = a < 0.35 ? '1' : '';
+          if (a < bd) { bd = a; best = i; }
+        });
+        const g = live.current.cardData[best];
+        if (g) centerKey.current = keyOf(g);
+        setActive(prev => (prev === best ? prev : best));
+      };
+      const goTo = (i) => {
+        target.current = Math.max(0, Math.min(live.current.cardData.length - 1, Math.round(i)));
+        if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) { pos.current = target.current; layout(); return; }
+        if (anim.current) return;
+        const step = () => {
+          const d = target.current - pos.current;
+          if (Math.abs(d) < 0.002) { pos.current = target.current; anim.current = null; layout(); return; }
+          pos.current += d * 0.16; layout(); anim.current = requestAnimationFrame(step);
+        };
+        anim.current = requestAnimationFrame(step);
+      };
+      const stopAnim = () => { if (anim.current) { cancelAnimationFrame(anim.current); anim.current = null; } };
+
+      // Keep the same status centred when the order or the data changes
+      const signature = cardData.map(keyOf).join('|');
+      useEffect(() => {
+        stopAnim();
+        const idx = cardData.findIndex(g => keyOf(g) === centerKey.current);
+        const next = idx >= 0 ? idx : Math.min(Math.round(pos.current), Math.max(0, cardData.length - 1));
+        pos.current = target.current = next;
+        layout();
+      }, [signature]);
+
+      useEffect(() => {
+        const el = frameRef.current; if (!el) return;
+        const fit = () => setScale(Math.min(1, el.clientWidth / 1180));
+        fit();
+        const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(fit) : null;
+        if (ro) ro.observe(el);
+        const onWheel = (e) => { if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && Math.abs(e.deltaX) > 20 && Date.now() - wheelAt.current > 350) { wheelAt.current = Date.now(); goTo(target.current + Math.sign(e.deltaX)); e.preventDefault(); } };
+        el.addEventListener('wheel', onWheel, { passive: false });
+        return () => { if (ro) ro.disconnect(); el.removeEventListener('wheel', onWheel); stopAnim(); clearTimeout(flashTimer.current); };
+      }, []);
+
+      const persist = (keys, message) => {
+        setSaved(keys); setChipOrder(null); setDragKey(null);
+        try { if (keys.length) localStorage.setItem(storageKey, JSON.stringify(keys)); else localStorage.removeItem(storageKey); } catch (e) { console.warn(e); }
+        setSavedFlash(true); clearTimeout(flashTimer.current); flashTimer.current = setTimeout(() => setSavedFlash(false), 1800);
+        setNote(message);
+      };
+      const moveKey = (keys, key, to) => { const out = keys.filter(k => k !== key); out.splice(to, 0, key); return out; };
+
+      // Drag a tab: the tab strip reorders live, cards and storage update on drop. Drag the cards: browse.
+      useEffect(() => {
+        const onMove = (e) => {
+          const d = chipDrag.current;
+          if (d) {
+            if (!d.moved && Math.abs(e.clientX - d.x) > 6) { d.moved = true; document.body.style.userSelect = 'none'; setDragKey(d.key); }
+            if (!d.moved) return;
+            const box = chipsRef.current; if (!box) return;
+            const r = box.getBoundingClientRect();
+            if (e.clientX < r.left + 40) box.scrollLeft -= 12; else if (e.clientX > r.right - 40) box.scrollLeft += 12;
+            const els = [...box.children];
+            let to = els.findIndex(c => { const q = c.getBoundingClientRect(); return e.clientX < q.left + q.width / 2; });
+            if (to < 0) to = els.length - 1;
+            const keys = live.current.chipData.map(keyOf);
+            if (keys.indexOf(d.key) !== to) setChipOrder(moveKey(keys, d.key, to));
+            return;
+          }
+          const s = swipe.current;
+          if (s) {
+            const dx = e.clientX - s.x;
+            if (!s.moved && Math.abs(dx) > 8) { s.moved = true; stopAnim(); }
+            if (s.moved) { pos.current = Math.max(0, Math.min(live.current.cardData.length - 1, s.p - dx / (SP * (s.k || 1) * 1.4))); layout(); }
+          }
+        };
+        const onUp = () => {
+          const d = chipDrag.current, s = swipe.current;
+          chipDrag.current = null; swipe.current = null; document.body.style.userSelect = '';
+          if (d && d.moved) {
+            skipClick.current = true; setTimeout(() => { skipClick.current = false; }, 0);
+            const keys = live.current.chipData.map(keyOf);
+            persist(keys, `${d.key} moved to position ${keys.indexOf(d.key) + 1} of ${keys.length}. Order saved.`);
+          } else if (d) { setDragKey(null); }
+          if (s && s.moved) { skipClick.current = true; setTimeout(() => { skipClick.current = false; }, 0); goTo(pos.current); }
+        };
+        // Esc or an interrupted pointer abandons a tab drag: the order snaps back and nothing is saved.
+        const onCancel = (e) => {
+          const d = chipDrag.current;
+          if (!d || (e.type === 'keydown' && e.key !== 'Escape')) { if (e.type === 'pointercancel') onUp(); return; }
+          chipDrag.current = null; document.body.style.userSelect = '';
+          if (d.moved) { skipClick.current = true; setTimeout(() => { skipClick.current = false; }, 0); setNote('Reorder cancelled. Order unchanged.'); }
+          setChipOrder(null); setDragKey(null);
+        };
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+        window.addEventListener('pointercancel', onCancel);
+        window.addEventListener('keydown', onCancel);
+        return () => { window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); window.removeEventListener('pointercancel', onCancel); window.removeEventListener('keydown', onCancel); };
+      }, [storageKey]);
+
+      const onChipKey = (e, g) => {
+        if (!e.altKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+        e.preventDefault();
+        const keys = chipData.map(keyOf), from = keys.indexOf(keyOf(g)), to = from + (e.key === 'ArrowRight' ? 1 : -1);
+        if (to < 0 || to >= keys.length) return;
+        persist(moveKey(keys, keyOf(g), to), `${g.status} moved to position ${to + 1} of ${keys.length}. Order saved.`);
+        const btn = e.currentTarget;
+        setTimeout(() => { const el = chipsRef.current && [...chipsRef.current.children].find(c => c.dataset.key === keyOf(g)); (el || btn).focus(); }, 0);
+      };
+
+      if (groups.length === 0) return null;
+      const canSort = chipData.length > 1;
+      const sumMs = (g, f) => g.tasks.reduce((s, t) => s + f(taskTimes(t)), 0);
+
+      return (
+        <div className="relative z-0 isolate">
+          <div className="flex items-center justify-end gap-3 px-6 pt-3 min-h-[28px]">
+            <span className={`text-[11px] text-emerald-300 transition-opacity duration-300 ${savedFlash ? 'opacity-100' : 'opacity-0'}`}>✓ Order saved</span>
+            {!isDefault && <button onClick={() => persist([], 'Status order reset to default.')} className="text-[11px] text-slate-400 hover:text-white underline underline-offset-2">Reset order</button>}
+            {canSort && <span className="text-[11px] text-slate-500 hidden md:inline">drag the tabs to reorder · swipe or ← → to browse</span>}
+          </div>
+          <div className="relative z-10 bg-gradient-to-b from-slate-900/60 to-transparent">
+            <div ref={chipsRef} role="tablist" aria-label="Task statuses" className="flex gap-2 overflow-x-auto px-5 pt-2 pb-3"
+              onPointerDown={(e) => { const el = e.target.closest('[data-key]'); if (el && canSort) chipDrag.current = { key: el.dataset.key, x: e.clientX, moved: false }; }}>
+              {chipData.map((g) => {
+                const idx = cardData.findIndex(c => keyOf(c) === keyOf(g));
+                const on = idx === active, dragging = dragKey === keyOf(g);
+                return (
+                  <button key={keyOf(g)} role="tab" data-key={keyOf(g)} aria-selected={on}
+                    aria-label={`${g.status}, ${g.tasks.length} tasks${canSort ? '. Alt plus left or right arrow moves it.' : ''}`}
+                    onClick={() => { if (!skipClick.current && idx >= 0) goTo(idx); }}
+                    onKeyDown={(e) => onChipKey(e, g)}
+                    className={`shrink-0 flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs ${canSort ? 'touch-none ' : ''}${dragging ? 'opacity-80 scale-105 ring-2 ring-indigo-400 cursor-grabbing' : canSort ? 'cursor-grab' : ''} ${on ? 'bg-slate-800 text-white' : 'bg-slate-900/60 border-white/10 text-slate-400 hover:text-slate-200'}`}
+                    style={on ? { borderColor: g.color, boxShadow: `0 0 14px ${g.color}55` } : undefined}>
+                    {canSort && <span className="text-slate-600 select-none -ml-1" aria-hidden="true">⋮⋮</span>}
+                    <span className="h-2 w-2 rounded-full" style={{ background: g.color, boxShadow: `0 0 6px ${g.color}` }} />
+                    <span className="font-semibold">{g.status}</span>
+                    <span className="text-slate-400">{g.tasks.length}</span>
+                    <span className="text-slate-500">{Math.round(sumMs(g, t => t.spent) / 3600000)}/{Math.round(sumMs(g, t => t.est) / 3600000)}h</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div className="relative px-2 pt-2">
+            <button onClick={() => goTo(target.current - 1)} aria-label="Previous status" className="absolute left-3 top-1/2 -translate-y-1/2 z-[200] h-9 w-9 rounded-full bg-slate-800/90 border border-white/10 text-slate-300 hover:text-white hover:border-indigo-400/50">‹</button>
+            <button onClick={() => goTo(target.current + 1)} aria-label="Next status" className="absolute right-3 top-1/2 -translate-y-1/2 z-[200] h-9 w-9 rounded-full bg-slate-800/90 border border-white/10 text-slate-300 hover:text-white hover:border-indigo-400/50">›</button>
+            <div ref={frameRef} className="relative overflow-hidden" style={{ touchAction: 'pan-y', height: 520 * scale }}
+              onPointerDown={(e) => { if (!e.target.closest('button,a')) swipe.current = { x: e.clientX, p: pos.current, moved: false, k: scale }; }}>
+              <div className="relative mx-auto" tabIndex={0} aria-label="Status cards" style={{ width: 1, height: 520, perspective: 1100, transformOrigin: 'top center', transform: `scale(${scale})` }}
+                onKeyDown={(e) => { if (e.target !== e.currentTarget) return; if (e.key === 'ArrowRight') { goTo(target.current + 1); e.preventDefault(); } if (e.key === 'ArrowLeft') { goTo(target.current - 1); e.preventDefault(); } }}>
+                {cardData.map((g, i) => {
+                  const estMs = sumMs(g, t => t.est), spentMs = sumMs(g, t => t.spent), pct = Math.round(100 * spentMs / Math.max(estMs, spentMs, 1));
+                  return (
+                    <article key={keyOf(g)} ref={el => { cardRefs.current[i] = el; }} aria-label={g.status}
+                      onClick={() => { if (!skipClick.current && Math.abs(i - pos.current) >= 0.35) goTo(i); }}
+                      className="wv-card rounded-2xl bg-slate-900 border border-white/10 overflow-hidden flex flex-col">
+                      <div className="h-1 shrink-0" style={{ background: g.color }} />
+                      <header className="relative px-4 pt-3 pb-3 bg-slate-800/40 border-b border-white/5 shrink-0">
+                        <div className="flex items-center gap-2">
+                          <span className="h-3 w-3 rounded-full" style={{ background: g.color, boxShadow: `0 0 10px ${g.color}` }} />
+                          <h3 className="font-bold text-slate-100 capitalize text-base">{g.status}</h3>
+                          <span className="ml-auto text-xs text-slate-300 bg-slate-900 px-2 py-0.5 rounded-full border border-white/10">{g.tasks.length} {g.tasks.length === 1 ? 'task' : 'tasks'}</span>
+                        </div>
+                        <div className="flex items-center gap-2 mt-2 text-[11px] text-slate-400"><span>{Math.round(spentMs / 3600000)}h spent of {Math.round(estMs / 3600000)}h estimated</span><span className="ml-auto">{pct}%</span></div>
+                        <span className="absolute left-0 bottom-0 h-0.5" style={{ width: `${pct}%`, background: g.color }} />
+                      </header>
+                      <div className="wv-tasks flex-1 min-h-0 overflow-y-auto p-3 space-y-2" tabIndex={0} aria-label={`${g.status} tasks`}>
+                        {g.tasks.map(t => <CarouselTask key={t.id} task={t} color={g.color} expandedTasks={expandedTasks} toggleTaskExpand={toggleTaskExpand} />)}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="text-center text-xs text-slate-500 py-3" aria-live="polite">{cardData.length ? `${Math.min(active, cardData.length - 1) + 1} of ${cardData.length} · ${cardData[Math.min(active, cardData.length - 1)].status}` : ''}</div>
+            <div className="sr-only" aria-live="polite">{note}</div>
+          </div>
+        </div>
+      );
+    };
+
     const WebNestBackground = ({ opacity }) => {
       const canvasRef = useRef(null);
 
@@ -603,6 +879,7 @@
       const [isLoggingIn, setIsLoggingIn] = useState(false);
       const [authInitialized, setAuthInitialized] = useState(false);
       const [errorMessage, setErrorMessage] = useState(null);
+      const [loginFailure, setLoginFailure] = useState(null); // why Google sign-in fell back to a guest session; survives the guest sign-in that follows
 
       const [warpStage, setWarpStage] = useState('idle');
       const [integrationStep, setIntegrationStep] = useState('idle');
@@ -1418,8 +1695,9 @@
         setIsLoggingIn(true);
         setErrorMessage(null);
         try {
-          await signInWithPopup(auth, googleProvider);
+          await signInWithPopup(auth, googleProvider);setLoginFailure(null);
         } catch (error) {
+          setLoginFailure(error.code === 'auth/popup-closed-by-user' ? 'The Google sign-in window was closed before finishing.' : error.code === 'auth/unauthorized-domain' ? 'Google sign-in is not allowed from this web address.' : error.code === 'auth/popup-blocked' ? 'The browser blocked the Google sign-in window.' : (error.message || 'Google sign-in failed.'));
           if (error.code === 'auth/unauthorized-domain' || error.message.includes('iframe') || error.code === 'auth/popup-closed-by-user') {
             setErrorMessage("Domain unauthorized. Falling back to Local Offline mode. To enable cross-device sync, please replace the firebaseConfig in the HTML with your own Firebase project credentials.");
             handleMockLogin();
@@ -2746,10 +3024,11 @@
                   <div className="bg-indigo-500/10 p-2.5 rounded-lg mr-4 border border-indigo-500/20"><Key className="h-6 w-6 text-indigo-400" /></div>
                   <div><h3 className="text-lg font-semibold text-white">Sign in to connect ClickUp</h3><p className="text-sm text-slate-400 max-w-xl">Weaver stores your ClickUp token securely on the server, tied to your Google account. Anonymous and offline sessions can't save one.</p></div>
                 </div>
+                {loginFailure && (<div role="alert" className="mb-5 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200"><AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /><span>Google sign-in did not complete, so you are in a guest session. {loginFailure} Try again to save a ClickUp token.</span></div>)}
                 <div className="flex flex-col sm:flex-row sm:justify-end gap-3">
                   <button onClick={handleCancelIntegration} className="px-4 py-2 text-sm font-medium text-slate-400 rounded-lg neon-border-slate transition-all">Cancel</button>
                   <button onClick={handleMockClickUpData} className="px-4 py-2 text-sm font-medium text-slate-300 rounded-lg neon-border-slate transition-all">Use mock data</button>
-                  <button onClick={handleGoogleLogin} className="btn-neon btn-neon-indigo">Continue with Google</button>
+                  <button onClick={handleGoogleLogin} className="btn-neon btn-neon-indigo">{loginFailure ? 'Try Google sign-in again' : 'Continue with Google'}</button>
                 </div>
               </div>
             )}
@@ -4126,66 +4405,57 @@
                   </div>
                 )}
 
-                {/* Active Explorer (Grouped by Status) */}
-                <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl mb-8">
+                {/* Active Explorer (Grouped by Status): carousel of status cards */}
+                <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl mb-8 overflow-hidden">
                   <div className="px-6 py-4 border-b border-white/5 bg-slate-900/30 rounded-t-2xl"><h2 className="text-sm font-bold text-white flex items-center gap-2"><ListTodo className="h-4 w-4 text-indigo-400" /> Active Tasks Explorer</h2></div>
-                  <div className="p-6">
-                    {activeWorkflows.map(workflow => {
+                  {(() => {
+                    const sections = activeWorkflows.map(workflow => {
                       const mainTasksOnly = (workflow.tasks || []).filter(t => !(t.name || '').toLowerCase().includes('qa bugs'));
-                      const rootTasksByTags = buildFilteredTree(mainTasksOnly, false);
-                      
                       const groupedByStatus = {};
-                      rootTasksByTags.forEach(task => {
+                      buildFilteredTree(mainTasksOnly, false).forEach(task => {
                         const status = task.status?.status || 'Open';
                         if (!groupedByStatus[status]) groupedByStatus[status] = [];
                         groupedByStatus[status].push(task);
                       });
-                      const sortedStatuses = Object.keys(groupedByStatus).sort();
-
-                      return (
-                        <div key={workflow.id} className="space-y-4">
-                          {sortedStatuses.map(status => (
-                            <CollapsibleGroup 
-                              key={status} 
-                              title={status} 
-                              count={groupedByStatus[status].length}
-                              color={groupedByStatus[status][0]?.status?.color}
-                            >
-                              {groupedByStatus[status].map(task => (
-                                <TaskItem key={task.id} task={task} expandedTasks={expandedTasks} toggleTaskExpand={toggleTaskExpand} />
-                              ))}
-                            </CollapsibleGroup>
-                          ))}
-                        </div>
-                      )
-                    })}
-                  </div>
+                      const groups = Object.keys(groupedByStatus).map(status => ({ status, color: groupedByStatus[status][0]?.status?.color || '#38bdf8', tasks: groupedByStatus[status] }));
+                      return { workflow, groups };
+                    }).filter(s => s.groups.length > 0);
+                    if (sections.length === 0) return <div className="text-center text-sm text-slate-500 italic py-8">No active tasks match your filters.</div>;
+                    return sections.map(({ workflow, groups }) => (
+                      <div key={workflow.id} className="pb-2">
+                        {activeWorkflows.length > 1 && <div className="px-6 pt-4 text-[11px] uppercase tracking-wide text-slate-500">{workflow.list}</div>}
+                        <StatusCarousel key={workflow.listId} groups={groups} storageKey={`weaver_status_order_${appId}_${portfolioUserKey || 'guest'}_${workflow.listId}_active`} expandedTasks={expandedTasks} toggleTaskExpand={toggleTaskExpand} />
+                      </div>
+                    ));
+                  })()}
                 </div>
 
-                {/* Completed Tasks Section */}
-                <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl mb-8">
+                {/* Completed Tasks Section: same carousel, done statuses */}
+                <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl mb-8 overflow-hidden">
                   <div className="px-6 py-4 border-b border-white/5 bg-slate-900/30 flex items-center justify-between rounded-t-2xl">
                     <h2 className="text-sm font-bold text-white flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-emerald-400" /> Completed Tasks Explorer</h2>
                     <span className="text-xs font-medium text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20">{completedFilteredTasksCount} Resolved</span>
                   </div>
-                  <div className="p-6">
-                    {activeWorkflows.map(workflow => {
+                  {(() => {
+                    const sections = activeWorkflows.map(workflow => {
                       const mainTasksOnly = (workflow.tasks || []).filter(t => !(t.name || '').toLowerCase().includes('qa bugs'));
-                      const completedTasksTree = buildFilteredTree(mainTasksOnly, true);
-                      if (completedTasksTree.length === 0) return null;
-                      return (
-                        <div key={`completed-${workflow.id}`}>
-                          <div className="space-y-2">
-                            {completedTasksTree.map(task => <TaskItem key={task.id} task={task} expandedTasks={expandedTasks} toggleTaskExpand={toggleTaskExpand} isDoneMode={true} />)}
-                          </div>
-                        </div>
-                      );
-                    })}
-                    {activeWorkflows.every(workflow => {
-                      const mainTasksOnly = (workflow.tasks || []).filter(t => !(t.name || '').toLowerCase().includes('qa bugs'));
-                      return buildFilteredTree(mainTasksOnly, true).length === 0;
-                    }) && <div className="text-center text-sm text-slate-500 italic py-4">No completed tasks match your filters yet.</div>}
-                  </div>
+                      const groupedByStatus = {};
+                      buildFilteredTree(mainTasksOnly, true).forEach(task => {
+                        const status = task.status?.status || 'Done';
+                        if (!groupedByStatus[status]) groupedByStatus[status] = [];
+                        groupedByStatus[status].push(task);
+                      });
+                      const groups = Object.keys(groupedByStatus).map(status => ({ status, color: groupedByStatus[status][0]?.status?.color || '#34d399', tasks: groupedByStatus[status] }));
+                      return { workflow, groups };
+                    }).filter(s => s.groups.length > 0);
+                    if (sections.length === 0) return <div className="text-center text-sm text-slate-500 italic py-8">No completed tasks match your filters yet.</div>;
+                    return sections.map(({ workflow, groups }) => (
+                      <div key={`completed-${workflow.id}`} className="pb-2">
+                        {activeWorkflows.length > 1 && <div className="px-6 pt-4 text-[11px] uppercase tracking-wide text-slate-500">{workflow.list}</div>}
+                        <StatusCarousel key={workflow.listId} groups={groups} storageKey={`weaver_status_order_${appId}_${portfolioUserKey || 'guest'}_${workflow.listId}_completed`} expandedTasks={expandedTasks} toggleTaskExpand={toggleTaskExpand} />
+                      </div>
+                    ));
+                  })()}
                 </div>
 
                 {/* Active Connections */}
