@@ -1388,6 +1388,9 @@
           return nextWorkflows;
         });
         
+        // keep the saved connection's list metadata (Portfolio cards, Connections list) in step with the renamed lists
+        persistConnection(clickUpToken, mappedWorkflowsRef.current.map(w => updatedWorkflows.find(u => u.id === w.id) || w));
+
         setIsAutoSyncing(false);
       };
 
