@@ -6,7 +6,7 @@
   <title>Weaver - Thread Support and Development together</title>
   <meta name="referrer" content="no-referrer">
   <!-- Release version shown in the page footer; bump on every upload (YYYY.MM.DD-N) -->
-  <meta name="weaver-version" content="2026.10.12-2">
+  <meta name="weaver-version" content="2026.10.12-3">
   
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -221,13 +221,14 @@
     import { createRoot } from 'react-dom/client';
     import { initializeApp } from 'firebase/app';
     import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut as firebaseSignOut, signInAnonymously, signInWithCustomToken, updateProfile } from 'firebase/auth';
-    import { getFirestore, doc, setDoc, updateDoc, arrayUnion, arrayRemove, onSnapshot } from 'firebase/firestore';
+    import { getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, arrayUnion, arrayRemove, onSnapshot, collection, query, orderBy, limit } from 'firebase/firestore';
     import { 
       CheckCircle2, ArrowRight, Ticket, CheckSquare, LogOut, Settings, Bell, Box,
       FolderOpen, ListTodo, Plus, Trash2, ChevronRight, RefreshCw, Key, AlertTriangle,
       Clock, Calendar, Flag, Users, TrendingDown, TrendingUp, Target, Tag, X, Activity, PieChart,
       Bug, ShieldAlert, Zap, Info as InfoIcon, Download, Image as ImageIcon, BarChart2,
-      LayoutDashboard, Briefcase, Pencil, Check, PauseCircle, WifiOff, CloudOff, ShieldCheck, ShieldX
+      LayoutDashboard, Briefcase, Pencil, Check, PauseCircle, WifiOff, CloudOff, ShieldCheck, ShieldX,
+      Archive, CalendarX, Gauge
     } from 'lucide-react';
 
     const firebaseConfig = {
@@ -256,6 +257,45 @@
     const TEAM_EMAIL = /^[^@\s]+@inventi\.ph$/; // team-data FR-1, same check as firestore.rules and weaver-api
     const isTeamUser = (u) => !!u && !u.isAnonymous && u.emailVerified === true && TEAM_EMAIL.test(u.email || '') && (u.providerData || []).some(p => p.providerId === 'google.com');
     const NOT_TEAM_MSG = 'Weaver is for inventi.ph accounts. Sign in with your company Google account.';
+
+    // team-data: Firestore paths. Per user: users/{uid} (FR-4, FR-6, FR-7). Per ClickUp list: lists/{listId} (FR-9, FR-10, FR-13).
+    const userDoc = (uid) => doc(db, 'users', uid);
+    const listDoc = (listId) => doc(db, 'lists', String(listId));
+    const listEntriesCol = (listId) => collection(db, 'lists', String(listId), 'timeEntries');
+    const listActivityCol = (listId) => collection(db, 'lists', String(listId), 'activity');
+    const userActivityCol = (uid) => collection(db, 'users', uid, 'activity');
+    const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    // FR-4: a linked list without any task data
+    const listMeta = (w) => ({ id: String(w.id), team: w.team || '', space: w.space || '', folder: w.folder || '', list: w.list || '', listId: String(w.listId), listStartDate: w.listStartDate || null, listDueDate: w.listDueDate || null });
+    const entryFromDoc = (listId, id, d) => ({ id, listId: String(listId), taskId: d.taskId, ms: Number(d.ms) || 0, timestamp: d.workDate, userId: d.assignee, note: d.note || '', authorUid: d.authorUid || '', authorName: d.authorName || '' });
+    const FEED_LIMIT = 50; // FR-19: newest events loaded per list
+    const ARCHIVED_EVERY_MS = 10 * 60 * 1000; // FR-24
+    const TOAST_MS = 6000; // FR-16
+    const fmtHours = (ms) => `${Math.round(ms / 360000) / 10}h`;
+    const relTime = (at) => {
+      const d = Date.now() - at;
+      if (d < 60000) return 'just now';
+      if (d < 3600000) return `${Math.floor(d / 60000)} min ago`;
+      if (d < 86400000 && new Date(at).toDateString() === new Date().toDateString()) return `${Math.floor(d / 3600000)} h ago`;
+      const time = new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      if (new Date(at).toDateString() === new Date(Date.now() - 86400000).toDateString()) return `Yesterday ${time}`;
+      return new Date(at).toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + time;
+    };
+    // design S2/S3: one icon per team event type (words always say what happened)
+    const EVENT_STYLE = {
+      time_logged: { Icon: Clock, chip: 'bg-emerald-500/10 border-emerald-500/20', icon: 'text-emerald-400' },
+      time_deleted: { Icon: Trash2, chip: 'bg-rose-500/10 border-rose-500/20', icon: 'text-rose-400' },
+      hours_changed: { Icon: Gauge, chip: 'bg-indigo-500/10 border-indigo-500/20', icon: 'text-indigo-400' },
+      blockers_changed: { Icon: CalendarX, chip: 'bg-amber-500/10 border-amber-500/20', icon: 'text-amber-400' },
+    };
+    const TX_STYLE = {
+      clock: EVENT_STYLE.time_logged, trash: EVENT_STYLE.time_deleted, unlink: EVENT_STYLE.time_deleted,
+      link: { Icon: Box, chip: 'bg-indigo-500/10 border-indigo-500/20', icon: 'text-indigo-400' },
+      info: { Icon: InfoIcon, chip: 'bg-blue-500/10 border-blue-500/20', icon: 'text-blue-400' },
+    };
+    const ArchivedBadge = () => (
+      <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-slate-700/60 text-slate-300 border border-slate-600 shrink-0"><Archive className="w-3 h-3" aria-hidden="true" />Archived</span>
+    );
     const appId = typeof __app_id !== 'undefined' ? __app_id : 'weaver-default-app';
 
     const SpiderNetworkIcon = ({ className }) => (
@@ -461,7 +501,7 @@
         <div className={depth ? 'rounded-r-lg bg-slate-800/50 border-l-2 px-2.5 py-2' : 'rounded-lg bg-slate-800/60 border border-white/5 px-2.5 py-2'} style={depth ? { borderLeftColor: `${color}66` } : undefined}>
           <div className="flex items-start gap-2">
             <span className="mt-1.5 h-2 w-2 rounded-full shrink-0" style={{ background: PRIORITY_DOT[prio] || '#475569' }} title={prio ? `Priority: ${prio}` : 'No priority'} />
-            <span className={`${depth ? 'text-xs' : 'text-sm'} font-semibold text-slate-100 leading-5 flex-1 min-w-0 break-words`}>{task.name || 'Unnamed Task'}</span>
+            <span className={`${depth ? 'text-xs' : 'text-sm'} font-semibold text-slate-100 leading-5 flex-1 min-w-0 break-words`}>{task.name || 'Unnamed Task'}{task._archived && <> <ArchivedBadge /></>}</span>
             {!depth && (
               <span className="flex -space-x-1.5 shrink-0 pl-1">
                 {(task.assignees || []).slice(0, 3).map((a, i) => (
@@ -985,6 +1025,16 @@
         setTimeout(() => setTeamRetryTick(t => t + 1), 30000); // a failed listener has stopped; subscribe again
       };
       const teamReadOk = () => setTeamLoadFailed(false);
+
+      // team-data FR-4: my linked lists (metadata only) in users/{uid}; tasks stay in this browser (FR-8)
+      const saveUserLists = (workflows) => {
+        if (!user?.isTeam) return;
+        const lists = workflows.map(listMeta);
+        const json = JSON.stringify(lists);
+        if (json === lastListsWriteRef.current) return;
+        lastListsWriteRef.current = json;
+        teamWrite(() => setDoc(userDoc(user.uid), { lists }, { merge: true }), 'your lists', 'user-lists');
+      };
       
       const [completionFilterType, setCompletionFilterType] = useState('none');
       const [selectedTagFilter, setSelectedTagFilter] = useState('');
@@ -1030,6 +1080,23 @@
           return saved ? JSON.parse(saved) : [];
         } catch(e) { return []; }
       });
+      // team-data: shared per-list data of team members (Preview / offline keep the local ledger above)
+      const [entriesByList, setEntriesByList] = useState({}); // FR-10: listId -> time entries
+      const [eventsByList, setEventsByList] = useState({}); // FR-13: listId -> newest team events
+      const [teamSeen, setTeamSeen] = useState({}); // FR-7: listId -> last time the bell was opened
+      const [toasts, setToasts] = useState([]); // FR-16
+      const [toastMore, setToastMore] = useState(null); // { n, lists, expires }: the "+N more" card
+      const toastPausedRef = useRef(false);
+      const knownEventIdsRef = useRef({}); // listId -> ids this page has seen; the first answer per list is history, not news
+      const archivedFetchedAtRef = useRef({}); // FR-24: listId -> last archived-task fetch
+      const lastListsWriteRef = useRef(''); // FR-4: skip writing users/{uid}.lists when nothing changed
+      const hoursEventRef = useRef({}); // FR-13: one event per hours change, not one per keystroke
+      const [openUnreadIds, setOpenUnreadIds] = useState([]); // design S2: rows unread when the panel opened keep their marker
+      const [teamVisibleCount, setTeamVisibleCount] = useState(10);
+      const [yourActivityOpen, setYourActivityOpen] = useState(false);
+      const [showArchived, setShowArchived] = useState(false); // FR-26
+      const [archivedGroupOpen, setArchivedGroupOpen] = useState({});
+      const [timeEntryError, setTimeEntryError] = useState('');
       const [timeEntryNote, setTimeEntryNote] = useState('');
       const [timeEntryHours, setTimeEntryHours] = useState('');
       const [selectedTaskIdForTime, setSelectedTaskIdForTime] = useState('');
@@ -1064,6 +1131,15 @@
         };
       }, [isNotificationsOpen]);
 
+      const notificationsHeadingRef = useRef(null);
+      useEffect(() => {
+        if (!isNotificationsOpen) return;
+        notificationsHeadingRef.current?.focus();
+        const onKey = (e) => { if (e.key === 'Escape') { setIsNotificationsOpen(false); bellButtonRef.current?.focus(); } };
+        document.addEventListener('keydown', onKey);
+        return () => document.removeEventListener('keydown', onKey);
+      }, [isNotificationsOpen]);
+
       const [transactions, setTransactions] = useState(() => {
         try {
           const saved = localStorage.getItem(`weaver_transactions_${appId}`);
@@ -1083,16 +1159,13 @@
 
         setTransactions(prev => {
           const updated = [newTx, ...prev].slice(0, 100);
-          localStorage.setItem(`weaver_transactions_${appId}`, JSON.stringify(updated));
+          if (!user?.isTeam) localStorage.setItem(`weaver_transactions_${appId}`, JSON.stringify(updated));
           return updated;
         });
 
+        // team-data FR-6: personal activity is mine only and never notifies anyone
         if (user?.isTeam) {
-          const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'ledgers', 'transactions');
-          await teamWrite(async () => {
-            try { await updateDoc(docRef, { entries: arrayUnion(newTx) }); }
-            catch (error) { if (error.code === 'not-found') await setDoc(docRef, { entries: [newTx] }); else throw error; }
-          }, 'transaction');
+          await teamWrite(() => setDoc(doc(userActivityCol(user.uid), newTx.id), { action, details, iconType, at: newTx.timestamp }), 'your activity');
         }
       };
 
@@ -1134,6 +1207,13 @@
           setPortfolio(saved);
         } catch (e) { setPortfolio([]); }
       }, [portfolioKey]);
+      useEffect(() => {
+        try {
+          setShowArchived(localStorage.getItem(`weaver_pref_show_archived_${appId}_${portfolioUserKey}`) === '1');
+          setYourActivityOpen(localStorage.getItem(`weaver_pref_your_activity_${appId}_${portfolioUserKey}`) === '1');
+        } catch (e) {}
+      }, [portfolioUserKey]);
+      const savePref = (name, on) => { try { localStorage.setItem(`weaver_pref_${name}_${appId}_${portfolioUserKey}`, on ? '1' : '0'); } catch (e) {} };
       const [editingConnId, setEditingConnId] = useState(null);
       const [editingConnName, setEditingConnName] = useState('');
       const pendingSyncRef = useRef(false);
@@ -1246,6 +1326,90 @@
       const availableLists = selectedFolder ? lists : folderlessLists;
 
       const canSaveToken = !!user && !user.isMock && !user.isAnonymous;
+
+      // ---- team-data FR-21, FR-27: move the old shared data once, then resolve entries whose list was unknown ----
+      const MIGRATION_ID = 'team-data-v1';
+      const migrationDoc = () => doc(db, 'migrations', MIGRATION_ID);
+      const unmatchedCol = () => collection(db, 'migrations', MIGRATION_ID, 'unmatched');
+      const migrationRef = useRef(null); // the running or finished migration (a promise), once per page load
+      const unmatchedRanRef = useRef(false);
+      const inChunks = async (items, fn, size = 20) => { for (let i = 0; i < items.length; i += size) await Promise.all(items.slice(i, i + size).map(fn)); };
+
+      const runTeamDataMigration = async () => {
+        const guard = await getDoc(migrationDoc());
+        const g = guard.exists() ? guard.data() : null;
+        // done, or another team member is running it right now (a run that stopped half-way is picked up after 10 minutes; every write is idempotent)
+        if (g && (g.status === 'done' || Date.now() - (g.startedAt || 0) < 10 * 60 * 1000)) return g;
+        await setDoc(migrationDoc(), { status: 'running', startedAt: Date.now(), startedBy: user.uid, capacity: 0, timeEntries: 0, unmatched: 0 }, { merge: true });
+        const old = (...p) => doc(db, 'artifacts', appId, 'public', 'data', ...p);
+        const [wfSnap, ledgerSnap, capSnap] = await Promise.all([
+          getDoc(old('settings', 'workflows')),
+          getDoc(old('ledgers', 'global')),
+          getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'capacity')),
+        ]);
+        // which list each task belongs to: the old shared task copy plus this browser's own lists
+        const taskList = {};
+        const walk = (tasks, listId) => (tasks || []).forEach(t => { taskList[t.id] = String(listId); walk(t.subtasks, listId); });
+        ((wfSnap.exists() && wfSnap.data().mappedWorkflows) || []).forEach(w => walk(w.tasks, w.listId));
+        mappedWorkflowsRef.current.forEach(w => { walk(w.tasks, w.listId); (w.archivedRaw || []).forEach(t => { taskList[t.id] = String(w.listId); }); });
+
+        let capacity = 0, timeEntries = 0, unmatched = 0;
+        await inChunks(capSnap.docs, async (c) => {
+          if ((await getDoc(listDoc(c.id))).exists()) return; // the new version already uses this list
+          const d = c.data();
+          const fields = Object.fromEntries(['devHoursPerDay', 'qaHoursPerDay', 'dateBlockers', 'userRoles'].filter(k => d[k] !== undefined).map(k => [k, d[k]]));
+          await setDoc(listDoc(c.id), { ...fields, updatedAt: Date.now(), updatedBy: user.uid });
+          capacity++;
+        });
+        const entries = ((ledgerSnap.exists() && ledgerSnap.data().entries) || []).filter(e => e && e.id && e.taskId && Number(e.ms) > 0);
+        await inChunks(entries, async (e) => {
+          const data = { taskId: String(e.taskId), ms: Number(e.ms), workDate: Number(e.timestamp) || Date.now(), assignee: e.userId || '', note: e.note || '', authorUid: '', authorName: e.userId || '', authorEmail: '', createdAt: Number(e.timestamp) || Date.now(), migrated: true };
+          const listId = taskList[data.taskId];
+          const id = String(e.id).replace(/\//g, '_');
+          if (listId) { await setDoc(doc(listEntriesCol(listId), id), data); timeEntries++; }
+          else { await setDoc(doc(unmatchedCol(), id), data); unmatched++; }
+        });
+        const done = { capacity, timeEntries, unmatched, remaining: unmatched, status: 'done', doneAt: Date.now() };
+        await setDoc(migrationDoc(), done, { merge: true });
+        return done;
+      };
+
+      // FR-27: every team member's first load retries the unmatched entries with their own ClickUp connection, at most 50 per load, for 30 days
+      const resolveUnmatched = async () => {
+        const g = await migrationRef.current;
+        if (!g || g.status !== 'done' || !g.remaining || Date.now() - (g.doneAt || 0) > 30 * 86400000) return;
+        const snap = await getDocs(query(unmatchedCol(), limit(50)));
+        let moved = 0;
+        for (const d of snap.docs) {
+          const data = d.data();
+          if (!/^[0-9a-z]+$/.test(data.taskId)) continue; // custom task ids cannot be looked up
+          try {
+            const task = await fetchClickUp(`task/${data.taskId}`, clickUpToken);
+            const listId = task?.list?.id;
+            if (!listId) continue;
+            await setDoc(doc(listEntriesCol(listId), d.id), data);
+            await deleteDoc(doc(unmatchedCol(), d.id));
+            moved++;
+          } catch (err) {
+            if (err.kind === 'notfound') continue; // not visible to my ClickUp account; a teammate may see it
+            break; // rate limit, offline, sign-in: try again on a later load
+          }
+        }
+        if (moved) {
+          const rest = (await getDocs(unmatchedCol())).size;
+          await setDoc(migrationDoc(), { remaining: rest, resolvedAt: Date.now() }, { merge: true });
+        }
+      };
+
+      useEffect(() => {
+        if (!user?.isTeam || migrationRef.current) return;
+        migrationRef.current = runTeamDataMigration().catch(err => { console.error('Team data migration:', err); return null; });
+      }, [user]);
+      useEffect(() => {
+        if (!user?.isTeam || unmatchedRanRef.current || !UUID_RE.test(clickUpToken || '')) return;
+        unmatchedRanRef.current = true;
+        setTimeout(() => resolveUnmatched().catch(err => console.error('Unmatched time entries:', err)), 0);
+      }, [user, clickUpToken]);
 
       // FR-24: 10 minutes of continuous network failure (offline or ClickUp unreachable) raises the outage banner; any other result ends the outage
       const noteOutage = (isOutage) => {
@@ -1426,10 +1590,7 @@
               const filteredPrev = prev.filter(w => w.listId !== newWorkflow.listId);
               const nextWorkflows = [...filteredPrev, newWorkflow];
               localStorage.setItem(`weaver_workflows_${appId}`, JSON.stringify(nextWorkflows));
-              if (user?.isTeam) {
-                const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
-                teamWrite(() => setDoc(docRef, { mappedWorkflows: nextWorkflows }, { merge: true }), 'workflows', 'workflows').then(ok => { if (!ok) setMappedWorkflows(nextWorkflows); });
-              }
+              saveUserLists(nextWorkflows);
               return nextWorkflows;
             });
 
@@ -1458,10 +1619,7 @@
           
           const newWorkflows = prev.filter(w => w.id !== id);
           localStorage.setItem(`weaver_workflows_${appId}`, JSON.stringify(newWorkflows));
-          if (user?.isTeam) {
-            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
-            teamWrite(() => setDoc(docRef, { mappedWorkflows: newWorkflows }, { merge: true }), 'workflows', 'workflows').then(ok => { if (!ok) setMappedWorkflows(newWorkflows); });
-          }
+          saveUserLists(newWorkflows);
           return newWorkflows;
         });
       };
@@ -1494,6 +1652,7 @@
           let listStartDate = workflow.listStartDate || null;
           let listDueDate = workflow.listDueDate || null;
           let listName = workflow.list, spaceName = workflow.space, folderName = workflow.folder;
+          let archivedRaw = workflow.archivedRaw || [];
 
           if (clickUpToken === 'mock_token') {
             updatedTasks = buildTaskTree(MOCK_CLICKUP_DATA.tasks[workflow.listId] || MOCK_CLICKUP_DATA.tasks['mock_list_1']);
@@ -1513,8 +1672,29 @@
                   allFetchedTasks.push(...tasksChunk);
                   if (tasksChunk.length === 100) page++; else hasMore = false;
               }
+              const activeRaw = allFetchedTasks.filter(t => !t.archived);
+              // team-data FR-24: archived tasks on the first sync, then at most every 10 minutes per list
+              if (Date.now() - (archivedFetchedAtRef.current[workflow.listId] || 0) >= ARCHIVED_EVERY_MS) {
+                try {
+                  let p = 0, more = true, got = [];
+                  while (more) {
+                    const data = await request(`list/${workflow.listId}/task?archived=true&subtasks=true&include_closed=true&page=${p}`);
+                    const chunk = data.tasks || [];
+                    got.push(...chunk);
+                    if (chunk.length === 100) p++; else more = false;
+                  }
+                  archivedRaw = got.filter(t => t.archived === true); // whether ClickUp returns only archived tasks or all of them
+                  archivedFetchedAtRef.current[workflow.listId] = Date.now();
+                } catch (err) {
+                  if (err.kind === 'token' || err.kind === 'halted') throw err;
+                  // anything else: keep the last archived set and try again on the next sync
+                }
+              }
+              // FR-24: within a list each task appears once; the active fetch is the newer one
+              const activeIds = new Set(activeRaw.map(t => t.id));
+              archivedRaw = archivedRaw.filter(t => !activeIds.has(t.id));
               if (allFetchedTasks.length > 0) {
-                  updatedTasks = buildTaskTree(allFetchedTasks);
+                  updatedTasks = buildTaskTree(activeRaw);
               }
             } catch (err) {
               // FR-12: this list keeps its last good data and its old sync time; the other lists carry on
@@ -1522,7 +1702,7 @@
               return workflow;
             }
           }
-          return { ...workflow, list: listName, space: spaceName, folder: folderName, tasks: updatedTasks, lastSynced: Date.now(), listStartDate, listDueDate };
+          return { ...workflow, list: listName, space: spaceName, folder: folderName, tasks: updatedTasks, archivedRaw, lastSynced: Date.now(), listStartDate, listDueDate };
         }));
 
         setMappedWorkflows(prev => {
@@ -1533,10 +1713,7 @@
           });
 
           localStorage.setItem(`weaver_workflows_${appId}`, JSON.stringify(nextWorkflows));
-          if (user?.isTeam) {
-            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
-            teamWrite(() => setDoc(docRef, { mappedWorkflows: nextWorkflows }, { merge: true }), 'synced workflows', 'workflows').then(ok => { if (!ok) setMappedWorkflows(nextWorkflows); });
-          }
+          saveUserLists(nextWorkflows);
           return nextWorkflows;
         });
 
@@ -1691,10 +1868,7 @@
         setMappedWorkflows(next);
         mappedWorkflowsRef.current = next;
         try { localStorage.setItem(`weaver_workflows_${appId}`, JSON.stringify(next)); } catch (e) { console.warn(e); }
-        if (user?.isTeam) {
-          const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
-          teamWrite(() => setDoc(docRef, { mappedWorkflows: next }, { merge: true }), 'workflows', 'workflows');
-        }
+        saveUserLists(next);
       };
 
       const handleSwitchConnection = (conn) => {
@@ -1814,8 +1988,11 @@
         localStorage.setItem(`weaver_settings_${appId}_${activeListId}`, JSON.stringify(newSettings));
         
         if (user?.isTeam) {
-          const capRef = doc(db, 'artifacts', appId, 'public', 'data', 'capacity', activeListId);
-          await teamWrite(() => setDoc(capRef, updates, { merge: true }), 'capacity settings');
+          const listId = String(activeListId);
+          if ('devHoursPerDay' in updates) queueHoursEvent(listId, 'Dev', devHoursPerDay, updates.devHoursPerDay);
+          if ('qaHoursPerDay' in updates) queueHoursEvent(listId, 'QA', qaHoursPerDay, updates.qaHoursPerDay);
+          if ('dateBlockers' in updates) blockerEvents(listId, dateBlockers, updates.dateBlockers);
+          await teamWrite(() => setDoc(listDoc(listId), { ...updates, updatedAt: Date.now(), updatedBy: user.uid }, { merge: true }), 'capacity settings', `cap-${listId}-${Object.keys(updates).join()}`);
         }
       };
 
@@ -1885,7 +2062,7 @@
 
         if (!user?.isTeam) return; // team-data FR-1: Preview / offline sessions never read Firestore
 
-        const capRef = doc(db, 'artifacts', appId, 'public', 'data', 'capacity', activeListId);
+        const capRef = listDoc(activeListId);
         const unsubCap = onSnapshot(capRef, (snapshot) => {
           teamReadOk();
           if (snapshot.exists()) {
@@ -1905,48 +2082,133 @@
         return () => unsubCap();
       }, [activeListId, user, teamRetryTick]);
 
+      // team-data FR-4, FR-5, FR-7, FR-22: my lists and read markers
       useEffect(() => {
         if (!user?.isTeam) return;
-
-        const ledgerRef = doc(db, 'artifacts', appId, 'public', 'data', 'ledgers', 'global');
-        const unsubLedger = onSnapshot(ledgerRef, (snapshot) => {
+        const unsub = onSnapshot(userDoc(user.uid), (snap) => {
           teamReadOk();
-          if (snapshot.exists()) {
-            const data = snapshot.data();
-            if (data.entries) setGlobalTimeLedger(data.entries);
-          }
-        }, teamReadError('global ledger'));
-
-        const wfRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
-        const unsubWf = onSnapshot(wfRef, (snapshot) => {
-          if (snapshot.exists()) {
-            const data = snapshot.data();
-            if (data.mappedWorkflows) {
-               setMappedWorkflows(prev => {
-                   const localSync = prev[0]?.lastSynced || 0;
-                   const serverSync = data.mappedWorkflows[0]?.lastSynced || 0;
-                   if (serverSync >= localSync || prev.length === 0) {
-                       return data.mappedWorkflows;
-                   }
-                   return prev;
-               });
+          if (!snap.exists()) {
+            // FR-22: the first load after the update seeds my lists from this browser
+            const lists = mappedWorkflowsRef.current.map(listMeta);
+            lastListsWriteRef.current = JSON.stringify(lists);
+            teamWrite(() => setDoc(userDoc(user.uid), { lists, seen: {}, createdAt: Date.now() }, { merge: true }), 'your lists', 'user-lists');
+          } else {
+            const d = snap.data();
+            setTeamSeen(d.seen || {});
+            if (Array.isArray(d.lists)) {
+              const remote = d.lists.map(listMeta);
+              const json = JSON.stringify(remote);
+              // the echo of my own last save is not news; anything else came from another device (or tab) of mine
+              if (json !== lastListsWriteRef.current && json !== JSON.stringify(mappedWorkflowsRef.current.map(listMeta))) {
+                lastListsWriteRef.current = json;
+                setMappedWorkflows(prev => {
+                  const next = remote.map(m => { const p = prev.find(w => String(w.listId) === m.listId); return p ? { ...p, ...m } : { ...m, tasks: [], archivedRaw: [], lastSynced: 0 }; });
+                  mappedWorkflowsRef.current = next;
+                  try { localStorage.setItem(`weaver_workflows_${appId}`, JSON.stringify(next)); } catch (e) { console.warn(e); }
+                  return next;
+                });
+              }
             }
           }
-        }, teamReadError('workflows'));
-
-        const txRef = doc(db, 'artifacts', appId, 'public', 'data', 'ledgers', 'transactions');
-        const unsubTx = onSnapshot(txRef, (snapshot) => {
-          if (snapshot.exists()) {
-            const data = snapshot.data();
-            if (data.entries) {
-                const sorted = data.entries.sort((a,b) => b.timestamp - a.timestamp).slice(0, 100);
-                setTransactions(sorted);
-            }
-          }
-        }, teamReadError('transactions'));
-
-        return () => { unsubLedger(); unsubWf(); unsubTx(); };
+          // FR-22: browser copies of the old shared feed and ledger are no longer used
+          localStorage.removeItem(`weaver_ledger_${appId}`);
+          localStorage.removeItem(`weaver_transactions_${appId}`);
+        }, teamReadError('your lists'));
+        return () => unsub();
       }, [user, teamRetryTick]);
+
+      // team-data FR-6: my own activity
+      useEffect(() => {
+        if (!user?.isTeam) return;
+        const unsub = onSnapshot(query(userActivityCol(user.uid), orderBy('at', 'desc'), limit(FEED_LIMIT)), (snap) => {
+          teamReadOk();
+          setTransactions(snap.docs.map(x => { const d = x.data(); return { id: x.id, action: d.action, details: d.details, iconType: d.iconType, timestamp: d.at, user: user.name }; }));
+        }, teamReadError('your activity'));
+        return () => unsub();
+      }, [user, teamRetryTick]);
+
+      // team-data FR-10, FR-13: time entries and team events of every list I linked
+      const linkedListIds = mappedWorkflows.map(w => String(w.listId)).sort().join(',');
+      useEffect(() => {
+        if (!user?.isTeam || !linkedListIds) { setEntriesByList({}); setEventsByList({}); return; }
+        const ids = linkedListIds.split(',');
+        const keep = (prev) => Object.fromEntries(Object.entries(prev).filter(([k]) => ids.includes(k)));
+        setEntriesByList(keep);
+        setEventsByList(keep);
+        const unsubs = ids.flatMap(listId => [
+          onSnapshot(listEntriesCol(listId), (snap) => {
+            teamReadOk();
+            setEntriesByList(prev => ({ ...prev, [listId]: snap.docs.map(x => entryFromDoc(listId, x.id, x.data())) }));
+          }, teamReadError('time entries')),
+          onSnapshot(query(listActivityCol(listId), orderBy('at', 'desc'), limit(FEED_LIMIT)), (snap) => {
+            teamReadOk();
+            const events = snap.docs.map(x => ({ id: x.id, ...x.data() }));
+            noteNewEvents(listId, events);
+            setEventsByList(prev => ({ ...prev, [listId]: events }));
+          }, teamReadError('team activity')),
+        ]);
+        return () => unsubs.forEach(u => u());
+      }, [user, linkedListIds, teamRetryTick]);
+
+      // FR-16: a live toast for each new event by someone else, while this tab is visible
+      const noteNewEvents = (listId, events) => {
+        const known = knownEventIdsRef.current[listId];
+        knownEventIdsRef.current[listId] = new Set([...(known || []), ...events.map(e => e.id)]);
+        if (!known) return;
+        if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return; // the badge alone tells
+        const fresh = events.filter(e => !known.has(e.id) && e.actorUid !== user?.uid).sort((a, b) => a.at - b.at);
+        if (fresh.length) pushToasts(fresh);
+      };
+      const pushToasts = (events) => {
+        const max = typeof window !== 'undefined' && window.innerWidth < 640 ? 2 : 3;
+        setToasts(prev => {
+          const next = [...prev];
+          const overflow = [];
+          events.forEach(e => { if (next.length < max) next.push({ ...e, expires: Date.now() + TOAST_MS }); else overflow.push(e); });
+          if (overflow.length) setToastMore(m => ({ n: (m?.n || 0) + overflow.length, lists: [...new Set([...(m?.lists || []), ...overflow.map(e => e.listName)])], expires: Date.now() + TOAST_MS }));
+          return next;
+        });
+      };
+      useEffect(() => {
+        if (!toasts.length && !toastMore) return;
+        let last = Date.now();
+        const t = setInterval(() => {
+          const now = Date.now(), dt = now - last;
+          last = now;
+          if (toastPausedRef.current) { // WCAG 2.2.1: hover or focus pauses the timers
+            setToasts(p => p.map(x => ({ ...x, expires: x.expires + dt })));
+            setToastMore(m => m && ({ ...m, expires: m.expires + dt }));
+            return;
+          }
+          setToasts(p => { const n = p.filter(x => x.expires > now); return n.length === p.length ? p : n; });
+          setToastMore(m => (m && m.expires <= now ? null : m));
+        }, 250);
+        return () => clearInterval(t);
+      }, [toasts.length, !!toastMore]);
+
+      // FR-13: team events
+      const addTeamEvent = (listId, type, summary) => {
+        if (!user?.isTeam || !listId) return;
+        const wf = mappedWorkflowsRef.current.find(w => String(w.listId) === String(listId));
+        const ev = { type, actorUid: user.uid, actorName: user.name, listId: String(listId), listName: wf?.list || '', summary: String(summary).slice(0, 200), at: Date.now() };
+        teamWrite(() => setDoc(doc(listActivityCol(listId), newId()), ev), 'team activity');
+      };
+      const queueHoursEvent = (listId, label, from, to) => {
+        const key = `${listId}:${label}`;
+        const cur = hoursEventRef.current[key];
+        if (cur) clearTimeout(cur.timer);
+        const entry = { from: cur ? cur.from : from, to };
+        entry.timer = setTimeout(() => {
+          delete hoursEventRef.current[key];
+          if (Number(entry.from) !== Number(entry.to)) addTeamEvent(listId, 'hours_changed', `${user.name} changed ${label} hours to ${entry.to}/day`);
+        }, 2000);
+        hoursEventRef.current[key] = entry;
+      };
+      const blockerEvents = (listId, before, after) => {
+        const days = (b) => `${b.days} day${b.days > 1 ? 's' : ''}`;
+        after.filter(b => !before.some(x => x.id === b.id)).forEach(b => addTeamEvent(listId, 'blockers_changed', `${user.name} added a blocker: ${days(b)} ${b.remark}${b.assignee ? ` for ${b.assignee}` : ''}`));
+        before.filter(b => !after.some(x => x.id === b.id)).forEach(b => addTeamEvent(listId, 'blockers_changed', `${user.name} removed the ${b.remark} blocker (${days(b)}${b.assignee ? `, ${b.assignee}` : ''})`));
+      };
 
       // team-data FR-23: queued team writes retry every minute until they succeed
       useEffect(() => {
@@ -2003,7 +2265,7 @@
         for (let i = 0; i < localStorage.length; i++) {
           const key = localStorage.key(i);
           // Keep saved portfolios: they belong to the user and must still be there after signing back in
-          if (key && key.startsWith('weaver_') && key.includes(appId) && !key.startsWith('weaver_portfolio_')) {
+          if (key && key.startsWith('weaver_') && key.includes(appId) && !key.startsWith('weaver_portfolio_') && !key.startsWith('weaver_pref_')) {
              keysToRemove.push(key);
           }
         }
@@ -2022,6 +2284,9 @@
         setTeamLoadFailed(false);
         pendingTeamWrites.current = [];
         setTeamSavePending(0);
+        setEntriesByList({}); setEventsByList({}); setTeamSeen({}); setToasts([]); setToastMore(null);
+        knownEventIdsRef.current = {}; lastListsWriteRef.current = ''; archivedFetchedAtRef.current = {};
+        migrationRef.current = null; unmatchedRanRef.current = false;
       };
 
       const handleProfilePhotoUpdate = async () => {
@@ -2040,9 +2305,22 @@
         }
       };
 
+      // team-data FR-12: team members see the entries of their linked lists; Preview / offline the local ledger
+      const timeLedger = user?.isTeam ? Object.values(entriesByList).flat() : globalTimeLedger;
+      const findTask = (taskId) => {
+        const walk = (tasks) => { for (const t of tasks || []) { if (t.id === taskId) return t; const hit = walk(t.subtasks); if (hit) return hit; } return null; };
+        for (const wf of mappedWorkflowsRef.current) {
+          const task = walk(wf.tasks) || (wf.archivedRaw || []).find(t => t.id === taskId);
+          if (task) return { wf, task };
+        }
+        return null;
+      };
+
       const handleLogTime = async () => {
-        if (!selectedTaskIdForTime || !timeEntryHours) return;
+        if (!selectedTaskIdForTime || !timeEntryHours) return false;
         const ms = parseFloat(timeEntryHours) * 3600000;
+        if (!(ms >= 60000 && ms <= 24 * 3600000)) { setTimeEntryError('Enter between 0.02 and 24 hours.'); return false; } // same limits as the Firestore rules (FR-18)
+        setTimeEntryError('');
         
         let entryTimestamp = Date.now();
         if (timeEntryDate) {
@@ -2060,33 +2338,39 @@
           note: timeEntryNote || 'Manual entry'
         };
         
-        setGlobalTimeLedger(prev => {
-          const updated = [...prev, newEntry];
-          localStorage.setItem(`weaver_ledger_${appId}`, JSON.stringify(updated));
-          return updated;
-        });
-        
-        if (user?.isTeam) {
-          const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'ledgers', 'global');
-          await teamWrite(async () => {
-            try { await updateDoc(docRef, { entries: arrayUnion(newEntry) }); }
-            catch (error) { if (error.code === 'not-found') await setDoc(docRef, { entries: [newEntry] }); else throw error; }
-          }, 'time entry');
+        const found = user?.isTeam ? findTask(selectedTaskIdForTime) : null;
+        if (found) {
+          // FR-10: one document per entry, in the task's list; FR-13: the team hears about it
+          const listId = String(found.wf.listId);
+          const data = { taskId: newEntry.taskId, ms, workDate: entryTimestamp, assignee: newEntry.userId, note: newEntry.note, authorUid: user.uid, authorName: user.name, authorEmail: user.email, createdAt: Date.now() };
+          setEntriesByList(prev => ({ ...prev, [listId]: [...(prev[listId] || []).filter(e => e.id !== newEntry.id), entryFromDoc(listId, newEntry.id, data)] }));
+          teamWrite(() => setDoc(doc(listEntriesCol(listId), newEntry.id), data), 'time entry');
+          addTeamEvent(listId, 'time_logged', `${user.name} logged ${fmtHours(ms)} on "${found.task.name || 'a task'}"`);
+        } else {
+          setGlobalTimeLedger(prev => {
+            const updated = [...prev, newEntry];
+            localStorage.setItem(`weaver_ledger_${appId}`, JSON.stringify(updated));
+            return updated;
+          });
+          logTransaction('Time Logged', `${timeEntryHours}h logged on target task`, 'clock');
         }
-
-        logTransaction('Time Logged', `${timeEntryHours}h logged on target task`, 'clock');
 
         setTimeEntryHours('');
         setTimeEntryNote('');
+        return true;
       };
 
       const handleDeleteTimeEntry = async (entry) => {
+        if (user?.isTeam && entry.listId) {
+          // FR-11: anyone on the list may delete; FR-13: the team hears who did
+          setEntriesByList(prev => ({ ...prev, [entry.listId]: (prev[entry.listId] || []).filter(e => e.id !== entry.id) }));
+          await teamWrite(() => deleteDoc(doc(listEntriesCol(entry.listId), entry.id)), 'time entry deletion');
+          const found = findTask(entry.taskId);
+          addTeamEvent(entry.listId, 'time_deleted', `${user.name} deleted ${fmtHours(entry.ms)}${entry.userId ? ` by ${entry.userId}` : ''} on "${found?.task.name || 'a task'}"`);
+          return;
+        }
         setGlobalTimeLedger(prev => prev.filter(e => e.id !== entry.id));
         logTransaction('Time Entry Deleted', `Removed time log`, 'trash');
-        if (user?.isTeam) {
-          const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'ledgers', 'global');
-          await teamWrite(() => updateDoc(docRef, { entries: arrayRemove(entry) }), 'time entry deletion');
-        }
       };
 
       if (!authInitialized) {
@@ -2101,7 +2385,7 @@
         const applyLedger = (tasks) => {
           return tasks.map(t => {
             const processedSubtasks = t.subtasks ? applyLedger(t.subtasks) : [];
-            const ledgerEntries = globalTimeLedger.filter(e => e.taskId === t.id);
+            const ledgerEntries = timeLedger.filter(e => e.taskId === t.id);
             const directAddedTimeMs = ledgerEntries.reduce((sum, e) => sum + Number(e.ms || 0), 0);
             const rolledUpAddedTimeMs = processedSubtasks.reduce((sum, sub) => sum + Number(sub._totalLocalAddedMs || 0), 0);
             const totalLocalAddedMs = directAddedTimeMs + rolledUpAddedTimeMs;
@@ -2131,9 +2415,11 @@
           });
         };
 
+        const markArchived = (tasks) => tasks.map(t => ({ ...t, _archived: true, subtasks: markArchived(t.subtasks || []) }));
         const activeWorkflows = mappedWorkflows.map(wf => ({
           ...wf,
-          tasks: applyLedger(wf.tasks || [])
+          tasks: applyLedger(wf.tasks || []),
+          archivedTasks: markArchived(applyLedger(buildTaskTree(wf.archivedRaw || []))) // FR-25: kept apart, so metrics leave them out
         }));
 
         const flattenTasksDeep = (tasks) => tasks.reduce((acc, task) => {
@@ -2144,7 +2430,9 @@
 
         const allFlatTasks = flattenTasksDeep(activeWorkflows.flatMap(wf => wf.tasks || []));
 
-        const getLoggedMsForTask = (taskId) => globalTimeLedger.filter(e => e.taskId === taskId).reduce((acc, curr) => acc + curr.ms, 0);
+        const archivedFlatTasks = flattenTasksDeep(activeWorkflows.flatMap(wf => wf.archivedTasks || []));
+        const lookupTasks = [...allFlatTasks, ...archivedFlatTasks]; // names for time entries, archived tasks included
+        const getLoggedMsForTask = (taskId) => timeLedger.filter(e => e.taskId === taskId).reduce((acc, curr) => acc + curr.ms, 0);
 
         const uniqueTags = Array.from(new Set(allFlatTasks.flatMap(t => t.tags?.map(tag => tag.name || '') || [])));
         const uniqueAssignees = Array.from(new Set(allFlatTasks.flatMap(t => [
@@ -2317,6 +2605,12 @@
           }
         });
         
+        // team-data FR-25: time logged on archived tasks still counts for the people who logged it
+        archivedFlatTasks.forEach(task => (task.localLedger || []).forEach(entry => {
+            const key = entry.userId;
+            if (completionFilterType === 'assignees' && selectedAssigneeFilter && key !== selectedAssigneeFilter) return;
+            if (assigneeStats[key]) assigneeStats[key].totalSpentMs += Number(entry.ms);
+        }));
         const assigneesList = Object.values(assigneeStats).filter(a => a.totalEstMs > 0 || a.totalSpentMs > 0 || Object.keys(a.statusCounts).length > 0).sort((a,b) => b.totalEstMs - a.totalEstMs);
         const devCount = assigneesList.filter(a => (userRoles[a.username] || 'Developer') === 'Developer').length;
         const qaCount = assigneesList.filter(a => (userRoles[a.username] || 'Developer') === 'QA').length;
@@ -3221,14 +3515,15 @@
                 flattenTasksDeep(wf.tasks || []).forEach(t => {
                     taskToWorkflowMap[t.id] = wf.list;
                 });
+                flattenTasksDeep(wf.archivedTasks || []).forEach(t => { taskToWorkflowMap[t.id] = wf.list; });
             });
 
-            allFlatTasks.forEach(task => {
+            [...allFlatTasks, ...archivedFlatTasks].forEach(task => { // FR-25: archived tasks keep their logged hours in the CSV
                 const listName = taskToWorkflowMap[task.id] || 'Unknown';
                 const name = escapeCSV(task.name);
                 const id = escapeCSV(task.id);
                 const list = escapeCSV(listName);
-                const status = escapeCSV(task.status?.status || 'Open');
+                const status = escapeCSV((task.status?.status || 'Open') + (task._archived ? ' (archived)' : ''));
                 const priority = escapeCSV(task.priority?.priority || 'Normal');
                 
                 const estMs = task.directEstimate !== undefined ? task.directEstimate : (task.time_estimate ? parseInt(task.time_estimate) : 0);
@@ -3374,6 +3669,61 @@
             </div>
           );
         };
+
+        // team-data FR-14, FR-15: team events of my lists, unread = by someone else and newer than my read marker
+        const myListIds = mappedWorkflows.map(w => String(w.listId));
+        const teamEvents = user.isTeam ? myListIds.flatMap(id => eventsByList[id] || []).sort((a, b) => b.at - a.at) : [];
+        const unreadEvents = teamEvents.filter(e => e.actorUid !== user.uid && e.at > (teamSeen[e.listId] || 0));
+        const unreadLabel = unreadEvents.length > 9 ? '9+' : String(unreadEvents.length);
+        const toggleBell = () => {
+          if (isNotificationsOpen) { setIsNotificationsOpen(false); return; }
+          setOpenUnreadIds(unreadEvents.map(e => e.id));
+          setTeamVisibleCount(10);
+          setVisibleTxCount(10);
+          setIsNotificationsOpen(true);
+          if (user.isTeam && myListIds.length) { // FR-7: opening the panel marks every shown list as read
+            const now = Date.now();
+            const seen = Object.fromEntries(myListIds.map(id => [id, Math.max(now, ...(eventsByList[id] || []).map(e => e.at))])); // a teammate clock running ahead must not leave events unread
+            setTeamSeen(prev => ({ ...prev, ...seen }));
+            teamWrite(() => setDoc(userDoc(user.uid), { seen }, { merge: true }), 'read markers', 'seen');
+          }
+        };
+        const eventRow = (e, { unread = false, meta } = {}) => {
+          const st = EVENT_STYLE[e.type] || TX_STYLE[e.iconType] || TX_STYLE.info;
+          return (
+            <div key={e.id} className={`p-3 flex items-start gap-3 hover:bg-white/5 border-l-2 ${unread ? 'border-indigo-400 bg-indigo-500/5' : 'border-transparent'}`}>
+              <div className={`mt-0.5 shrink-0 p-1.5 rounded border ${st.chip}`}><st.Icon className={`w-3.5 h-3.5 ${st.icon}`} aria-hidden="true" /></div>
+              <div className="min-w-0">
+                {unread && <span className="sr-only">Unread. </span>}
+                <p className="text-sm font-medium text-slate-200 line-clamp-2 break-words" title={e.summary || e.action}>{e.summary || e.action}</p>
+                <p className="text-[11px] text-slate-500 mt-0.5">{meta}</p>
+              </div>
+            </div>
+          );
+        };
+        const teamPanelBody = !user.isTeam ? (
+          <p className="m-3 p-3 rounded-lg text-xs bg-slate-800/60 border border-white/10 text-slate-300">Team notifications need an inventi.ph sign-in. Preview shows your own activity only.</p>
+        ) : myListIds.length === 0 ? (
+          <p className="p-5 text-center text-sm text-slate-500">Link a ClickUp list to see your team's activity. <button onClick={() => { setIsNotificationsOpen(false); handleConnectClickUp(); }} className="text-indigo-300 underline">Link a list</button></p>
+        ) : !myListIds.every(id => eventsByList[id]) ? (
+          teamLoadFailed
+            ? <p className="m-3 p-3 rounded-lg text-xs bg-amber-950/30 border border-amber-900/50 text-amber-200">Couldn't load team activity. Weaver keeps trying.</p>
+            : <div aria-busy="true">{[0, 1, 2].map(i => <div key={i} className="m-3 h-10 rounded bg-slate-800/60 animate-pulse motion-reduce:animate-none" />)}<span className="sr-only">Loading team activity...</span></div>
+        ) : teamEvents.length === 0 ? (
+          <p className="p-5 text-center text-sm text-slate-500">No team activity on your lists yet. Changes to time and capacity by your teammates show here.</p>
+        ) : (
+          <>
+            <div className="divide-y divide-white/5">
+              {teamEvents.slice(0, teamVisibleCount).map(e => eventRow(e, { unread: openUnreadIds.includes(e.id), meta: <>{e.listName} · <span title={new Date(e.at).toLocaleString()}>{relTime(e.at)}</span></> }))}
+            </div>
+            {teamEvents.length > teamVisibleCount && <div className="p-2 text-center"><button onClick={() => setTeamVisibleCount(n => n + 10)} className="text-xs font-semibold text-slate-400 py-1.5 px-4 rounded-md neon-border-indigo">Show older</button></div>}
+          </>
+        );
+        const yourOpen = yourActivityOpen || !user.isTeam;
+        const toastMax = typeof window !== 'undefined' && window.innerWidth < 640 ? 2 : 3;
+        const shownToasts = toastMore ? toasts.slice(0, toastMax - 1) : toasts;
+        const hiddenToasts = toasts.length - shownToasts.length;
+        const openPanelFromToast = () => { setToasts([]); setToastMore(null); toastPausedRef.current = false; if (!isNotificationsOpen) toggleBell(); };
 
         // FR-19, FR-24: one banner per connection and cause, dismissed for the browser session, at most two shown
         const connName = (connId) => portfolio.find(p => p.token === connId)?.name || 'your connection';
@@ -3726,8 +4076,11 @@
                                };
                                
                                const rootTasks = (wf.tasks || []).map(filterNodeForLedger).filter(Boolean);
+                               const awf = activeWorkflows.find(a => a.id === wf.id);
+                               const archivedRoots = (awf?.archivedTasks || []).map(filterNodeForLedger).filter(Boolean);
+                               const archivedOpen = !!archivedGroupOpen[wf.listId] || (taskSearchQuery.trim() !== '' && archivedRoots.length > 0);
 
-                               if (rootTasks.length === 0) return null;
+                               if (rootTasks.length === 0 && archivedRoots.length === 0) return null;
 
                                const renderLedgerNode = (task, depth = 0) => {
                                   const loggedMs = getLoggedMsForTask(task.id);
@@ -3749,7 +4102,7 @@
                                               <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: task.status?.color || '#cbd5e1' }} />
                                               
                                               <div className="relative min-w-0 flex-1">
-                                                 <span className={`block text-sm font-medium truncate ${isSelected ? 'text-indigo-100' : 'text-slate-200'}`} title={task.name}>{task.name}</span>
+                                                 <span className="flex items-center gap-2 min-w-0"><span className={`block text-sm font-medium truncate ${isSelected ? 'text-indigo-100' : 'text-slate-200'}`} title={task.name}>{task.name}</span>{task._archived && <ArchivedBadge />}</span>
                                               </div>
 
                                            </div>
@@ -3772,6 +4125,14 @@
                                      <div className="space-y-2">
                                         {rootTasks.map(task => renderLedgerNode(task, 0))}
                                      </div>
+                                     {archivedRoots.length > 0 && (
+                                        <div className="mt-3">
+                                           <button onClick={() => setArchivedGroupOpen(p => ({ ...p, [wf.listId]: !archivedOpen }))} aria-expanded={archivedOpen} className="flex items-center gap-2 text-xs text-slate-400 hover:text-slate-200 py-1">
+                                              <ChevronRight className={`w-4 h-4 transition-transform ${archivedOpen ? 'rotate-90' : ''}`} aria-hidden="true" /> Archived ({flattenTasksDeep(awf.archivedTasks).length})
+                                           </button>
+                                           {archivedOpen && <div className="space-y-2 mt-2 pl-4">{archivedRoots.map(task => renderLedgerNode(task, 0))}</div>}
+                                        </div>
+                                     )}
                                   </div>
                                );
                             })}
@@ -3804,7 +4165,7 @@
                                <div className="mb-4">
                                   <label className="text-xs text-slate-400 font-medium mb-1.5 block">Selected Target Task</label>
                                   <div className="text-sm text-slate-300 bg-slate-900 p-2.5 rounded-lg border border-slate-700/80">
-                                     {selectedTaskIdForTime ? allFlatTasks.find(t => t.id === selectedTaskIdForTime)?.name : <span className="italic text-slate-500">← Select a task from the hierarchy</span>}
+                                     {selectedTaskIdForTime ? (() => { const t = lookupTasks.find(x => x.id === selectedTaskIdForTime); return <span className="flex items-center gap-2">{t?.name}{t?._archived && <ArchivedBadge />}</span>; })() : <span className="italic text-slate-500">← Select a task from the hierarchy</span>}
                                   </div>
                                </div>
                                <div className="mb-4 grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -3814,7 +4175,8 @@
                                   </div>
                                   <div>
                                      <label className="text-xs text-slate-400 font-medium mb-1.5 block">Hours</label>
-                                     <input type="number" step="0.1" value={timeEntryHours} onChange={e => setTimeEntryHours(e.target.value)} className="w-full bg-slate-950/60 border border-transparent rounded-lg p-2.5 text-white text-sm neon-input neon-input-indigo" placeholder="e.g. 2.5" />
+                                     <input type="number" step="0.1" value={timeEntryHours} onChange={e => { setTimeEntryHours(e.target.value); setTimeEntryError(''); }} aria-invalid={!!timeEntryError} className="w-full bg-slate-950/60 border border-transparent rounded-lg p-2.5 text-white text-sm neon-input neon-input-indigo" placeholder="e.g. 2.5" />
+                                     {timeEntryError && <p role="alert" className="text-xs text-rose-300 mt-1">{timeEntryError}</p>}
                                   </div>
                                   <div>
                                      <label className="text-xs text-slate-400 font-medium mb-1.5 block">Assignee</label>
@@ -3827,7 +4189,7 @@
                                   <label className="text-xs text-slate-400 font-medium mb-1.5 block">Description / Note</label>
                                   <input type="text" value={timeEntryNote} onChange={e => setTimeEntryNote(e.target.value)} className="w-full bg-slate-950/60 border border-transparent rounded-lg p-2.5 text-white text-sm neon-input neon-input-indigo" placeholder="What did you work on?" />
                                </div>
-                               <button onClick={() => { handleLogTime(); setIsLogFormOpen(false); }} disabled={!selectedTaskIdForTime || !timeEntryHours} className="w-full btn-neon btn-neon-indigo mt-2">
+                               <button onClick={async () => { if (await handleLogTime()) setIsLogFormOpen(false); }} disabled={!selectedTaskIdForTime || !timeEntryHours} className="w-full btn-neon btn-neon-indigo mt-2">
                                   Commit Time Entry
                                </button>
                             </div>
@@ -3837,20 +4199,20 @@
                             <div className="space-y-3">
                                {(() => {
                                   const feedEntries = selectedTaskIdForTime 
-                                        ? globalTimeLedger.filter(e => e.taskId === selectedTaskIdForTime)
-                                        : globalTimeLedger;
+                                        ? timeLedger.filter(e => e.taskId === selectedTaskIdForTime)
+                                        : timeLedger;
                                         
                                       if (feedEntries.length === 0) {
                                          return <div className="text-slate-500 text-sm italic text-center py-8">No time entries recorded yet.</div>;
                                       }
 
                                       return [...feedEntries].sort((a,b) => b.timestamp - a.timestamp).map(entry => {
-                                         const task = allFlatTasks.find(t => t.id === entry.taskId);
+                                         const task = lookupTasks.find(t => t.id === entry.taskId);
                                          return (
                                             <div key={entry.id} className="bg-slate-800/40 p-4 rounded-xl border border-slate-700/50 shadow-sm animate-in fade-in slide-in-from-top-2">
                                                <div className="flex justify-between items-start mb-2">
                                                   <div className="pr-4">
-                                                     <span className="font-semibold text-indigo-300 text-sm leading-tight block mb-1">{task?.name || 'Unknown Task'}</span>
+                                                     <span className="font-semibold text-indigo-300 text-sm leading-tight mb-1 flex items-center gap-2">{task?.name || 'Unknown Task'}{task?._archived && <ArchivedBadge />}</span>
                                                      <div className="text-xs text-slate-400 flex items-center mb-0.5">
                                                         <Calendar className="w-3 h-3 mr-1.5 opacity-70" />
                                                         {new Date(entry.timestamp).toLocaleDateString()}
@@ -3910,7 +4272,7 @@
                            {dateBlockers.map(b => (
                              <li key={b.id} className="flex items-center justify-between bg-slate-900/60 p-3 rounded-xl border border-white/5 group">
                                 <div className="flex flex-col"><span className="text-sm font-semibold text-slate-200">{b.remark} <span className="text-slate-400 font-normal">({b.days} day{b.days > 1 ? 's' : ''})</span></span>{b.remark === 'Leave' && <span className="text-xs text-indigo-400 font-medium mt-0.5">{b.assignee}</span>}</div>
-                                <button onClick={() => { const newBlockers = dateBlockers.filter(x => x.id !== b.id); setDateBlockers(newBlockers); saveSettings({ dateBlockers: newBlockers }); logTransaction('Blocker Removed', `Removed ${b.remark} blocker`, 'trash'); }} className="text-slate-500 p-1.5 rounded-md neon-border-rose transition-colors"><Trash2 className="w-4 h-4" /></button>
+                                <button onClick={() => { const newBlockers = dateBlockers.filter(x => x.id !== b.id); setDateBlockers(newBlockers); saveSettings({ dateBlockers: newBlockers }); if (!user?.isTeam) logTransaction('Blocker Removed', `Removed ${b.remark} blocker`, 'trash'); }} className="text-slate-500 p-1.5 rounded-md neon-border-rose transition-colors"><Trash2 className="w-4 h-4" /></button>
                              </li>
                            ))}
                          </ul>
@@ -3935,7 +4297,7 @@
                             </select>
                           </div>
                         )}
-                        <button onClick={() => { if (!newBlockerDays || newBlockerDays <= 0) return; const newBlocker = { id: Date.now().toString(), days: parseInt(newBlockerDays), remark: newBlockerRemark, assignee: newBlockerRemark === 'Leave' ? (newBlockerAssignee || assigneesList[0]?.username) : null }; const newBlockers = [...dateBlockers, newBlocker]; setDateBlockers(newBlockers); saveSettings({ dateBlockers: newBlockers }); logTransaction('Blocker Added', `${newBlockerDays} day(s) for ${newBlockerRemark}`, 'info'); setNewBlockerDays(1); }} className="w-full btn-neon btn-neon-indigo mt-4">
+                        <button onClick={() => { if (!newBlockerDays || newBlockerDays <= 0) return; const newBlocker = { id: Date.now().toString(), days: parseInt(newBlockerDays), remark: newBlockerRemark, assignee: newBlockerRemark === 'Leave' ? (newBlockerAssignee || assigneesList[0]?.username) : null }; const newBlockers = [...dateBlockers, newBlocker]; setDateBlockers(newBlockers); saveSettings({ dateBlockers: newBlockers }); if (!user?.isTeam) logTransaction('Blocker Added', `${newBlockerDays} day(s) for ${newBlockerRemark}`, 'info'); setNewBlockerDays(1); }} className="w-full btn-neon btn-neon-indigo mt-4">
                           <Plus className="w-4 h-4 mr-1.5" /> Add Date Blocker
                         </button>
                      </div>
@@ -3973,9 +4335,9 @@
                     )}
                   </div>
                   <div className="flex items-center space-x-4">
-                    <button ref={bellButtonRef} onClick={() => { setIsNotificationsOpen(!isNotificationsOpen); setVisibleTxCount(10); }} className={`p-1.5 rounded-lg border border-transparent transition-all neon-border-indigo relative ${isNotificationsOpen ? 'text-white' : 'text-slate-400'}`}>
-                      <Bell className="h-5 w-5" />
-                      {transactions.length > 0 && <span className="absolute -top-1 -right-1 flex h-3 w-3"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span><span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500 border border-slate-950"></span></span>}
+                    <button ref={bellButtonRef} onClick={toggleBell} aria-haspopup="dialog" aria-expanded={isNotificationsOpen} aria-label={unreadEvents.length ? `Notifications, ${unreadLabel} unread` : 'Notifications'} className={`p-1.5 rounded-lg border border-transparent transition-all neon-border-indigo relative ${isNotificationsOpen ? 'text-white' : 'text-slate-400'}`}>
+                      <Bell className="h-5 w-5" aria-hidden="true" />
+                      {unreadEvents.length > 0 && <span aria-hidden="true" className="absolute -top-1 -right-1 min-w-[1.125rem] h-[1.125rem] px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold leading-[1.125rem] text-center border border-slate-950">{unreadLabel}</span>}
                     </button>
                     <div onClick={() => setIsProfileModalOpen(true)} className="h-8 w-8 rounded-full bg-indigo-950/50 flex items-center justify-center overflow-hidden border border-transparent transition-all neon-border-indigo cursor-pointer hover:border-indigo-400 hover:shadow-[0_0_10px_rgba(99,102,241,0.5)]" title="Update Profile Picture">
                       <img src={user.avatar} alt={user.name} className="h-full w-full object-cover" referrerPolicy="no-referrer" />
@@ -3987,48 +4349,50 @@
             </nav>
 
             {isNotificationsOpen && (
-              <div ref={notificationsRef} className="fixed top-16 right-4 sm:right-6 lg:right-8 w-80 bg-slate-900 border border-slate-700/80 rounded-xl shadow-[0_0_20px_rgba(99,102,241,0.3)] z-50 flex flex-col max-h-[80vh] overflow-hidden animate-in slide-in-from-top-4 duration-200">
+              <div ref={notificationsRef} role="dialog" aria-label="Notifications" className="fixed top-16 right-4 sm:right-6 lg:right-8 w-96 max-w-[calc(100vw-2rem)] bg-slate-900 border border-slate-700/80 rounded-xl shadow-[0_0_20px_rgba(99,102,241,0.3)] z-50 flex flex-col max-h-[80vh] overflow-hidden animate-in slide-in-from-top-4 duration-200">
                 <div className="p-4 border-b border-slate-700/80 bg-slate-800/50 flex items-center justify-between shrink-0">
-                  <h3 className="text-sm font-bold text-white flex items-center"><Bell className="w-4 h-4 mr-2 text-indigo-400" /> Recent Activity</h3>
-                  {transactions.length > 0 && <span className="text-xs text-slate-500">{transactions.length} entries</span>}
+                  <h3 ref={notificationsHeadingRef} tabIndex={-1} className="text-sm font-bold text-white flex items-center outline-none"><Bell className="w-4 h-4 mr-2 text-indigo-400" aria-hidden="true" /> Notifications</h3>
+                  {openUnreadIds.length > 0 && <span className="text-xs text-slate-400">{openUnreadIds.length > 9 ? '9+' : openUnreadIds.length} new</span>}
                 </div>
                 <div className="overflow-y-auto flex-1">
-                  {transactions.length === 0 ? (
-                    <div className="p-6 text-center text-sm text-slate-500 italic">No recent activity.</div>
-                  ) : (
-                    <div className="divide-y divide-white/5">
-                      {transactions.slice(0, visibleTxCount).map(tx => (
-                        <div key={tx.id} className="p-4 hover:bg-white/5 transition-colors">
-                          <div className="flex items-start gap-3">
-                            <div className="mt-0.5 shrink-0">
-                              {tx.iconType === 'clock' && <div className="p-1.5 bg-emerald-500/10 rounded border border-emerald-500/20"><Clock className="w-3.5 h-3.5 text-emerald-400" /></div>}
-                              {tx.iconType === 'link' && <div className="p-1.5 bg-indigo-500/10 rounded border border-indigo-500/20"><Box className="w-3.5 h-3.5 text-indigo-400" /></div>}
-                              {tx.iconType === 'unlink' && <div className="p-1.5 bg-rose-500/10 rounded border border-rose-500/20"><Trash2 className="w-3.5 h-3.5 text-rose-400" /></div>}
-                              {tx.iconType === 'trash' && <div className="p-1.5 bg-rose-500/10 rounded border border-rose-500/20"><Trash2 className="w-3.5 h-3.5 text-rose-400" /></div>}
-                              {tx.iconType === 'info' && <div className="p-1.5 bg-blue-500/10 rounded border border-blue-500/20"><InfoIcon className="w-3.5 h-3.5 text-blue-400" /></div>}
-                            </div>
-                            <div className="min-w-0">
-                              <p className="text-sm font-medium text-slate-200">{tx.action}</p>
-                              <p className="text-xs text-slate-400 mt-0.5 truncate">{tx.details}</p>
-                              <div className="flex items-center gap-2 mt-1.5 text-[10px] font-medium text-slate-500">
-                                <span>{new Date(tx.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                                <span>•</span>
-                                <span>{tx.user}</span>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  <div className="px-4 pt-3 pb-1 text-[10px] font-bold uppercase tracking-widest text-slate-500">Team</div>
+                  {teamPanelBody}
+                  <button onClick={() => { const v = !yourActivityOpen; setYourActivityOpen(v); savePref('your_activity', v); }} aria-expanded={yourOpen} disabled={!user.isTeam} className="w-full px-4 py-3 border-t border-slate-700/80 flex items-center justify-between text-[10px] font-bold uppercase tracking-widest text-slate-500 hover:bg-white/5">
+                    Your activity <ChevronRight className={`w-4 h-4 transition-transform ${yourOpen ? 'rotate-90' : ''}`} aria-hidden="true" />
+                  </button>
+                  {yourOpen && (transactions.length === 0
+                    ? <p className="px-4 pb-4 text-sm text-slate-500">No activity yet.</p>
+                    : <div className="divide-y divide-white/5">
+                        {transactions.slice(0, visibleTxCount).map(tx => eventRow(tx, { meta: <span title={new Date(tx.timestamp).toLocaleString()}>{tx.details ? `${tx.details} · ` : ''}{relTime(tx.timestamp)}</span> }))}
+                        {transactions.length > visibleTxCount && <div className="p-2 text-center"><button onClick={() => setVisibleTxCount(n => n + 10)} className="text-xs font-semibold text-slate-400 py-1.5 px-4 rounded-md neon-border-indigo">Show older</button></div>}
+                      </div>)}
                 </div>
-                {transactions.length > visibleTxCount && (
-                  <div className="p-3 bg-slate-800/80 border-t border-slate-700/80 text-center shrink-0">
-                    <button onClick={() => setVisibleTxCount(prev => prev + 10)} className="text-xs font-semibold text-slate-400 py-1.5 px-4 border border-transparent rounded-md transition-all neon-border-indigo w-full">View More Logs</button>
-                  </div>
-                )}
               </div>
             )}
+
+            {/* team-data FR-16, design S3: live toasts, bottom right, clear of the sync banners at the top */}
+            <div role="status" aria-live="polite" onMouseEnter={() => { toastPausedRef.current = true; }} onMouseLeave={() => { toastPausedRef.current = false; }} onFocus={() => { toastPausedRef.current = true; }} onBlur={() => { toastPausedRef.current = false; }} className="fixed bottom-4 left-4 right-4 sm:left-auto sm:w-96 z-40 space-y-2 pointer-events-none">
+              {shownToasts.map(t => {
+                const st = EVENT_STYLE[t.type] || TX_STYLE.info;
+                return (
+                  <div key={t.id} className="pointer-events-auto bg-slate-900/95 backdrop-blur border border-slate-700/80 rounded-xl shadow-[0_0_20px_rgba(99,102,241,0.25)] p-3 flex gap-3 animate-tip-in">
+                    <div className={`mt-0.5 shrink-0 p-1.5 rounded border ${st.chip}`}><st.Icon className={`w-3.5 h-3.5 ${st.icon}`} aria-hidden="true" /></div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-slate-200 line-clamp-2 break-words">{t.summary}</p>
+                      <p className="text-[11px] text-slate-500 mt-0.5">{t.listName} · <button onClick={openPanelFromToast} className="text-indigo-300 hover:text-indigo-200">View</button></p>
+                    </div>
+                    <button onClick={() => setToasts(p => p.filter(x => x.id !== t.id))} aria-label="Dismiss" className="self-start p-1 text-slate-500 hover:text-slate-200"><X className="w-4 h-4" /></button>
+                  </div>
+                );
+              })}
+              {(toastMore || hiddenToasts > 0) && (
+                <div className="pointer-events-auto bg-slate-900/95 border border-slate-700/80 rounded-xl p-3 flex items-center gap-3 text-sm text-slate-200 animate-tip-in">
+                  <span className="flex-1">+{(toastMore?.n || 0) + hiddenToasts} more changes on {(toastMore?.lists || []).length === 1 ? toastMore.lists[0] : 'your lists'}</span>
+                  <button onClick={openPanelFromToast} className="text-indigo-300 text-xs">View</button>
+                  <button onClick={() => { setToastMore(null); setToasts(p => p.slice(0, toastMax - 1)); }} aria-label="Dismiss" className="p-1 text-slate-500 hover:text-slate-200"><X className="w-4 h-4" /></button>
+                </div>
+              )}
+            </div>
 
             {migration && (
               <div role="status" className={`mb-4 p-4 rounded-xl border text-sm flex items-center justify-between gap-3 ${migration.status === 'partial' ? 'bg-amber-950/30 border-amber-900/50 text-amber-200' : migration.status === 'done' ? 'bg-emerald-950/30 border-emerald-900/50 text-emerald-300' : 'bg-slate-900/40 border-white/10 text-slate-300'}`}>
@@ -4799,11 +5163,18 @@
                 <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl mb-8 overflow-hidden">
                   <div className="px-6 py-4 border-b border-white/5 bg-slate-900/30 flex items-center justify-between rounded-t-2xl">
                     <h2 className="text-sm font-bold text-white flex items-center gap-2"><ListTodo className="h-4 w-4 text-indigo-400" /> Tasks Explorer</h2>
+                    <div className="flex items-center gap-2">
+                    {archivedFlatTasks.length > 0 && (
+                      <button onClick={() => { setShowArchived(v => { savePref('show_archived', !v); return !v; }); }} aria-pressed={showArchived} aria-label={`${showArchived ? 'Hide' : 'Show'} archived tasks, ${archivedFlatTasks.length}`} className={`px-2.5 py-1 rounded-full border border-slate-600 text-xs font-medium flex items-center gap-1.5 neon-border-slate transition-all ${showArchived ? 'bg-slate-700/40 text-white' : 'text-slate-300'}`}>
+                        <Archive className="w-3.5 h-3.5" aria-hidden="true" /><span className="hidden sm:inline">{showArchived ? 'Hide archived' : 'Show archived'}</span><span className="bg-slate-700/60 px-1.5 rounded-full text-[10px]">{archivedFlatTasks.length}</span>
+                      </button>
+                    )}
                     <span className="text-xs font-medium text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20">{completedFilteredTasksCount} Resolved</span>
+                    </div>
                   </div>
                   {(() => {
                     const sections = activeWorkflows.map(workflow => {
-                      const mainTasksOnly = (workflow.tasks || []).filter(t => !(t.name || '').toLowerCase().includes('qa bugs'));
+                      const mainTasksOnly = [...(workflow.tasks || []), ...(showArchived ? workflow.archivedTasks || [] : [])].filter(t => !(t.name || '').toLowerCase().includes('qa bugs'));
                       const groupedByStatus = {};
                       buildFilteredTree(mainTasksOnly, 'all').forEach(task => {
                         const status = task.status?.status || 'Open';
