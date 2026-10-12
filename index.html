@@ -23,6 +23,9 @@
     ::-webkit-scrollbar-thumb:hover { background: rgba(99, 102, 241, 0.4); }
     @keyframes spin-slow { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
     .animate-spin-slow { animation: spin-slow 12s linear infinite; }
+    @keyframes tip-in { from { opacity: 0; } to { opacity: 1; } }
+    .animate-tip-in { animation: tip-in .2s ease-out; }
+    @media (prefers-reduced-motion: reduce) { .animate-tip-in { animation: none; } }
 
     /* Neon Glowing Buttons */
     .btn-neon {
@@ -294,10 +297,26 @@
       const verticalClasses = position === 'top' ? "bottom-full mb-3" : "top-full mt-3";
       const pointerVerticalClasses = position === 'top' ? "top-full border-t-slate-800 border-b-transparent" : "bottom-full border-b-slate-800 border-t-transparent";
 
+      // The box is display:none until hover: an invisible box still takes layout space and made phones scroll sideways (F-3).
+      // When it opens near a screen edge, slide it back inside (8 px margin) and move the arrow the other way so it still points at the icon.
+      const boxRef = useRef(null), arrowRef = useRef(null);
+      const keepOnScreen = () => requestAnimationFrame(() => {
+        const box = boxRef.current, arrow = arrowRef.current;
+        if (!box || !arrow) return;
+        box.style.marginLeft = arrow.style.marginLeft = '';
+        box.style.display = 'none'; // on phones an open box widens the page, so read the screen width without it
+        const screenW = document.documentElement.clientWidth;
+        box.style.display = '';
+        const r = box.getBoundingClientRect();
+        if (!r.width) return;
+        const shift = Math.max(8 - r.left, Math.min(0, screenW - 8 - r.right));
+        if (shift) { box.style.marginLeft = `${shift}px`; arrow.style.marginLeft = `${-shift}px`; }
+      });
+
       return (
-        <div className="group relative flex items-center justify-center cursor-help z-50 hover:z-[999999]">
+        <div className="group relative flex items-center justify-center cursor-help z-50 hover:z-[999999]" onMouseEnter={keepOnScreen} onTouchStart={keepOnScreen}>
           <div className="p-1 -m-1 flex items-center justify-center neon-text-indigo">{children}</div>
-          <div className={`pointer-events-none absolute z-[999999] w-64 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-xl shadow-[0_0_15px_rgba(99,102,241,0.5)] p-4 ${alignClasses} ${verticalClasses}`}>
+          <div ref={boxRef} className={`pointer-events-none absolute z-[999999] w-64 max-w-[calc(100vw-2rem)] hidden group-hover:block animate-tip-in bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-xl shadow-[0_0_15px_rgba(99,102,241,0.5)] p-4 ${alignClasses} ${verticalClasses}`}>
             <p className="font-semibold text-white leading-snug">{text}</p>
             {formula && (
               <div className="mt-2.5 pt-2.5 border-t border-slate-700/50">
@@ -305,7 +324,7 @@
                 <p className="font-mono text-[10px] text-slate-400 leading-relaxed break-words">{formula}</p>
               </div>
             )}
-            <div className={`absolute border-[6px] border-transparent ${pointerAlignClasses} ${pointerVerticalClasses}`}></div>
+            <div ref={arrowRef} className={`absolute border-[6px] border-transparent ${pointerAlignClasses} ${pointerVerticalClasses}`}></div>
           </div>
         </div>
       );
@@ -1600,7 +1619,7 @@
         return () => clearInterval(t);
       }, [syncState.state]);
 
-      // ---- Portfolio: saved connections (API tokens stay in this browser's localStorage, never Firestore) ----
+      // ---- Portfolio: saved connections (connection ids and names only; tokens live encrypted on weaver-api) ----
       const updatePortfolio = (fn) => setPortfolio(prev => {
         const next = fn(prev);
         if (next !== prev && portfolioKeyRef.current) {
