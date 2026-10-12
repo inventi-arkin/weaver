@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Weaver - Thread Support and Development together</title>
   <meta name="referrer" content="no-referrer">
+  <!-- Release version shown in the page footer; bump on every upload (YYYY.MM.DD-N) -->
+  <meta name="weaver-version" content="2026.10.12-2">
   
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -242,6 +244,7 @@
     const auth = getAuth(app);
     // Separate Worker that holds ClickUp tokens (encrypted) and forwards read-only ClickUp calls
     const API_BASE = 'https://weaver-api.arkin-paroan.workers.dev';
+    const APP_VERSION = document.querySelector('meta[name="weaver-version"]')?.content || 'dev';
     const REQUEST_TIMEOUT_MS = 20000; // central-sync FR-22: a stuck request ends instead of hanging the sync
     const REJECT_TRIES = 3; // central-sync FR-5: failed ticks before a token is paused
     const OUTAGE_BANNER_MS = 10 * 60 * 1000; // central-sync FR-24
@@ -249,6 +252,10 @@
     const isLegacyToken = (t) => !!t && t !== 'mock_token' && !UUID_RE.test(t);
     const db = getFirestore(app);
     const googleProvider = new GoogleAuthProvider();
+    googleProvider.setCustomParameters({ hd: 'inventi.ph', prompt: 'select_account' }); // team-data FR-2: only a hint; the Firestore rules and weaver-api do the real check
+    const TEAM_EMAIL = /^[^@\s]+@inventi\.ph$/; // team-data FR-1, same check as firestore.rules and weaver-api
+    const isTeamUser = (u) => !!u && !u.isAnonymous && u.emailVerified === true && TEAM_EMAIL.test(u.email || '') && (u.providerData || []).some(p => p.providerId === 'google.com');
+    const NOT_TEAM_MSG = 'Weaver is for inventi.ph accounts. Sign in with your company Google account.';
     const appId = typeof __app_id !== 'undefined' ? __app_id : 'weaver-default-app';
 
     const SpiderNetworkIcon = ({ className }) => (
@@ -903,6 +910,13 @@
       const [authInitialized, setAuthInitialized] = useState(false);
       const [errorMessage, setErrorMessage] = useState(null);
       const [loginFailure, setLoginFailure] = useState(null); // why Google sign-in fell back to a guest session; survives the guest sign-in that follows
+      const [notTeam, setNotTeam] = useState(null); // team-data FR-2: { email } of an outside account that was signed out again
+      // team-data FR-23: Firestore problems shown as banners; failed writes are kept and retried
+      const [teamDenied, setTeamDenied] = useState(false);
+      const [teamLoadFailed, setTeamLoadFailed] = useState(false);
+      const [teamSavePending, setTeamSavePending] = useState(0);
+      const [teamRetryTick, setTeamRetryTick] = useState(0);
+      const pendingTeamWrites = useRef([]);
 
       const [warpStage, setWarpStage] = useState('idle');
       const [integrationStep, setIntegrationStep] = useState('idle');
@@ -941,6 +955,36 @@
       const saveDismissed = (next) => { try { sessionStorage.setItem(DISMISS_KEY, JSON.stringify(next)); } catch (e) {} return next; };
       const dismissBanner = (key) => setDismissedBanners(prev => saveDismissed(prev.includes(key) ? prev : [...prev, key]));
       const clearDismissed = (keys) => setDismissedBanners(prev => prev.some(k => keys.includes(k)) ? saveDismissed(prev.filter(k => !keys.includes(k))) : prev);
+
+      // team-data FR-23: every Firestore write goes through here; the local change is already applied, so a failure only queues a retry
+      // `key`: a newer write with the same key replaces a queued one (whole-document saves must not be retried stale)
+      const teamWrite = async (write, what, key = null) => {
+        try {
+          await write();
+          return true;
+        } catch (err) {
+          console.error(`Error saving ${what}:`, err);
+          if (err.code === 'permission-denied') { setTeamDenied(true); clearDismissed(['team-denied']); return false; }
+          pendingTeamWrites.current = [...pendingTeamWrites.current.filter(p => !key || p.key !== key), { write, what, key }];
+          setTeamSavePending(pendingTeamWrites.current.length);
+          clearDismissed(['team-save']);
+          return false;
+        }
+      };
+      const retryTeamWrites = async () => {
+        const queued = pendingTeamWrites.current;
+        pendingTeamWrites.current = [];
+        for (const { write, what, key } of queued) await teamWrite(write, what, key);
+        setTeamSavePending(pendingTeamWrites.current.length);
+      };
+      const teamReadError = (what) => (err) => {
+        console.error(`Error fetching ${what}:`, err);
+        if (err.code === 'permission-denied') { setTeamDenied(true); clearDismissed(['team-denied']); return; }
+        setTeamLoadFailed(true);
+        clearDismissed(['team-load']);
+        setTimeout(() => setTeamRetryTick(t => t + 1), 30000); // a failed listener has stopped; subscribe again
+      };
+      const teamReadOk = () => setTeamLoadFailed(false);
       
       const [completionFilterType, setCompletionFilterType] = useState('none');
       const [selectedTagFilter, setSelectedTagFilter] = useState('');
@@ -1043,14 +1087,12 @@
           return updated;
         });
 
-        if (user && !user.isMock) {
+        if (user?.isTeam) {
           const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'ledgers', 'transactions');
-          try {
-            await updateDoc(docRef, { entries: arrayUnion(newTx) });
-          } catch (error) {
-            if (error.code === 'not-found') await setDoc(docRef, { entries: [newTx] });
-            else console.error("Error saving transaction:", error);
-          }
+          await teamWrite(async () => {
+            try { await updateDoc(docRef, { entries: arrayUnion(newTx) }); }
+            catch (error) { if (error.code === 'not-found') await setDoc(docRef, { entries: [newTx] }); else throw error; }
+          }, 'transaction');
         }
       };
 
@@ -1136,6 +1178,7 @@
           let error, kind = 'other';
           if (res.status === 401 && (code === 'TOKEN_REJECTED' || msg === 'Invalid API Token')) { error = new Error('Invalid API Token. ClickUp rejected the connection.'); error.isDefinitive = true; kind = 'token'; }
           else if (res.status === 401) { error = new Error('Your sign-in expired. Sign in again.'); kind = 'auth'; }
+          else if (res.status === 403 && code === 'NOT_TEAM') { error = new Error(NOT_TEAM_MSG); kind = 'auth'; setNotTeam({ email: cu.email || '' }); firebaseSignOut(auth).catch(e => console.warn(e)); } // team-data FR-3
           else if (res.status === 403) { error = new Error('Sign in with Google to save a ClickUp connection.'); kind = 'auth'; }
           else if (res.status === 404 && code === 'CLICKUP_NOT_FOUND') { error = new Error('ClickUp could not find that list or task. It may have been deleted or renamed.'); kind = 'notfound'; }
           else if (res.status === 404) { setNeedsReconnect(true); error = new Error('This connection needs to be reconnected.'); kind = 'unknownconn'; }
@@ -1383,12 +1426,9 @@
               const filteredPrev = prev.filter(w => w.listId !== newWorkflow.listId);
               const nextWorkflows = [...filteredPrev, newWorkflow];
               localStorage.setItem(`weaver_workflows_${appId}`, JSON.stringify(nextWorkflows));
-              if (user && !user.isMock) {
+              if (user?.isTeam) {
                 const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
-                setDoc(docRef, { mappedWorkflows: nextWorkflows }, { merge: true }).catch(err => {
-                    console.error("Error saving workflows:", err);
-                    setMappedWorkflows(nextWorkflows);
-                });
+                teamWrite(() => setDoc(docRef, { mappedWorkflows: nextWorkflows }, { merge: true }), 'workflows', 'workflows').then(ok => { if (!ok) setMappedWorkflows(nextWorkflows); });
               }
               return nextWorkflows;
             });
@@ -1418,12 +1458,9 @@
           
           const newWorkflows = prev.filter(w => w.id !== id);
           localStorage.setItem(`weaver_workflows_${appId}`, JSON.stringify(newWorkflows));
-          if (user && !user.isMock) {
+          if (user?.isTeam) {
             const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
-            setDoc(docRef, { mappedWorkflows: newWorkflows }, { merge: true }).catch(err => {
-                console.error("Error deleting workflow:", err);
-                setMappedWorkflows(newWorkflows);
-            });
+            teamWrite(() => setDoc(docRef, { mappedWorkflows: newWorkflows }, { merge: true }), 'workflows', 'workflows').then(ok => { if (!ok) setMappedWorkflows(newWorkflows); });
           }
           return newWorkflows;
         });
@@ -1496,12 +1533,9 @@
           });
 
           localStorage.setItem(`weaver_workflows_${appId}`, JSON.stringify(nextWorkflows));
-          if (user && !user.isMock) {
+          if (user?.isTeam) {
             const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
-            setDoc(docRef, { mappedWorkflows: nextWorkflows }, { merge: true }).catch(err => {
-                console.error("Error saving synced workflows:", err);
-                setMappedWorkflows(nextWorkflows);
-            });
+            teamWrite(() => setDoc(docRef, { mappedWorkflows: nextWorkflows }, { merge: true }), 'synced workflows', 'workflows').then(ok => { if (!ok) setMappedWorkflows(nextWorkflows); });
           }
           return nextWorkflows;
         });
@@ -1657,9 +1691,9 @@
         setMappedWorkflows(next);
         mappedWorkflowsRef.current = next;
         try { localStorage.setItem(`weaver_workflows_${appId}`, JSON.stringify(next)); } catch (e) { console.warn(e); }
-        if (user && !user.isMock) {
+        if (user?.isTeam) {
           const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
-          setDoc(docRef, { mappedWorkflows: next }, { merge: true }).catch(err => console.error("Error saving workflows:", err));
+          teamWrite(() => setDoc(docRef, { mappedWorkflows: next }, { merge: true }), 'workflows', 'workflows');
         }
       };
 
@@ -1779,12 +1813,9 @@
         const newSettings = { ...currentLocal, ...updates };
         localStorage.setItem(`weaver_settings_${appId}_${activeListId}`, JSON.stringify(newSettings));
         
-        if (user && !user.isMock) {
-          try {
-            await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'capacity', activeListId), updates, { merge: true });
-          } catch(err) {
-             console.error("Error saving capacity settings to Firestore", err);
-          }
+        if (user?.isTeam) {
+          const capRef = doc(db, 'artifacts', appId, 'public', 'data', 'capacity', activeListId);
+          await teamWrite(() => setDoc(capRef, updates, { merge: true }), 'capacity settings');
         }
       };
 
@@ -1792,6 +1823,15 @@
         let isInitialAuthCheck = true;
 
         const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+          if (currentUser && !currentUser.isAnonymous && !isTeamUser(currentUser)) {
+            // team-data FR-2: an outside Google account is signed out again and sees why on the login screen
+            isInitialAuthCheck = false; // the sign-out below must not fall back to a guest session
+            setNotTeam({ email: currentUser.email || '' });
+            setUser(null);
+            setAuthInitialized(true);
+            try { await firebaseSignOut(auth); } catch (e) { console.warn(e); }
+            return;
+          }
           if (currentUser) {
             let finalAvatar = currentUser.photoURL;
             const isDefaultSilhouette = finalAvatar && finalAvatar.includes('AAAAAAAAAAI/AAAAAAAAAAA'); 
@@ -1806,7 +1846,8 @@
               email: currentUser.email || 'preview@weaver.app', 
               avatar: finalAvatar,
               isMock: false,
-              isAnonymous: currentUser.isAnonymous
+              isAnonymous: currentUser.isAnonymous,
+              isTeam: isTeamUser(currentUser) // team-data FR-1: only team members use Firestore
             });
             setAuthInitialized(true);
           } else {
@@ -1842,10 +1883,11 @@
           setUserRoles(localSettings.userRoles || {});
         } catch (e) { console.warn(e); }
 
-        if (!user || user.isMock) return;
+        if (!user?.isTeam) return; // team-data FR-1: Preview / offline sessions never read Firestore
 
         const capRef = doc(db, 'artifacts', appId, 'public', 'data', 'capacity', activeListId);
         const unsubCap = onSnapshot(capRef, (snapshot) => {
+          teamReadOk();
           if (snapshot.exists()) {
             const d = snapshot.data();
             setDevHoursPerDay(d.devHoursPerDay !== undefined ? d.devHoursPerDay : 7);
@@ -1858,21 +1900,22 @@
             setDateBlockers([]);
             setUserRoles({});
           }
-        }, (error) => console.error("Error fetching capacity settings:", error));
+        }, teamReadError('capacity settings'));
 
         return () => unsubCap();
-      }, [activeListId, user]);
+      }, [activeListId, user, teamRetryTick]);
 
       useEffect(() => {
-        if (!user || user.isMock) return;
+        if (!user?.isTeam) return;
 
         const ledgerRef = doc(db, 'artifacts', appId, 'public', 'data', 'ledgers', 'global');
         const unsubLedger = onSnapshot(ledgerRef, (snapshot) => {
+          teamReadOk();
           if (snapshot.exists()) {
             const data = snapshot.data();
             if (data.entries) setGlobalTimeLedger(data.entries);
           }
-        }, (error) => console.error("Error fetching global ledger:", error));
+        }, teamReadError('global ledger'));
 
         const wfRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'workflows');
         const unsubWf = onSnapshot(wfRef, (snapshot) => {
@@ -1889,7 +1932,7 @@
                });
             }
           }
-        }, (error) => console.error("Error fetching workflows:", error));
+        }, teamReadError('workflows'));
 
         const txRef = doc(db, 'artifacts', appId, 'public', 'data', 'ledgers', 'transactions');
         const unsubTx = onSnapshot(txRef, (snapshot) => {
@@ -1900,14 +1943,22 @@
                 setTransactions(sorted);
             }
           }
-        }, (error) => console.error("Error fetching transactions:", error));
+        }, teamReadError('transactions'));
 
         return () => { unsubLedger(); unsubWf(); unsubTx(); };
-      }, [user]);
+      }, [user, teamRetryTick]);
+
+      // team-data FR-23: queued team writes retry every minute until they succeed
+      useEffect(() => {
+        if (!teamSavePending) return;
+        const id = setInterval(retryTeamWrites, 60000);
+        return () => clearInterval(id);
+      }, [teamSavePending]);
 
       const handleMockLogin = async () => {
         setIsLoggingIn(true);
         setErrorMessage(null);
+        setNotTeam(null);
         try {
           await signInAnonymously(auth);
         } catch (error) {
@@ -1921,6 +1972,7 @@
       const handleGoogleLogin = async () => {
         setIsLoggingIn(true);
         setErrorMessage(null);
+        setNotTeam(null);
         try {
           await signInWithPopup(auth, googleProvider);setLoginFailure(null);
         } catch (error) {
@@ -1966,6 +2018,10 @@
         setGlobalTimeLedger([]);
         setTransactions([]);
         setIntegrationStep('idle');
+        setTeamDenied(false);
+        setTeamLoadFailed(false);
+        pendingTeamWrites.current = [];
+        setTeamSavePending(0);
       };
 
       const handleProfilePhotoUpdate = async () => {
@@ -2010,14 +2066,12 @@
           return updated;
         });
         
-        if (user && !user.isMock) {
+        if (user?.isTeam) {
           const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'ledgers', 'global');
-          try {
-            await updateDoc(docRef, { entries: arrayUnion(newEntry) });
-          } catch (error) {
-            if (error.code === 'not-found') await setDoc(docRef, { entries: [newEntry] });
-            else console.error("Error saving time entry:", error);
-          }
+          await teamWrite(async () => {
+            try { await updateDoc(docRef, { entries: arrayUnion(newEntry) }); }
+            catch (error) { if (error.code === 'not-found') await setDoc(docRef, { entries: [newEntry] }); else throw error; }
+          }, 'time entry');
         }
 
         logTransaction('Time Logged', `${timeEntryHours}h logged on target task`, 'clock');
@@ -2029,13 +2083,9 @@
       const handleDeleteTimeEntry = async (entry) => {
         setGlobalTimeLedger(prev => prev.filter(e => e.id !== entry.id));
         logTransaction('Time Entry Deleted', `Removed time log`, 'trash');
-        if (user && !user.isMock) {
+        if (user?.isTeam) {
           const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'ledgers', 'global');
-          try {
-            await updateDoc(docRef, { entries: arrayRemove(entry) });
-          } catch (error) {
-            console.error("Error deleting time entry:", error);
-          }
+          await teamWrite(() => updateDoc(docRef, { entries: arrayRemove(entry) }), 'time entry deletion');
         }
       };
 
@@ -3338,6 +3388,12 @@
           }));
           if (syncState.state === 'failed') items.push({ key: `${clickUpToken}:failed`, tone: 'amber', role: 'status', text: `Sync failed: ${syncState.reason}. The last good data is still shown.`, action: { label: 'Retry', onClick: runSyncSequence } });
           if (outageLong) items.push({ key: 'outage', tone: 'amber', role: 'status', text: 'Weaver has not been able to sync for 10 minutes. Your data may be out of date. Weaver keeps trying.' });
+          // team-data FR-23 (design S5): no access first, it explains every other team-data failure
+          if (teamDenied) items.unshift({ key: 'team-denied', tone: 'rose', role: 'alert', text: "You don't have access to Weaver's team data. Sign in with your inventi.ph account.", action: { label: 'Switch account', onClick: handleLogout } });
+          else {
+            if (teamSavePending) items.push({ key: 'team-save', tone: 'amber', role: 'status', text: "Couldn't save your change to team data. It is kept on this device and Weaver will retry.", action: { label: 'Retry now', onClick: retryTeamWrites } });
+            if (teamLoadFailed) items.push({ key: 'team-load', tone: 'amber', role: 'status', text: "Couldn't load team data. Showing the last loaded values." });
+          }
           return items.filter(i => !dismissedBanners.includes(i.key));
         })();
         const bannersUI = bannerItems.length === 0 ? null : (
@@ -3727,7 +3783,7 @@
                             <div className="flex items-center space-x-3">
                                <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider flex items-center">
                                   <Clock className="h-4 w-4 mr-2"/> 
-                                  {selectedTaskIdForTime ? "Task Time Entries" : (user?.isMock ? "Local Live Feed" : "Global Live Feed")}
+                                  {selectedTaskIdForTime ? "Task Time Entries" : (user?.isTeam ? "Global Live Feed" : "Local Live Feed")}
                                </h3>
                                {selectedTaskIdForTime && (
                                   <button onClick={() => setSelectedTaskIdForTime('')} className="text-[10px] uppercase font-bold text-slate-500 bg-slate-800 px-2 py-0.5 rounded transition-colors border border-transparent flex items-center neon-border-indigo">
@@ -4768,6 +4824,7 @@
                 </div>
               </main>
             )}
+            <footer className="relative z-10 pb-6 text-center text-[11px] text-slate-500">Weaver v{APP_VERSION}</footer>
           </div>
         );
       }
@@ -4786,6 +4843,12 @@
             </div>
 
             <div className="space-y-5">
+              {notTeam && (
+                <div role="alert" className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-200 flex items-start gap-2 mb-2">
+                  <ShieldAlert className="w-5 h-5 shrink-0" aria-hidden="true" />
+                  <span className="mt-0.5 leading-relaxed">{NOT_TEAM_MSG}{notTeam.email && <><br /><span className="text-amber-200/80">You tried: {notTeam.email}</span></>}</span>
+                </div>
+              )}
               {errorMessage && (
                 <div className="p-3.5 bg-rose-500/10 border border-rose-500/20 rounded-xl text-xs text-rose-300 flex items-start gap-2 mb-2">
                   <AlertTriangle className="w-5 h-5 shrink-0" /> <span className="mt-0.5 leading-relaxed">{errorMessage}</span>
@@ -4836,6 +4899,7 @@
             <div className="mt-8 text-center text-xs text-slate-600 font-medium">
               By continuing, you agree to the terms of service.
             </div>
+            <div className="mt-2 text-center text-[11px] text-slate-500">Weaver v{APP_VERSION}</div>
           </div>
         </div>
       );
