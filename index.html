@@ -6,7 +6,7 @@
   <title>Weaver - Thread Support and Development together</title>
   <meta name="referrer" content="no-referrer">
   <!-- Release version shown in the page footer; bump on every upload (YYYY.MM.DD-N) -->
-  <meta name="weaver-version" content="2026.10.13-4">
+  <meta name="weaver-version" content="2026.10.13-5">
   
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -1024,9 +1024,12 @@
 
       // team-data FR-23: every Firestore write goes through here; the local change is already applied, so a failure only queues a retry
       // `key`: a newer write with the same key replaces a queued one (whole-document saves must not be retried stale)
+      const inflightWritesRef = useRef(new Set()); // writes not yet acknowledged; a dashboard switch waits for them before reloading
       const teamWrite = async (write, what, key = null) => {
+        const run = Promise.resolve().then(write);
+        inflightWritesRef.current.add(run);
         try {
-          await write();
+          await run;
           return true;
         } catch (err) {
           console.error(`Error saving ${what}:`, err);
@@ -1035,6 +1038,8 @@
           setTeamSavePending(pendingTeamWrites.current.length);
           clearDismissed(['team-save']);
           return false;
+        } finally {
+          inflightWritesRef.current.delete(run);
         }
       };
       const retryTeamWrites = async () => {
@@ -2107,9 +2112,16 @@
           updateCard(conn.id, c => ({ ...c, lastUsed: Date.now() }));
           setActiveView('dashboard');
           logTransaction('Connection Switched', `Switched to portfolio connection: ${conn.name}`, 'link');
-          setTimeout(() => {
-            setWarpStage('fade');
-            setTimeout(() => setWarpStage('idle'), step);
+          // The opened dashboard starts from a fresh page load (nothing left over from the previous one). The card, key and lists
+          // are already in this browser; wait at most 4 s for the account saves (both cards' lists, users/{uid}) to finish first.
+          setTimeout(async () => {
+            const writes = [...inflightWritesRef.current];
+            await Promise.race([Promise.allSettled(writes), new Promise(r => setTimeout(r, 4000))]);
+            try { window.location.reload(); } catch (e) {}
+            setTimeout(() => { // still here (reload unavailable): finish the animation in place
+              setWarpStage('fade');
+              setTimeout(() => setWarpStage('idle'), step);
+            }, 1500);
           }, step);
         }, step);
       };
