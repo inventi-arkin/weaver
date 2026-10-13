@@ -6,7 +6,7 @@
   <title>Weaver - Thread Support and Development together</title>
   <meta name="referrer" content="no-referrer">
   <!-- Release version shown in the page footer; bump on every upload (YYYY.MM.DD-N) -->
-  <meta name="weaver-version" content="2026.10.13-1">
+  <meta name="weaver-version" content="2026.10.13-2">
   
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -237,7 +237,7 @@
       Clock, Calendar, Flag, Users, TrendingDown, TrendingUp, Target, Tag, X, Activity, PieChart,
       Bug, ShieldAlert, Zap, Info as InfoIcon, Download, Image as ImageIcon, BarChart2,
       LayoutDashboard, Briefcase, Pencil, Check, PauseCircle, WifiOff, CloudOff, ShieldCheck, ShieldX,
-      Archive, CalendarX, Gauge, ChevronLeft
+      Archive, CalendarX, Gauge, ChevronLeft, ChevronDown, ArrowRightLeft, Search
     } from 'lucide-react';
 
     const firebaseConfig = {
@@ -273,6 +273,15 @@
     const listEntriesCol = (listId) => collection(db, 'lists', String(listId), 'timeEntries');
     const listActivityCol = (listId) => collection(db, 'lists', String(listId), 'activity');
     const userActivityCol = (uid) => collection(db, 'users', uid, 'activity');
+    // portfolios.md section 7: users/{uid}/portfolios/{portfolioId}; cards hold the weaver-api connection id, never a key
+    const portfoliosCol = (uid) => collection(db, 'users', uid, 'portfolios');
+    const portfolioDocRef = (uid, id) => doc(db, 'users', uid, 'portfolios', id);
+    const PORTFOLIO_NAME_MAX = 60;
+    const DEFAULT_PORTFOLIO = 'My Portfolio';
+    const cardToDoc = (c) => ({ id: c.id, name: c.name || 'Connection', connId: c.token || '', lists: (c.workflows || []).map(listMeta), savedAt: c.savedAt || null, lastUsed: c.lastUsed || null });
+    const cardFromDoc = (c) => ({ id: c.id, name: c.name, token: c.connId || '', workflows: c.lists || [], savedAt: c.savedAt || null, lastUsed: c.lastUsed || null });
+    const portfolioToDoc = (p) => ({ name: p.name, order: p.order ?? 0, createdAt: p.createdAt || null, cards: (p.cards || []).map(cardToDoc) });
+    const byLastUsed = (a, b) => (b.lastUsed || 0) - (a.lastUsed || 0);
     const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
     // FR-4: a linked list without any task data
     const listMeta = (w) => ({ id: String(w.id), team: w.team || '', space: w.space || '', folder: w.folder || '', list: w.list || '', listId: String(w.listId), listStartDate: w.listStartDate || null, listDueDate: w.listDueDate || null });
@@ -1050,7 +1059,9 @@
         const json = JSON.stringify(lists);
         if (json === lastListsWriteRef.current) return;
         lastListsWriteRef.current = json;
-        teamWrite(() => setDoc(userDoc(user.uid), { lists }, { merge: true }), 'your lists', 'user-lists');
+        // portfolios FR-10: the lists are always saved with the card they belong to, so another browser never applies them to a different dashboard
+        const current = { portfolioId: currentPortfolioIdRef.current || null, cardId: activeCardIdRef.current || null };
+        teamWrite(() => setDoc(userDoc(user.uid), { lists, current }, { merge: true }), 'your lists', 'user-lists');
       };
       
       const [completionFilterType, setCompletionFilterType] = useState('none');
@@ -1199,31 +1210,124 @@
       const mappedWorkflowsRef = useRef(mappedWorkflows);
       useEffect(() => { mappedWorkflowsRef.current = mappedWorkflows; }, [mappedWorkflows]);
 
-      // Menu navigation + Portfolio (saved ClickUp connections, kept in this browser only)
+      // Menu navigation + Portfolios (portfolios.md): several named Portfolios, each a group of dashboard cards.
+      // Team members keep them in Firestore (FR-16); this browser only remembers which card is open.
       const [activeView, setActiveView] = useState('dashboard');
-      // Portfolio is stored per user (Firebase uid) so it survives sign-out/sign-in. Preview/anonymous sessions share a 'guest' bucket.
+      // The old single Portfolio of this browser (per Firebase uid, 'guest' for Preview); read once by the FR-15 migration
       const portfolioUserKey = user ? ((user.isMock || user.isAnonymous || !user.uid) ? 'guest' : user.uid) : null;
       const portfolioKey = portfolioUserKey ? `weaver_portfolio_${appId}_${portfolioUserKey}` : null;
       const portfolioKeyRef = useRef(portfolioKey);
       portfolioKeyRef.current = portfolioKey;
-      const [portfolio, setPortfolio] = useState([]);
-      useEffect(() => {
-        if (!portfolioKey) { setPortfolio([]); return; }
+      const [portfolios, setPortfolios] = useState([]);
+      const portfoliosRef = useRef([]);
+      const [portfoliosReady, setPortfoliosReady] = useState(false);
+      const portfoliosReadyRef = useRef(false);
+      portfoliosReadyRef.current = portfoliosReady;
+      const portfolioLastJsonRef = useRef({}); // per Portfolio id: the last saved document, so unchanged Portfolios are not written again
+      const ACTIVE_CARD_KEY = `weaver_active_card_${appId}`;
+      const [activeCardId, setActiveCardId] = useState(() => { try { return localStorage.getItem(ACTIVE_CARD_KEY) || null; } catch (e) { return null; } });
+      const activeCardIdRef = useRef(activeCardId);
+      const [currentPortfolioId, setCurrentPortfolioId] = useState(null);
+      const currentPortfolioIdRef = useRef(null);
+      const [viewingPortfolioId, setViewingPortfolioId] = useState(null); // the Portfolio shown on the Portfolio page (FR-14)
+      const [remoteCurrent, setRemoteCurrent] = useState(null); // users/{uid}.current: the dashboard opened last, on any browser (FR-16)
+      const newCardTargetRef = useRef(null); // FR-7: Add Connection makes a new card in this Portfolio
+      // Every card with its Portfolio id, for code that finds cards by key (token status, banners, saved keys)
+      const portfolio = portfolios.flatMap(p => p.cards.map(c => ({ ...c, portfolioId: p.id })));
+
+      // Changes the Portfolios and saves the documents that changed (team members) or nothing (Preview has no saved cards)
+      const updatePortfolios = (fn) => {
+        const prev = portfoliosRef.current;
+        const next = fn(prev);
+        if (next === prev) return Promise.resolve(true);
+        portfoliosRef.current = next;
+        setPortfolios(next);
+        if (!user?.isTeam) return Promise.resolve(true);
+        const uid = user.uid;
+        const writes = [];
+        next.forEach(p => {
+          const json = JSON.stringify(portfolioToDoc(p));
+          if (portfolioLastJsonRef.current[p.id] === json) return;
+          portfolioLastJsonRef.current[p.id] = json;
+          const data = JSON.parse(json);
+          writes.push(teamWrite(() => setDoc(portfolioDocRef(uid, p.id), data), 'your Portfolios', `portfolio-${p.id}`));
+        });
+        prev.filter(p => !next.some(n => n.id === p.id)).forEach(p => {
+          delete portfolioLastJsonRef.current[p.id];
+          writes.push(teamWrite(() => deleteDoc(portfolioDocRef(uid, p.id)), 'your Portfolios', `portfolio-${p.id}`));
+        });
+        return Promise.all(writes).then(r => r.every(Boolean));
+      };
+      const updateCard = (cardId, fn) => updatePortfolios(prev => prev.map(p => p.cards.some(c => c.id === cardId) ? { ...p, cards: p.cards.map(c => c.id === cardId ? fn(c) : c) } : p));
+
+      // FR-10: the open card and its Portfolio, kept in this browser and in users/{uid}.current
+      const setOpenCard = (cardId, portfolioId) => {
+        activeCardIdRef.current = cardId;
+        setActiveCardId(cardId);
+        if (portfolioId) { currentPortfolioIdRef.current = portfolioId; setCurrentPortfolioId(portfolioId); }
+        try { cardId ? localStorage.setItem(ACTIVE_CARD_KEY, cardId) : localStorage.removeItem(ACTIVE_CARD_KEY); } catch (e) {}
+        if (user?.isTeam) teamWrite(() => setDoc(userDoc(user.uid), { current: { portfolioId: currentPortfolioIdRef.current || null, cardId: cardId || null } }, { merge: true }), 'your open dashboard', 'current');
+      };
+
+      // FR-15: this browser's old Portfolio becomes (or joins) "My Portfolio"; there is always at least one Portfolio (FR-1)
+      const mergeIntoDefault = (cards) => {
+        const all = portfoliosRef.current;
+        const sig = (c) => `${c.token || ''}|${(c.workflows || []).map(w => String(w.listId)).sort().join(',')}`;
+        const known = new Set(all.flatMap(p => p.cards).map(sig));
+        const ids = new Set(all.flatMap(p => p.cards).map(c => c.id));
+        const fresh = [];
+        cards.forEach(c => {
+          if (known.has(sig(c))) return;
+          known.add(sig(c));
+          const id = c.id && !ids.has(String(c.id)) ? String(c.id) : newId();
+          ids.add(id);
+          fresh.push({ id, name: c.name || 'Connection', token: isLegacyToken(c.token) ? '' : (c.token || ''), workflows: (c.workflows || []).map(listMeta), savedAt: c.savedAt || Date.now(), lastUsed: c.lastUsed || c.savedAt || Date.now() });
+        });
+        if (all.length && !fresh.length) return Promise.resolve(true);
+        return updatePortfolios(prev => {
+          const def = prev.find(p => p.name === DEFAULT_PORTFOLIO) || (fresh.length ? null : prev[0]);
+          if (def) return prev.map(p => p === def ? { ...p, cards: [...p.cards, ...fresh] } : p);
+          return [...prev, { id: newId(), name: DEFAULT_PORTFOLIO, order: prev.length ? Math.max(...prev.map(p => p.order || 0)) + 1 : 0, createdAt: Date.now(), cards: fresh }];
+        });
+      };
+      const importingRef = useRef(false);
+      const importLocalCards = async () => {
+        if (importingRef.current) return;
+        importingRef.current = true;
         try {
-          let saved = JSON.parse(localStorage.getItem(portfolioKey) || 'null');
-          if (!Array.isArray(saved)) {
-            // One-time migration of the old browser-wide portfolio into the first user who signs in
-            const legacyKey = `weaver_portfolio_${appId}`;
-            const legacy = JSON.parse(localStorage.getItem(legacyKey) || '[]');
-            saved = Array.isArray(legacy) ? legacy : [];
-            if (saved.length) {
-              localStorage.setItem(portfolioKey, JSON.stringify(saved));
-              localStorage.removeItem(legacyKey);
-            }
-          }
-          setPortfolio(saved);
-        } catch (e) { setPortfolio([]); }
-      }, [portfolioKey]);
+          const keys = [portfolioKeyRef.current, `weaver_portfolio_${appId}`].filter(Boolean);
+          const read = (k) => { try { const v = JSON.parse(localStorage.getItem(k) || 'null'); return Array.isArray(v) ? v : []; } catch (e) { return []; } };
+          const local = keys.flatMap(read);
+          // cards still holding a raw token from very old versions wait for the token move, which imports them after
+          if (local.some(c => isLegacyToken(c.token))) { if (!portfoliosRef.current.length) await mergeIntoDefault([]); return; }
+          if (!local.length && portfoliosRef.current.length) return;
+          if (await mergeIntoDefault(local)) keys.forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
+        } finally {
+          importingRef.current = false;
+        }
+      };
+
+      // FR-16, FR-17: my Portfolios, live from Firestore. Preview keeps one empty Portfolio in memory (it cannot save keys).
+      useEffect(() => {
+        portfolioLastJsonRef.current = {};
+        if (!user) { portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); return; }
+        if (!user.isTeam) {
+          const local = [{ id: 'local', name: DEFAULT_PORTFOLIO, order: 0, createdAt: Date.now(), cards: [] }];
+          portfoliosRef.current = local; setPortfolios(local); setPortfoliosReady(true);
+          return;
+        }
+        const unsub = onSnapshot(portfoliosCol(user.uid), (snap) => {
+          teamReadOk();
+          const remote = snap.docs.map(d => { const x = d.data(); return { id: d.id, name: x.name || DEFAULT_PORTFOLIO, order: x.order ?? 0, createdAt: x.createdAt || null, cards: (x.cards || []).map(cardFromDoc) }; })
+            .sort((a, b) => (a.order - b.order) || ((a.createdAt || 0) - (b.createdAt || 0)));
+          remote.forEach(p => { portfolioLastJsonRef.current[p.id] = JSON.stringify(portfolioToDoc(p)); });
+          portfoliosRef.current = remote;
+          setPortfolios(remote);
+          importLocalCards().finally(() => setPortfoliosReady(true));
+        }, teamReadError('your Portfolios'));
+        return () => unsub();
+      }, [user, teamRetryTick]);
+
       useEffect(() => {
         try {
           setShowArchived(localStorage.getItem(`weaver_pref_show_archived_${appId}_${portfolioUserKey}`) === '1');
@@ -1234,7 +1338,8 @@
       const [editingConnId, setEditingConnId] = useState(null);
       const [editingConnName, setEditingConnName] = useState('');
       const pendingSyncRef = useRef(false);
-      const activeConnection = portfolio.find(c => c.token === clickUpToken) || null;
+      const activeConnection = portfolio.find(c => c.id === activeCardId) || null;
+      const currentPortfolio = portfolios.find(p => p.id === currentPortfolioId) || portfolios[0] || null;
 
       const handleMockClickUpData = () => {
         setTeams(MOCK_CLICKUP_DATA.teams);
@@ -1534,9 +1639,11 @@
             const target = portfolio.find(c => c.id === reconnectConnId);
             setReconnectConnId(null);
             if (target) {
-              updatePortfolio(prev => prev.map(c => c.id === target.id ? { ...c, token: connId } : c));
+              // every card that used the replaced key follows it (a key may back several cards, portfolios FR-6)
+              updatePortfolios(prev => prev.map(pf => ({ ...pf, cards: pf.cards.map(c => c.id === target.id || (target.token && c.token === target.token) ? { ...c, token: connId } : c) })));
               setIntegrationStep('idle'); setIsSwitchModalOpen(false);
-              if (target.token === clickUpToken || !clickUpToken) {
+              if (target.id === activeCardIdRef.current || !clickUpToken) {
+                if (target.id !== activeCardIdRef.current) setOpenCard(target.id, target.portfolioId);
                 setClickUpToken(connId);
                 localStorage.setItem(`weaver_clickup_conn_${appId}`, connId);
                 setNeedsReconnect(false);
@@ -1563,10 +1670,15 @@
       // A connection is ready (pasted or picked from the saved keys): choose workspace, space, folder and list next
       const startMapping = (connId, workspaces) => {
         setTeams(workspaces || []);
-        if (connId !== clickUpToken && mappedWorkflowsRef.current.length > 0) {
-          // A different account: park the current connection in the Portfolio and start with a clean mapping
-          persistConnection(clickUpToken, mappedWorkflowsRef.current);
-          commitWorkflows([]);
+        // portfolios FR-7: Add Connection (or another key) starts a new card, even for a key that already backs one.
+        // The open card keeps its lists in its Portfolio; the dashboard starts empty until a list is added.
+        if (newCardTargetRef.current || connId !== clickUpToken) {
+          if (activeCardIdRef.current || mappedWorkflowsRef.current.length > 0) {
+            persistConnection(clickUpToken, mappedWorkflowsRef.current);
+            if (!newCardTargetRef.current) newCardTargetRef.current = currentPortfolioIdRef.current;
+            setOpenCard(null, newCardTargetRef.current);
+            commitWorkflows([]);
+          }
         }
         setClickUpToken(connId);
         localStorage.setItem(`weaver_clickup_conn_${appId}`, connId);
@@ -1612,7 +1724,7 @@
         setForgetBusy(true); setForgetError(null);
         try {
           await callApi(`connections/${k.connId}`, { method: 'DELETE' });
-          updatePortfolio(prev => prev.filter(c => c.token !== k.connId));
+          updatePortfolios(prev => prev.map(pf => pf.cards.some(c => c.token === k.connId) ? { ...pf, cards: pf.cards.filter(c => c.token !== k.connId) } : pf)); // portfolios FR-21: in every Portfolio
           setSavedKeys(s => ({ ...s, list: s.list.filter(x => x.connId !== k.connId) }));
           setTokenStatuses(prev => { const next = { ...prev }; delete next[k.connId]; return next; });
           setForgetKeyId(null);
@@ -1929,38 +2041,29 @@
         return () => clearInterval(t);
       }, [syncState.state]);
 
-      // ---- Portfolio: saved connections (connection ids and names only; tokens live encrypted on weaver-api) ----
-      const updatePortfolio = (fn) => setPortfolio(prev => {
-        const next = fn(prev);
-        if (next !== prev && portfolioKeyRef.current) {
-          try { localStorage.setItem(portfolioKeyRef.current, JSON.stringify(next)); } catch (e) { console.warn(e); }
-        }
-        return next;
-      });
-
-      // Save or refresh the connection that owns `token`. Only list metadata is stored; tasks are re-synced on switch.
+      // ---- Portfolios: dashboard cards (connection ids and names only; keys live encrypted on weaver-api) ----
+      // Save the open dashboard's lists into its card (FR-10), or start a new card in the target Portfolio (FR-7).
+      // Only list metadata is stored; tasks are re-synced on switch.
       const persistConnection = (token, workflows) => {
-        if (!token || token === 'mock_token') return;
-        const meta = (workflows || []).map(({ id, team, space, folder, list, listId, listStartDate, listDueDate }) => (
-          { id, team, space, folder, list, listId, listStartDate, listDueDate }
-        ));
-        updatePortfolio(prev => {
-          const idx = prev.findIndex(c => c.token === token);
-          if (idx === -1) {
-            if (meta.length === 0) return prev;
-            return [...prev, {
-              id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
-              name: meta[0].team || 'Connection',
-              token,
-              workflows: meta,
-              savedAt: Date.now(),
-              lastUsed: Date.now()
-            }];
-          }
-          const next = [...prev];
-          next[idx] = { ...prev[idx], workflows: meta };
-          return next;
-        });
+        if (!token || token === 'mock_token' || !portfoliosReadyRef.current) return;
+        const meta = (workflows || []).map(listMeta);
+        const all = portfoliosRef.current;
+        const cardId = activeCardIdRef.current;
+        const owner = cardId && all.find(p => p.cards.some(c => c.id === cardId));
+        if (owner) {
+          const card = owner.cards.find(c => c.id === cardId);
+          if (card.token !== token) return; // never move lists onto a card of another key
+          if (JSON.stringify((card.workflows || []).map(listMeta)) === JSON.stringify(meta)) return;
+          updateCard(cardId, c => ({ ...c, workflows: meta }));
+          return;
+        }
+        if (meta.length === 0) return;
+        const target = all.find(p => p.id === newCardTargetRef.current) || all.find(p => p.id === currentPortfolioIdRef.current) || all[0];
+        if (!target) return;
+        const card = { id: newId(), name: meta[0].team || 'Connection', token, workflows: meta, savedAt: Date.now(), lastUsed: Date.now() };
+        newCardTargetRef.current = null;
+        updatePortfolios(prev => prev.map(p => p.id === target.id ? { ...p, cards: [...p.cards, card] } : p));
+        setOpenCard(card.id, target.id);
       };
 
       const commitWorkflows = (next) => {
@@ -1970,13 +2073,18 @@
         saveUserLists(next);
       };
 
+      // portfolios FR-10: open a card (by card id; several cards may share a key). Section 9: at most 400 ms of animation.
       const handleSwitchConnection = (conn) => {
         if (!conn || warpStage !== 'idle') return;
-        if (conn.token === clickUpToken) { setActiveView('dashboard'); return; }
-        persistConnection(clickUpToken, mappedWorkflowsRef.current); // keep the connection we are leaving up to date
+        if (conn.id === activeCardIdRef.current) { setActiveView('dashboard'); return; }
+        persistConnection(clickUpToken, mappedWorkflowsRef.current); // keep the card we are leaving up to date
+        const still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        const step = still ? 0 : 130;
+        newCardTargetRef.current = null;
         setWarpStage('weaving');
         setTimeout(() => {
           setWarpStage('flash');
+          setOpenCard(conn.id, conn.portfolioId || portfoliosRef.current.find(p => p.cards.some(c => c.id === conn.id))?.id);
           setClickUpToken(conn.token);
           localStorage.setItem(`weaver_clickup_conn_${appId}`, conn.token);
           setNeedsReconnect(false);
@@ -1986,17 +2094,19 @@
           setIntegrationStep('idle'); setIsSwitchModalOpen(false); setClickUpError(null); setTempToken('');
           pendingSyncRef.current = true;
           commitWorkflows((conn.workflows || []).map(w => ({ ...w, tasks: [], lastSynced: Date.now() })));
-          updatePortfolio(prev => prev.map(c => c.id === conn.id ? { ...c, lastUsed: Date.now() } : c));
+          updateCard(conn.id, c => ({ ...c, lastUsed: Date.now() }));
           setActiveView('dashboard');
           logTransaction('Connection Switched', `Switched to portfolio connection: ${conn.name}`, 'link');
           setTimeout(() => {
             setWarpStage('fade');
-            setTimeout(() => setWarpStage('idle'), 1500);
-          }, 400);
-        }, 1500);
+            setTimeout(() => setWarpStage('idle'), step);
+          }, step);
+        }, step);
       };
 
-      const handleNewConnection = () => {
+      // portfolios FR-7: Add Connection always makes a new card, in the given Portfolio (the one on screen) or the current one
+      const handleNewConnection = (targetPortfolioId) => {
+        newCardTargetRef.current = (typeof targetPortfolioId === 'string' && targetPortfolioId) || currentPortfolioIdRef.current || portfoliosRef.current[0]?.id || null;
         setSelectedTeam(''); setSelectedSpace(''); setSelectedFolder(''); setSelectedList('');
         setTempToken(''); setClickUpError(null); setReconnectConnId(null);
         setIntegrationStep(canSaveToken ? 'entering_token' : 'signin_required');
@@ -2007,17 +2117,160 @@
 
       const handleRenameConnection = (id) => {
         const name = editingConnName.trim();
-        if (name) updatePortfolio(prev => prev.map(c => c.id === id ? { ...c, name } : c));
+        if (name) updateCard(id, c => ({ ...c, name }));
         setEditingConnId(null);
         setEditingConnName('');
       };
 
+      // saved-keys FR-12, portfolios FR-9: removes the card from its Portfolio only; the key stays saved on weaver-api
       const handleRemoveConnection = (conn) => {
-        if (conn.token === clickUpToken) return;
-        // saved-keys FR-12: the key stays saved on weaver-api; Forget key in the connect dialog deletes it
-        if (!window.confirm(`Remove "${conn.name}" from your Portfolio? Its ClickUp key stays saved, so you can pick it again under Add Connection. To delete the key, use Forget key there.`)) return;
-        updatePortfolio(prev => prev.filter(c => c.id !== conn.id));
-        logTransaction('Portfolio Connection Removed', conn.name, 'unlink');
+        if (conn.id === activeCardIdRef.current) return;
+        const owner = portfoliosRef.current.find(p => p.cards.some(c => c.id === conn.id));
+        if (!owner) return;
+        if (!window.confirm(`Remove "${conn.name}" from ${owner.name}? Its ClickUp key stays saved, so you can pick it again under Add Connection. To delete the key, use Forget key there.`)) return;
+        updatePortfolios(prev => prev.map(p => p.id === owner.id ? { ...p, cards: p.cards.filter(c => c.id !== conn.id) } : p));
+        logTransaction('Portfolio Connection Removed', `${conn.name} (${owner.name})`, 'unlink');
+      };
+
+      // ---- portfolios FR-1 to FR-5, FR-8, FR-19, FR-20: Portfolio and card management ----
+      const [portfolioDialog, setPortfolioDialog] = useState(null); // {type:'new', value, error, moveCardId} | {type:'delete', id, busy} | {type:'addlist', ...}
+      const [renamingPortfolio, setRenamingPortfolio] = useState(null); // {value, error}
+      const [moveMenuFor, setMoveMenuFor] = useState(null);
+      const [portfolioLiveMsg, setPortfolioLiveMsg] = useState('');
+      // portfolios FR-11 to FR-13: header picker
+      const [pickerOpen, setPickerOpen] = useState(false);
+      const [pickerQuery, setPickerQuery] = useState('');
+      const pickerBtnRef = useRef(null);
+      const pickerMenuRef = useRef(null);
+      useEffect(() => {
+        if (!pickerOpen) return;
+        const onDown = (e) => { if (!pickerMenuRef.current?.contains(e.target) && !pickerBtnRef.current?.contains(e.target)) setPickerOpen(false); };
+        document.addEventListener('mousedown', onDown);
+        setTimeout(() => (pickerMenuRef.current?.querySelector('input, [role="menuitem"]'))?.focus(), 0);
+        return () => document.removeEventListener('mousedown', onDown);
+      }, [pickerOpen]);
+      const closePicker = (refocus = true) => { setPickerOpen(false); setPickerQuery(''); if (refocus) setTimeout(() => pickerBtnRef.current?.focus(), 0); };
+      const dialogOpenerRef = useRef(null);
+      const openPortfolioDialog = (d) => { dialogOpenerRef.current = document.activeElement; setPortfolioDialog(d); };
+      const closePortfolioDialog = () => { setPortfolioDialog(null); const el = dialogOpenerRef.current; setTimeout(() => { if (el && document.contains(el)) el.focus(); }, 0); };
+      const portfolioNameError = (name, exceptId) => {
+        const n = (name || '').trim();
+        if (!n) return 'Enter a name.';
+        if (n.length > PORTFOLIO_NAME_MAX) return `Use at most ${PORTFOLIO_NAME_MAX} characters.`;
+        if (portfoliosRef.current.some(p => p.id !== exceptId && p.name.toLowerCase() === n.toLowerCase())) return 'You already have a Portfolio with that name.';
+        return null;
+      };
+      const showPortfolio = (id) => { setViewingPortfolioId(id); setRenamingPortfolio(null); setMoveMenuFor(null); setActiveView('portfolio'); };
+
+      const moveCard = (cardId, toId) => {
+        const from = portfoliosRef.current.find(p => p.cards.some(c => c.id === cardId));
+        const to = portfoliosRef.current.find(p => p.id === toId);
+        if (!from || !to || from.id === to.id) return;
+        const card = from.cards.find(c => c.id === cardId);
+        updatePortfolios(prev => prev.map(p => p.id === from.id ? { ...p, cards: p.cards.filter(c => c.id !== cardId) } : p.id === to.id ? { ...p, cards: [...p.cards, card] } : p));
+        if (cardId === activeCardIdRef.current) setOpenCard(cardId, to.id); // FR-8: stays open, now in the other Portfolio
+        setMoveMenuFor(null);
+        setPortfolioLiveMsg(`${card.name} moved to ${to.name}`);
+        logTransaction('Dashboard Moved', `${card.name}: ${from.name} → ${to.name}`, 'link');
+      };
+
+      const handleCreatePortfolio = () => {
+        const d = portfolioDialog;
+        const error = portfolioNameError(d.value);
+        if (error) { setPortfolioDialog({ ...d, error }); return; }
+        const name = d.value.trim();
+        const p = { id: newId(), name, order: Math.max(-1, ...portfoliosRef.current.map(x => x.order || 0)) + 1, createdAt: Date.now(), cards: [] };
+        updatePortfolios(prev => [...prev, p]);
+        logTransaction('Portfolio Created', name, 'link');
+        setPortfolioDialog(null);
+        if (d.moveCardId) { moveCard(d.moveCardId, p.id); return; }
+        showPortfolio(p.id);
+        setPortfolioLiveMsg(`Portfolio ${name} created`);
+      };
+
+      const handleRenamePortfolio = (id) => {
+        const error = portfolioNameError(renamingPortfolio?.value, id);
+        if (error) { setRenamingPortfolio(r => ({ ...r, error })); return; }
+        const old = portfoliosRef.current.find(p => p.id === id)?.name;
+        const name = renamingPortfolio.value.trim();
+        updatePortfolios(prev => prev.map(p => p.id === id ? { ...p, name } : p));
+        setRenamingPortfolio(null);
+        if (old !== name) logTransaction('Portfolio Renamed', `${old} → ${name}`, 'info');
+      };
+
+      const handleDeletePortfolio = async () => {
+        const id = portfolioDialog.id;
+        const p = portfoliosRef.current.find(x => x.id === id);
+        if (!p || portfoliosRef.current.length < 2 || p.cards.some(c => c.id === activeCardIdRef.current)) { setPortfolioDialog(null); return; }
+        setPortfolioDialog(d => ({ ...d, busy: true }));
+        updatePortfolios(prev => prev.filter(x => x.id !== id)); // FR-4: its cards go too; keys stay on weaver-api
+        logTransaction('Portfolio Deleted', `${p.name} (${p.cards.length} dashboard${p.cards.length === 1 ? '' : 's'})`, 'unlink');
+        setPortfolioDialog(null);
+        showPortfolio(currentPortfolioIdRef.current);
+        setPortfolioLiveMsg(`Portfolio ${p.name} deleted`);
+      };
+
+      // FR-19: unlink a list from any card; the open dashboard keeps today's behaviour
+      const handleUnlinkFromCard = (card, w) => {
+        if (!window.confirm(`Unlink "${w.list}" from ${card.name}? Its tasks stay in ClickUp.`)) return;
+        if (card.id === activeCardIdRef.current) {
+          const open = mappedWorkflowsRef.current.find(x => String(x.listId) === String(w.listId));
+          if (open) removeMapping(open.id);
+        } else {
+          updateCard(card.id, c => ({ ...c, workflows: (c.workflows || []).filter(x => String(x.listId) !== String(w.listId)) }));
+          logTransaction('Connection Removed', `Unmapped ClickUp list: ${w.list} (${card.name})`, 'unlink');
+        }
+        setPortfolioLiveMsg(`${w.list} unlinked from ${card.name}`);
+      };
+
+      // FR-20: add a list to any card, using that card's key through weaver-api
+      const addListLoad = async (patch, endpoint, apply) => {
+        setPortfolioDialog(d => d && ({ ...d, ...patch, loading: true, error: null }));
+        try {
+          const card = portfoliosRef.current.flatMap(p => p.cards).find(c => c.id === patch.cardId || c.id === portfolioDialog?.cardId);
+          const data = await fetchClickUp(endpoint, card.token);
+          setPortfolioDialog(d => d && d.type === 'addlist' ? { ...d, ...apply(data), loading: false } : d);
+        } catch (err) {
+          setPortfolioDialog(d => d && d.type === 'addlist' ? { ...d, loading: false, error: err.message } : d);
+        }
+      };
+      const openAddList = (card) => {
+        openPortfolioDialog({ type: 'addlist', cardId: card.id, teams: [], spaces: [], folders: [], folderless: [], lists: [], team: '', space: '', folder: '', list: '' });
+        addListLoad({ cardId: card.id }, 'team', (d) => ({ teams: d.teams || [] }));
+      };
+      const addListChoose = async (field, value) => {
+        const d = portfolioDialog;
+        if (field === 'team') { setPortfolioDialog({ ...d, team: value, space: '', folder: '', list: '', spaces: [], folders: [], folderless: [], lists: [] }); if (value) addListLoad({ cardId: d.cardId }, `team/${value}/space`, (x) => ({ spaces: x.spaces || [] })); }
+        if (field === 'space') {
+          setPortfolioDialog({ ...d, space: value, folder: '', list: '', folders: [], folderless: [], lists: [] });
+          if (value) addListLoad({ cardId: d.cardId }, `space/${value}/folder`, (x) => ({ folders: x.folders || [] }))
+            .then(() => addListLoad({ cardId: d.cardId }, `space/${value}/list`, (x) => ({ folderless: x.lists || [] })));
+        }
+        if (field === 'folder') { setPortfolioDialog({ ...d, folder: value, list: '', lists: [] }); if (value) addListLoad({ cardId: d.cardId }, `folder/${value}/list`, (x) => ({ lists: x.lists || [] })); }
+        if (field === 'list') setPortfolioDialog({ ...d, list: value });
+      };
+      const handleAddListToCard = () => {
+        const d = portfolioDialog;
+        const card = portfoliosRef.current.flatMap(p => p.cards).find(c => c.id === d.cardId);
+        const pool = d.folder ? d.lists : d.folderless;
+        const chosen = pool.find(l => String(l.id) === String(d.list));
+        if (!card || !chosen) return;
+        if ((card.workflows || []).some(w => String(w.listId) === String(chosen.id))) { setPortfolioDialog({ ...d, error: `This list is already on ${card.name}` }); return; }
+        const meta = listMeta({
+          id: newId(), team: d.teams.find(t => String(t.id) === String(d.team))?.name || 'Workspace', space: d.spaces.find(s => String(s.id) === String(d.space))?.name || 'Space',
+          folder: d.folder ? (d.folders.find(f => String(f.id) === String(d.folder))?.name || 'Folder') : 'No Folder', list: chosen.name, listId: chosen.id,
+        });
+        if (card.id === activeCardIdRef.current) {
+          const next = [...mappedWorkflowsRef.current, { ...meta, tasks: [], archivedRaw: [], lastSynced: 0 }];
+          commitWorkflows(next);
+          persistConnection(clickUpToken, next);
+          setTimeout(() => { if (runSyncRef.current) runSyncRef.current(); }, 50); // the open dashboard syncs the new list at once
+        } else {
+          updateCard(card.id, c => ({ ...c, workflows: [...(c.workflows || []), meta] }));
+        }
+        logTransaction('Connection Established', `Linked ClickUp list: ${meta.list} (${card.name})`, 'link');
+        setPortfolioLiveMsg(`${meta.list} added to ${card.name}`);
+        closePortfolioDialog();
       };
 
       const handleReconnect = (conn) => {
@@ -2061,19 +2314,42 @@
             if (ids[legacyActive]) localStorage.setItem(`weaver_clickup_conn_${appId}`, ids[legacyActive]);
             if (ids[legacyActive] || dead.has(legacyActive)) localStorage.removeItem(legacyActiveKey);
           } catch (e) { console.warn(e); }
-          setPortfolio(merged);
+          if (portfoliosReadyRef.current) importLocalCards(); // portfolios FR-15: otherwise the first Portfolios load imports them
           if (ids[legacyActive]) setClickUpToken(prev => prev || ids[legacyActive]);
           setMigration({ status: failed ? 'partial' : 'done', total: tokens.length, failed });
           if (!failed) setTimeout(() => setMigration(null), 5000);
         })();
       }, [canSaveToken, portfolioKey]);
 
-      // Make sure the connection currently in use is always saved to the Portfolio
+      // portfolios FR-10, FR-16: which card is open. Older versions only knew the key; a new browser opens the dashboard saved last;
+      // a dashboard with lists but no card yet is saved as a new card (FR-7).
       useEffect(() => {
-        if (!clickUpToken || mappedWorkflows.length === 0) return;
-        if (portfolio.some(c => c.token === clickUpToken)) return;
-        persistConnection(clickUpToken, mappedWorkflows);
-      }, [clickUpToken, mappedWorkflows.length]);
+        if (!portfoliosReady || !portfolios.length) return;
+        const fixPortfolio = (id) => { if (id && id !== currentPortfolioIdRef.current) { currentPortfolioIdRef.current = id; setCurrentPortfolioId(id); } };
+        const open = portfolio.find(c => c.id === activeCardId);
+        if (open) { fixPortfolio(open.portfolioId); return; }
+        if (clickUpToken && clickUpToken !== 'mock_token') {
+          if (!newCardTargetRef.current) {
+            const ids = mappedWorkflows.map(w => String(w.listId)).sort().join(',');
+            const same = portfolio.filter(c => c.token === clickUpToken).sort(byLastUsed);
+            const match = same.find(c => (c.workflows || []).map(w => String(w.listId)).sort().join(',') === ids) || (mappedWorkflows.length ? null : same[0]);
+            if (match) { setOpenCard(match.id, match.portfolioId); return; }
+          }
+          if (mappedWorkflows.length) { persistConnection(clickUpToken, mappedWorkflows); return; }
+        } else if (!clickUpToken && remoteCurrent?.cardId) {
+          const card = portfolio.find(c => c.id === remoteCurrent.cardId);
+          if (card && card.token) {
+            setOpenCard(card.id, card.portfolioId);
+            setClickUpToken(card.token);
+            localStorage.setItem(`weaver_clickup_conn_${appId}`, card.token);
+            pendingSyncRef.current = true;
+            commitWorkflows((card.workflows || []).map(w => ({ ...w, tasks: [], lastSynced: 0 })));
+            return;
+          }
+        }
+        if (activeCardId) setOpenCard(null, null);
+        if (!portfolios.some(p => p.id === currentPortfolioIdRef.current)) fixPortfolio((portfolios.find(p => p.id === remoteCurrent?.portfolioId) || portfolios[0]).id);
+      }, [portfoliosReady, portfolios, activeCardId, clickUpToken, mappedWorkflows.length, remoteCurrent]);
 
       // After switching connection, pull fresh tasks right away
       useEffect(() => {
@@ -2196,7 +2472,10 @@
           } else {
             const d = snap.data();
             setTeamSeen(d.seen || {});
-            if (Array.isArray(d.lists)) {
+            setRemoteCurrent(prev => JSON.stringify(prev) === JSON.stringify(d.current || null) ? prev : (d.current || null));
+            // portfolios FR-10: lists saved by another browser for a different dashboard are not this dashboard's lists
+            const sameCard = !('current' in d) || (d.current?.cardId || null) === (activeCardIdRef.current || null);
+            if (Array.isArray(d.lists) && sameCard) {
               const remote = d.lists.map(listMeta);
               const json = JSON.stringify(remote);
               // the echo of my own last save is not news; anything else came from another device (or tab) of mine
@@ -2376,7 +2655,7 @@
         // Reset local state to trigger UI refresh
         setMappedWorkflows([]);
         setClickUpToken('');
-        setPortfolio([]);
+portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); activeCardIdRef.current = null; setActiveCardId(null); currentPortfolioIdRef.current = null; setCurrentPortfolioId(null); setViewingPortfolioId(null); setRemoteCurrent(null);
         setActiveView('dashboard');
         setGlobalTimeLedger([]);
         setTransactions([]);
@@ -3691,7 +3970,7 @@
         
         // ---- Central sync UI: header pill, Portfolio token row, failure banners (central-sync FR-17 to FR-20, FR-24) ----
         const fmtClock = (ts) => new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: 'numeric' }).format(new Date(ts));
-        const activeConn = portfolio.find(p => p.token === clickUpToken) || null;
+        const activeConn = activeConnection;
         const reconnectActive = () => { activeConn ? handleReconnect(activeConn) : handleConnectClickUp(); };
 
         const SYNC_TONES = {
@@ -3942,7 +4221,7 @@
                         if (forgetKeyId === k.connId) return (
                           <li key={k.connId} onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); cancelForget(k.connId); } }} className="rounded-lg border border-rose-500/30 bg-rose-950/20 p-4">
                             <div className="mb-2 flex min-w-0">{title}</div>
-                            <p className="text-sm text-rose-200">Forget this ClickUp key? Weaver deletes it from its server.{cards.length > 0 && ` Portfolio cards that use it (${cards.map(c => c.name).join(', ')}) are removed too.`} Your ClickUp account and tasks are not affected.</p>
+                            <p className="text-sm text-rose-200">Forget this ClickUp key? Weaver deletes it from its server.{cards.length > 0 && ` Dashboards that use it are removed too: ${portfolios.filter(pf => cards.some(c => c.portfolioId === pf.id)).map(pf => `${pf.name}: ${cards.filter(c => c.portfolioId === pf.id).map(c => c.name).join(', ')}`).join('; ')}.`} Your ClickUp account and tasks are not affected.</p>
                             {forgetError && <p className="text-sm text-rose-300 mt-2">{forgetError}</p>}
                             <div className="flex justify-end gap-3 mt-3">
                               <button autoFocus onClick={() => cancelForget(k.connId)} className="px-4 py-2 text-sm font-medium text-slate-300 rounded-lg neon-border-slate transition-all">Cancel</button>
@@ -4068,36 +4347,68 @@
           </div>
         );
 
-        const sortedPortfolio = [...portfolio].sort((a, b) => {
-          const aActive = a.token === clickUpToken, bActive = b.token === clickUpToken;
-          if (aActive !== bActive) return aActive ? -1 : 1;
-          return (b.lastUsed || 0) - (a.lastUsed || 0);
-        });
+        // ---- portfolios design P3, P4, P6, P8, P10: the Portfolio page shows one Portfolio at a time ----
+        const viewing = portfolios.find(p => p.id === viewingPortfolioId) || currentPortfolio;
+        const viewingCards = viewing ? [...viewing.cards].sort(byLastUsed).map(c => ({ ...c, portfolioId: viewing.id })) : [];
+        const holdsActive = !!viewing && viewing.cards.some(c => c.id === activeCardId);
+        const deleteTip = holdsActive ? 'Switch to another Portfolio first' : portfolios.length < 2 ? 'You need at least one Portfolio' : 'Delete Portfolio';
+        const activeOwner = activeConnection && portfolios.find(p => p.id === activeConnection.portfolioId);
 
         const portfolioUI = (
           <main className="relative z-25 max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8 animate-in fade-in duration-500">
-            <div className="mb-8 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-              <div>
-                <h1 className="text-2xl font-bold text-white flex items-center gap-3"><Briefcase className="h-6 w-6 text-indigo-400" /> Portfolio</h1>
-                <p className="text-slate-400 text-sm mt-1">Your saved ClickUp connections. Switch between them without re-entering your API token.</p>
+            <h1 className="text-2xl font-bold text-white flex items-center gap-3"><Briefcase className="h-6 w-6 text-indigo-400" /> Portfolio</h1>
+            {user?.isTeam && !portfoliosReady ? (
+              <div aria-busy="true" className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <span className="sr-only">Loading your Portfolios</span>
+                {[0, 1].map(i => <div key={i} className="h-56 rounded-2xl bg-slate-900/40 border border-white/5 animate-pulse motion-reduce:animate-none" />)}
               </div>
-              <button onClick={handleNewConnection} className="btn-neon btn-neon-indigo shrink-0">
-                <Plus className="h-3.5 w-3.5 mr-1.5" /> Add Connection
-              </button>
+            ) : viewing && (<>
+            <div className="mt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              {renamingPortfolio ? (
+                <div className="flex items-center gap-2 min-w-0 flex-1 sm:flex-none">
+                  <input autoFocus type="text" maxLength={PORTFOLIO_NAME_MAX} aria-label="Portfolio name" value={renamingPortfolio.value}
+                    onChange={e => setRenamingPortfolio({ value: e.target.value, error: null })}
+                    onKeyDown={e => { if (e.key === 'Enter') handleRenamePortfolio(viewing.id); if (e.key === 'Escape') setRenamingPortfolio(null); }}
+                    className="min-w-0 flex-1 sm:w-64 bg-slate-950/60 border border-transparent rounded-lg px-3 py-2 text-sm text-white neon-input neon-input-indigo" />
+                  <button onClick={() => handleRenamePortfolio(viewing.id)} className="h-10 w-10 shrink-0 inline-flex items-center justify-center rounded-md text-emerald-400 neon-border-slate" aria-label="Save name"><Check className="h-4 w-4" /></button>
+                  <button onClick={() => setRenamingPortfolio(null)} className="h-10 w-10 shrink-0 inline-flex items-center justify-center rounded-md text-slate-400 neon-border-slate" aria-label="Cancel"><X className="h-4 w-4" /></button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 min-w-0 flex-1 sm:flex-none">
+                  <select aria-label="Portfolio" value={viewing.id} onChange={e => showPortfolio(e.target.value)} className="min-w-0 flex-1 sm:min-w-[14rem] bg-slate-950/60 border border-transparent rounded-lg px-3 py-2 text-sm text-white neon-input neon-input-indigo">
+                    {portfolios.map(p => <option key={p.id} value={p.id} className="bg-slate-900 text-white">{p.name} ({p.cards.length})</option>)}
+                  </select>
+                  {user?.isTeam && <>
+                    <button onClick={() => setRenamingPortfolio({ value: viewing.name, error: null })} className="h-10 w-10 shrink-0 inline-flex items-center justify-center rounded-md text-slate-400 neon-border-slate" aria-label="Rename Portfolio" title="Rename Portfolio"><Pencil className="h-4 w-4" /></button>
+                    <span title={deleteTip} className="shrink-0"><button onClick={() => openPortfolioDialog({ type: 'delete', id: viewing.id })} disabled={holdsActive || portfolios.length < 2} className="h-10 w-10 inline-flex items-center justify-center rounded-md text-slate-400 neon-border-rose disabled:opacity-30 disabled:pointer-events-none" aria-label="Delete Portfolio"><Trash2 className="h-4 w-4" /></button></span>
+                  </>}
+                </div>
+              )}
+              <div className="flex flex-col sm:flex-row gap-2">
+                {user?.isTeam && <button onClick={() => openPortfolioDialog({ type: 'new', value: '', error: null })} className="btn-neon btn-neon-indigo"><Plus className="h-3.5 w-3.5 mr-1.5" /> New Portfolio</button>}
+                <button onClick={() => handleNewConnection(viewing.id)} className="btn-neon btn-neon-indigo"><Plus className="h-3.5 w-3.5 mr-1.5" /> Add Connection</button>
+              </div>
             </div>
+            {renamingPortfolio?.error && <p role="alert" className="text-sm text-rose-300 mt-2">{renamingPortfolio.error}</p>}
+            <p className="text-sm text-slate-400 mt-2 mb-6">
+              {viewingCards.length} dashboard{viewingCards.length === 1 ? '' : 's'}, last used first.
+              {!holdsActive && activeConnection && activeOwner && <> Your open dashboard {activeConnection.name} is in <button onClick={() => showPortfolio(activeOwner.id)} className="text-indigo-300 underline">{activeOwner.name}</button>.</>}
+            </p>
 
-            {sortedPortfolio.length === 0 ? (
+            {viewingCards.length === 0 ? (
               <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl p-10 text-center">
                 <Briefcase className="h-10 w-10 text-slate-600 mx-auto mb-4" />
-                <h2 className="text-lg font-semibold text-white">No saved connections yet</h2>
-                <p className="text-slate-400 text-sm mt-2 max-w-md mx-auto">Connect ClickUp and map a list, and the connection is saved here automatically so you can come back to it later.</p>
+                <h2 className="text-lg font-semibold text-white">No dashboards in {viewing.name} yet</h2>
+                <p className="text-slate-400 text-sm mt-2 max-w-md mx-auto">Add a connection: pick a saved ClickUp key and link a list.</p>
+                <button onClick={() => handleNewConnection(viewing.id)} className="btn-neon btn-neon-indigo mt-5"><Plus className="h-3.5 w-3.5 mr-1.5" /> Add Connection</button>
               </div>
             ) : (
               <ul className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {sortedPortfolio.map(conn => {
-                  const isActive = conn.token === clickUpToken;
+                {viewingCards.map(conn => {
+                  const isActive = conn.id === activeCardId;
                   const connNeedsReconnect = !conn.token || isLegacyToken(conn.token) || (isActive && needsReconnect) || tokenStatuses[conn.token]?.status === 'rejected';
                   const isEditing = editingConnId === conn.id;
+                  const others = portfolios.filter(p => p.id !== viewing.id);
                   return (
                     <li key={conn.id} className={`bg-slate-900/40 backdrop-blur-md rounded-2xl border shadow-xl flex flex-col ${isActive ? 'border-emerald-500/30' : 'border-white/5'}`}>
                       <div className="px-5 py-4 border-b border-white/5 bg-slate-900/30 rounded-t-2xl flex items-center justify-between gap-3">
@@ -4125,7 +4436,7 @@
                       <div className="p-5 flex-1 space-y-3">
                         {renderTokenRow(conn)}
                         {(conn.workflows || []).length === 0 ? (
-                          <p className="text-sm text-slate-500 italic">No lists mapped yet. Switch to this connection and add a list.</p>
+                          <p className="text-sm text-slate-500 italic">No lists linked yet.</p>
                         ) : (
                           (conn.workflows || []).map(w => (
                             <div key={w.id || w.listId} className="flex flex-wrap items-center text-xs text-slate-300 gap-y-1.5">
@@ -4133,25 +4444,44 @@
                               {w.folder && w.folder !== 'No Folder' && <><ChevronRight className="h-3.5 w-3.5 mx-1 text-slate-600" /><span className="flex items-center"><FolderOpen className="h-3.5 w-3.5 mr-1 text-slate-500" /> {w.folder}</span></>}
                               <ChevronRight className="h-3.5 w-3.5 mx-1 text-slate-600" />
                               <span className="font-semibold text-indigo-400 flex items-center bg-indigo-500/10 px-2 py-0.5 rounded-md border border-indigo-500/20"><ListTodo className="h-3.5 w-3.5 mr-1" /> {w.list}</span>
-                              {isActive && (
-                                <button onClick={() => { if (window.confirm(`Unlink "${w.list}" from Weaver? Its tasks stay in ClickUp.`)) removeMapping(w.id); }} className="ml-auto p-1 rounded-md text-slate-500 neon-border-rose focus-visible:ring-2 focus-visible:ring-indigo-400" aria-label={`Unlink ${w.list}`} title="Unlink this list"><Trash2 className="h-3.5 w-3.5" /></button>
-                              )}
+                              <button onClick={() => handleUnlinkFromCard(conn, w)} className="ml-auto h-8 w-8 inline-flex items-center justify-center rounded-md text-slate-500 neon-border-rose focus-visible:ring-2 focus-visible:ring-indigo-400" aria-label={`Unlink ${w.list} from ${conn.name}`} title="Unlink this list"><X className="h-3.5 w-3.5" /></button>
                             </div>
                           ))
+                        )}
+                        {!connNeedsReconnect && conn.token && (
+                          <button onClick={() => openAddList(conn)} className="text-sm text-indigo-300 hover:text-indigo-200 inline-flex items-center" aria-label={`Add a list to ${conn.name}`}><Plus className="h-4 w-4 mr-1" /> Add list</button>
                         )}
                         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 pt-1 text-[11px] text-slate-500">
                           <span className="flex items-center"><Key className="h-3 w-3 mr-1" /> Stored securely on server</span>
                           <span className="flex items-center"><Clock className="h-3 w-3 mr-1" /> Last used {new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(conn.lastUsed || conn.savedAt || Date.now()))}</span>
                         </div>
                       </div>
-                      <div className="px-5 py-4 border-t border-white/5 flex items-center justify-between gap-3">
-                        <button onClick={() => handleRemoveConnection(conn)} disabled={isActive} className="text-slate-400 p-2 rounded-md neon-border-rose transition-colors disabled:opacity-30 disabled:pointer-events-none" title={isActive ? 'Switch to another connection before removing this one' : 'Remove from Portfolio'}><Trash2 className="h-4 w-4" /></button>
-                        {connNeedsReconnect ? (
-                          <button onClick={() => handleReconnect(conn)} className="btn-neon btn-neon-indigo btn-neon-sm"><RefreshCw className="h-3.5 w-3.5 mr-1.5" /> Reconnect</button>
-                        ) : isActive ? (
-                          <button onClick={() => setActiveView('dashboard')} className="btn-neon btn-neon-emerald btn-neon-sm"><LayoutDashboard className="h-3.5 w-3.5 mr-1.5" /> Open Dashboard</button>
-                        ) : (
-                          <button onClick={() => handleSwitchConnection(conn)} disabled={warpStage !== 'idle'} className="btn-neon btn-neon-indigo btn-neon-sm"><ArrowRight className="h-3.5 w-3.5 mr-1.5" /> Switch to this</button>
+                      <div className="px-5 py-4 border-t border-white/5 flex items-center gap-2 relative">
+                        <span title={isActive ? 'Switch to another dashboard before removing this one' : `Remove from ${viewing.name}`}>
+                          <button onClick={() => handleRemoveConnection(conn)} disabled={isActive} aria-label={`Remove ${conn.name} from ${viewing.name}`} className="px-3 py-2 rounded-md text-xs font-medium text-rose-300 border border-rose-500/30 neon-border-rose inline-flex items-center disabled:opacity-40 disabled:pointer-events-none"><Trash2 className="h-4 w-4" /><span className="hidden sm:inline ml-1.5">Remove</span></button>
+                        </span>
+                        {user?.isTeam && (
+                          <button onClick={() => setMoveMenuFor(m => m === conn.id ? null : conn.id)} aria-haspopup="menu" aria-expanded={moveMenuFor === conn.id} aria-label={`Move ${conn.name} to another Portfolio`} className="px-3 py-2 rounded-md text-xs font-medium text-slate-300 neon-border-slate inline-flex items-center"><ArrowRightLeft className="h-4 w-4" /><span className="hidden sm:inline ml-1.5">Move</span></button>
+                        )}
+                        <span className="ml-auto">
+                          {connNeedsReconnect ? (
+                            <button onClick={() => handleReconnect(conn)} className="btn-neon btn-neon-indigo btn-neon-sm"><RefreshCw className="h-3.5 w-3.5 mr-1.5" /> Reconnect</button>
+                          ) : isActive ? (
+                            <button onClick={() => setActiveView('dashboard')} className="btn-neon btn-neon-emerald btn-neon-sm"><LayoutDashboard className="h-3.5 w-3.5 mr-1.5" /> Open Dashboard</button>
+                          ) : (
+                            <button onClick={() => handleSwitchConnection(conn)} disabled={warpStage !== 'idle'} className="btn-neon btn-neon-indigo btn-neon-sm"><ArrowRight className="h-3.5 w-3.5 mr-1.5" /> Switch to this</button>
+                          )}
+                        </span>
+                        {moveMenuFor === conn.id && (
+                          <div role="menu" aria-label="Move to" onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); setMoveMenuFor(null); } }} className="absolute left-12 bottom-14 w-60 bg-slate-900 border border-slate-700/80 rounded-xl shadow-[0_0_20px_rgba(99,102,241,0.3)] py-1 z-20">
+                            <div role="presentation" className="px-4 pt-2 pb-1 text-[10px] font-bold uppercase tracking-widest text-slate-500">Move to</div>
+                            {others.map((p, i) => (
+                              <button key={p.id} role="menuitem" autoFocus={i === 0} onClick={() => moveCard(conn.id, p.id)} className="w-full h-10 px-4 flex items-center text-sm text-left text-slate-300 hover:bg-white/5 focus:bg-indigo-500/10 focus:outline-none"><Briefcase className="h-4 w-4 mr-2 text-slate-500" /><span className="truncate">{p.name}</span></button>
+                            ))}
+                            <div className="border-t border-slate-700/80 mt-1 pt-1">
+                              <button role="menuitem" autoFocus={others.length === 0} onClick={() => { setMoveMenuFor(null); openPortfolioDialog({ type: 'new', value: '', error: null, moveCardId: conn.id }); }} className="w-full h-10 px-4 flex items-center text-sm text-left text-indigo-300 hover:bg-white/5 focus:bg-indigo-500/10 focus:outline-none"><Plus className="h-4 w-4 mr-2" /> New Portfolio...</button>
+                            </div>
+                          </div>
                         )}
                       </div>
                     </li>
@@ -4159,9 +4489,179 @@
                 })}
               </ul>
             )}
-            <p className="text-xs text-slate-600 mt-6">ClickUp tokens are stored encrypted on Weaver's server, linked to your Google account. Removing a connection deletes its token.</p>
+            </>)}
+            <p className="sr-only" aria-live="polite">{portfolioLiveMsg}</p>
+            <p className="text-xs text-slate-600 mt-6">ClickUp keys are stored encrypted on Weaver's server, linked to your Google account. Removing a dashboard or a Portfolio keeps its key; use Forget key under Add Connection to delete one.</p>
           </main>
         );
+
+        // ---- portfolios design P1, P2: one fixed-size header button, menu with the current Portfolio's dashboards and the other Portfolios ----
+        const pickerUI = (() => {
+          if (!user?.isTeam) return null;
+          if (!portfoliosReady || !currentPortfolio) return (
+            <div aria-busy="true" className="ml-2 sm:ml-4 px-3 py-2 rounded-lg border border-white/5"><div className="h-3 w-24 sm:w-32 rounded bg-slate-700/60 animate-pulse motion-reduce:animate-none"></div><span className="sr-only">Loading Portfolios</span></div>
+          );
+          const cur = currentPortfolio;
+          const open = activeConnection && activeConnection.portfolioId === cur.id ? activeConnection : (activeConnection || null);
+          const q = pickerQuery.trim().toLowerCase();
+          const match = (s) => !q || (s || '').toLowerCase().includes(q);
+          const dashboards = [...cur.cards].sort(byLastUsed).filter(c => match(c.name) || match(cur.name));
+          const others = portfolios.filter(p => p.id !== cur.id)
+            .map(p => ({ p, hit: q && !match(p.name) ? p.cards.find(c => match(c.name)) : null }))
+            .filter(x => !q || match(x.p.name) || x.hit);
+          const badge = (c) => {
+            if (!c.token || isLegacyToken(c.token)) return <span className="ml-2 shrink-0 text-[10px] px-1.5 py-0.5 rounded-full border bg-amber-950/30 border-amber-900/50 text-amber-300">Reconnect needed</span>;
+            if (tokenStatuses[c.token]?.status === 'rejected') return <span className="ml-2 shrink-0 text-[10px] px-1.5 py-0.5 rounded-full border bg-rose-950/30 border-rose-900/50 text-rose-300">Token rejected</span>;
+            return null;
+          };
+          const onMenuKey = (e) => {
+            const items = [...(pickerMenuRef.current?.querySelectorAll('[role="menuitem"]') || [])];
+            const i = items.indexOf(document.activeElement);
+            const go = (n) => { e.preventDefault(); items[(n + items.length) % items.length]?.focus(); };
+            if (e.key === 'ArrowDown') go(i + 1);
+            else if (e.key === 'ArrowUp') go(i < 0 ? items.length - 1 : i - 1);
+            else if (e.key === 'Home') go(0);
+            else if (e.key === 'End') go(items.length - 1);
+            else if (e.key === 'Escape') { e.preventDefault(); closePicker(); }
+            else if (e.key === 'Tab') closePicker(false);
+          };
+          const label = `${cur.name} / ${open ? open.name : 'No dashboard'}`;
+          return (
+            <div className="relative ml-2 sm:ml-4 min-w-0">
+              <button ref={pickerBtnRef} onClick={() => { setPickerQuery(''); setPickerOpen(o => !o); }} aria-haspopup="menu" aria-expanded={pickerOpen}
+                aria-label={`Switch Portfolio or dashboard. Current: ${cur.name}, ${open ? open.name : 'no dashboard'}`} title={label}
+                className={`px-3 py-1.5 rounded-lg border text-sm font-medium flex items-center gap-2 transition-all neon-border-indigo min-w-0 ${pickerOpen ? 'text-white bg-indigo-500/10 border-indigo-500/30' : 'text-slate-300 border-white/10'}`}>
+                <Briefcase className="h-4 w-4 shrink-0 text-indigo-400" aria-hidden="true" />
+                <span className="hidden sm:inline truncate max-w-[12rem] lg:max-w-[18rem]">
+                  <span className="text-slate-400">{cur.name}</span> / {open
+                    ? <><span className="inline-block h-2 w-2 rounded-full bg-emerald-400 mr-1 align-middle"></span><span className="text-white">{open.name}</span></>
+                    : <span className="text-slate-500 italic">No dashboard</span>}
+                </span>
+                <ChevronDown className="h-4 w-4 shrink-0 text-slate-500" aria-hidden="true" />
+              </button>
+              {pickerOpen && (
+                <div ref={pickerMenuRef} role="menu" aria-label="Switch Portfolio or dashboard" onKeyDown={onMenuKey}
+                  className="fixed sm:absolute top-16 sm:top-11 left-4 right-4 sm:left-0 sm:right-auto sm:w-80 bg-slate-900 border border-slate-700/80 rounded-xl shadow-[0_0_20px_rgba(99,102,241,0.3)] z-50 overflow-hidden animate-in slide-in-from-top-4 duration-200">
+                  {portfolios.length > 8 && (
+                    <div className="p-2 border-b border-slate-700/80">
+                      <div className="relative">
+                        <Search className="h-4 w-4 text-slate-500 absolute left-3 top-2.5" aria-hidden="true" />
+                        <input value={pickerQuery} onChange={e => setPickerQuery(e.target.value)} placeholder="Search Portfolios and dashboards" aria-label="Search Portfolios and dashboards"
+                          className="w-full bg-slate-950/60 border border-transparent rounded-lg pl-9 pr-3 py-2 text-sm text-white neon-input neon-input-indigo" />
+                      </div>
+                    </div>
+                  )}
+                  <div className="max-h-80 overflow-y-auto py-1">
+                    {(dashboards.length > 0 || !q) && <div role="presentation" className="px-4 pt-2 pb-1 text-[10px] font-bold uppercase tracking-widest text-slate-500 truncate">{cur.name} · current</div>}
+                    {cur.cards.length === 0 && !q && (
+                      <p className="px-6 py-2 text-sm text-slate-500">No dashboards yet. <button role="menuitem" onClick={() => { closePicker(false); handleNewConnection(cur.id); }} className="text-indigo-300 underline">Add one</button></p>
+                    )}
+                    {dashboards.map(c => {
+                      const isOpen = c.id === activeCardId;
+                      return (
+                        <button key={c.id} role="menuitem" aria-current={isOpen ? 'true' : undefined}
+                          onClick={() => { closePicker(); isOpen ? setActiveView('dashboard') : handleSwitchConnection({ ...c, portfolioId: cur.id }); }}
+                          className={`w-full h-10 px-6 flex items-center text-sm text-left hover:bg-white/5 focus:bg-indigo-500/10 focus:text-white focus:outline-none ${isOpen ? 'text-white' : 'text-slate-300'}`}>
+                          <span className={`h-2 w-2 rounded-full mr-2 shrink-0 ${isOpen ? 'bg-emerald-400' : 'bg-transparent'}`}></span>
+                          <span className="truncate">{c.name}</span>{badge(c)}
+                          {isOpen && <span className="ml-auto pl-2 text-xs text-emerald-400">Open</span>}
+                        </button>
+                      );
+                    })}
+                    {others.length > 0 && <div role="presentation" className="px-4 pt-3 pb-1 text-[10px] font-bold uppercase tracking-widest text-slate-500">Other Portfolios</div>}
+                    {others.map(({ p, hit }) => (
+                      <button key={p.id} role="menuitem" onClick={() => { closePicker(false); showPortfolio(p.id); }}
+                        className="w-full min-h-10 px-4 py-2 flex items-center text-sm text-left text-slate-300 hover:bg-white/5 focus:bg-indigo-500/10 focus:text-white focus:outline-none">
+                        <Briefcase className="h-4 w-4 mr-2 text-slate-500 shrink-0" aria-hidden="true" />
+                        <span className="min-w-0"><span className="block truncate">{p.name}</span>{hit && <span className="block text-xs text-slate-500">Matches: {hit.name}</span>}</span>
+                        <span className="ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300">{p.cards.length}</span>
+                        <ChevronRight className="h-4 w-4 ml-1 text-slate-500 shrink-0" aria-hidden="true" />
+                      </button>
+                    ))}
+                    {q && dashboards.length === 0 && others.length === 0 && <p className="px-4 py-3 text-sm text-slate-500">No Portfolio or dashboard matches "{pickerQuery}".</p>}
+                  </div>
+                  <div className="border-t border-slate-700/80 py-1">
+                    <button role="menuitem" onClick={() => { closePicker(false); openPortfolioDialog({ type: 'new', value: '', error: null }); }} className="w-full h-10 px-4 flex items-center text-sm text-left text-indigo-300 hover:bg-white/5 focus:bg-indigo-500/10 focus:outline-none"><Plus className="h-4 w-4 mr-2" aria-hidden="true" /> New Portfolio</button>
+                    <button role="menuitem" onClick={() => { closePicker(false); showPortfolio(cur.id); }} className="w-full h-10 px-4 flex items-center text-sm text-left text-slate-300 hover:bg-white/5 focus:bg-indigo-500/10 focus:text-white focus:outline-none"><Settings className="h-4 w-4 mr-2 text-slate-500" aria-hidden="true" /> Manage Portfolios</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })();
+
+        // ---- portfolios design P5, P7, P10: New Portfolio, Delete Portfolio, Add list ----
+        const portfolioDialogUI = (() => {
+          const d = portfolioDialog;
+          if (!d) return null;
+          const panel = (title, body) => (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md" onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); closePortfolioDialog(); } }}>
+              <div role="dialog" aria-modal="true" aria-labelledby="portfolio-dialog-title" className={`bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl w-full ${d.type === 'addlist' ? 'max-w-lg' : 'max-w-md'} p-6 relative animate-in zoom-in-95 duration-200`}>
+                <button onClick={closePortfolioDialog} className="absolute top-4 right-4 text-slate-400 p-2 rounded neon-border-slate transition-all" aria-label="Close"><X className="h-4 w-4" /></button>
+                <h2 id="portfolio-dialog-title" className="text-lg font-bold text-white mb-4 pr-10">{title}</h2>
+                {body}
+              </div>
+            </div>
+          );
+          if (d.type === 'new') {
+            const len = d.value.length;
+            return panel('New Portfolio', <>
+              <label htmlFor="new-portfolio-name" className="block text-sm font-medium text-slate-300 mb-1">Name</label>
+              <input id="new-portfolio-name" autoFocus type="text" maxLength={PORTFOLIO_NAME_MAX} value={d.value}
+                onChange={e => setPortfolioDialog({ ...d, value: e.target.value, error: null })}
+                onKeyDown={e => { if (e.key === 'Enter' && d.value.trim()) handleCreatePortfolio(); }}
+                className="w-full bg-slate-950/60 border border-transparent rounded-lg px-3 py-2.5 text-white neon-input neon-input-indigo" />
+              <p className={`text-right text-xs mt-1 ${len >= 50 ? 'text-amber-300' : 'text-slate-500'}`}>{len}/{PORTFOLIO_NAME_MAX}</p>
+              {d.error && <p role="alert" className="flex items-center gap-2 text-sm text-rose-300 mt-1"><AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />{d.error}</p>}
+              <div className="flex justify-end gap-3 mt-5">
+                <button onClick={closePortfolioDialog} className="px-4 py-2 text-sm font-medium text-slate-400 rounded-lg neon-border-slate transition-all">Cancel</button>
+                <button onClick={handleCreatePortfolio} disabled={!d.value.trim()} className="btn-neon btn-neon-indigo disabled:opacity-40">Create</button>
+              </div>
+            </>);
+          }
+          if (d.type === 'delete') {
+            const p = portfolios.find(x => x.id === d.id);
+            if (!p) return null;
+            return panel('Delete Portfolio', <>
+              <p className="text-sm text-slate-200">Delete Portfolio "{p.name}" and its {p.cards.length} dashboard{p.cards.length === 1 ? '' : 's'}? Your ClickUp keys stay saved.</p>
+              <div className="flex justify-end gap-3 mt-6">
+                <button autoFocus onClick={closePortfolioDialog} className="px-4 py-2 text-sm font-medium text-slate-300 rounded-lg neon-border-slate transition-all">Cancel</button>
+                <button onClick={handleDeletePortfolio} disabled={d.busy} className="btn-neon btn-neon-rose disabled:opacity-60">{d.busy ? 'Deleting...' : 'Delete'}</button>
+              </div>
+            </>);
+          }
+          if (d.type === 'addlist') {
+            const card = portfolio.find(c => c.id === d.cardId);
+            if (!card) return null;
+            const have = new Set((card.workflows || []).map(w => String(w.listId)));
+            const pool = d.folder ? d.lists : d.folderless;
+            const sel = (id, label, value, field, options, placeholder) => (
+              <div className="mt-4">
+                <label htmlFor={id} className="block text-sm font-medium text-slate-300 mb-1">{label}</label>
+                <select id={id} value={value} onChange={e => addListChoose(field, e.target.value)} disabled={d.loading && options.length === 0}
+                  className="w-full bg-slate-950/60 border border-transparent rounded-lg px-3 py-2 text-white neon-input neon-input-indigo disabled:opacity-50">
+                  <option value="" className="bg-slate-900 text-slate-300">{d.loading && options.length === 0 ? 'Loading...' : placeholder}</option>
+                  {options.map(o => <option key={o.id} value={o.id} disabled={field === 'list' && have.has(String(o.id))} className="bg-slate-900 text-white">{o.name}{field === 'list' && have.has(String(o.id)) ? ' (already added)' : ''}</option>)}
+                </select>
+              </div>
+            );
+            return panel(`Add a list to ${card.name}`, <>
+              <p className="text-sm text-slate-400 -mt-2">Uses this dashboard's ClickUp key. {card.id === activeCardId ? 'The new list syncs right away.' : 'Its tasks load when you open this dashboard.'}</p>
+              {sel('addlist-team', '1. Workspace', d.team, 'team', d.teams, '-- Choose a Workspace --')}
+              {d.team && sel('addlist-space', '2. Space', d.space, 'space', d.spaces, '-- Choose a Space --')}
+              {d.space && sel('addlist-folder', '3. Folder (optional)', d.folder, 'folder', d.folders, '-- No Folder (lists directly in the space) --')}
+              {d.space && sel('addlist-list', '4. List', d.list, 'list', pool, '-- Choose a List --')}
+              {d.error && (
+                <div className="mt-4 p-3 bg-red-950/30 border border-red-900/50 rounded-xl text-sm text-red-300 flex items-start"><AlertTriangle className="h-4 w-4 text-red-400 mr-2 shrink-0 mt-0.5" aria-hidden="true" /><span>{d.error}</span></div>
+              )}
+              <div className="flex justify-end gap-3 mt-6">
+                <button onClick={closePortfolioDialog} className="px-4 py-2 text-sm font-medium text-slate-400 rounded-lg neon-border-slate transition-all">Cancel</button>
+                <button onClick={handleAddListToCard} disabled={!d.list} className="btn-neon btn-neon-indigo disabled:opacity-40">Add list</button>
+              </div>
+            </>);
+          }
+          return null;
+        })();
 
         return (
           <div className="min-h-screen bg-slate-950 font-sans text-slate-100 relative">
@@ -4512,9 +5012,9 @@
                       <button onClick={() => setActiveView('dashboard')} className={`px-3 py-1.5 rounded-lg border text-sm font-medium flex items-center transition-all neon-border-indigo ${activeView === 'dashboard' ? 'text-white bg-indigo-500/10 border-indigo-500/30' : 'text-slate-400 border-transparent'}`} title="Dashboard">
                         <LayoutDashboard className="h-4 w-4 sm:mr-1.5" /><span className="hidden sm:inline">Dashboard</span>
                       </button>
-                      <button onClick={() => setActiveView('portfolio')} className={`px-3 py-1.5 rounded-lg border text-sm font-medium flex items-center transition-all neon-border-indigo ${activeView === 'portfolio' ? 'text-white bg-indigo-500/10 border-indigo-500/30' : 'text-slate-400 border-transparent'}`} title="Portfolio: saved connections">
+                      <button onClick={() => showPortfolio(null)} className={`px-3 py-1.5 rounded-lg border text-sm font-medium flex items-center transition-all neon-border-indigo ${activeView === 'portfolio' ? 'text-white bg-indigo-500/10 border-indigo-500/30' : 'text-slate-400 border-transparent'}`} title="Portfolio: saved connections">
                         <Briefcase className="h-4 w-4 sm:mr-1.5" /><span className="hidden sm:inline">Portfolio</span>
-                        {portfolio.length > 0 && <span className="ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300">{portfolio.length}</span>}
+                        {(user?.isTeam ? portfolios.length : portfolio.length) > 0 && <span className="ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300">{user?.isTeam ? portfolios.length : portfolio.length}</span>}
                       </button>
                       {mappedWorkflows.length > 0 && (
                         <button onClick={() => setIsUnifiedModalOpen(true)} className="px-3 py-1.5 rounded-lg border border-transparent text-sm font-medium flex items-center transition-all neon-border-indigo text-slate-400" title="Manage Tasks & Time">
@@ -4522,11 +5022,7 @@
                         </button>
                       )}
                     </div>
-                    {activeConnection && (
-                      <span className="hidden lg:flex items-center ml-4 pl-4 border-l border-white/10 text-xs text-slate-400 truncate" title="Active connection">
-                        <div className="h-2 w-2 rounded-full bg-emerald-400 mr-2 shrink-0"></div><span className="truncate max-w-[200px]">{activeConnection.name}</span>
-                      </span>
-                    )}
+                    {pickerUI}
                   </div>
                   <div className="flex items-center space-x-4">
                     <button ref={bellButtonRef} onClick={toggleBell} aria-haspopup="dialog" aria-expanded={isNotificationsOpen} aria-label={unreadEvents.length ? `Notifications, ${unreadLabel} unread` : 'Notifications'} className={`p-1.5 rounded-lg border border-transparent transition-all neon-border-indigo relative ${isNotificationsOpen ? 'text-white' : 'text-slate-400'}`}>
@@ -4541,6 +5037,8 @@
                 </div>
               </div>
             </nav>
+
+            {portfolioDialogUI}
 
             {isNotificationsOpen && (
               <div ref={notificationsRef} role="dialog" aria-label="Notifications" className="fixed top-16 right-4 sm:right-6 lg:right-8 w-96 max-w-[calc(100vw-2rem)] bg-slate-900 border border-slate-700/80 rounded-xl shadow-[0_0_20px_rgba(99,102,241,0.3)] z-50 flex flex-col max-h-[80vh] overflow-hidden animate-in slide-in-from-top-4 duration-200">
@@ -4634,7 +5132,7 @@
                 <p className="text-slate-400 text-sm mt-1 flex flex-wrap items-center gap-x-1.5">
                   <span className="text-slate-300 font-medium truncate max-w-[16rem]">{activeConn?.name || 'Your workspace'}</span>
                   <span>· {mappedWorkflows.length} {mappedWorkflows.length === 1 ? 'list' : 'lists'} linked ·</span>
-                  <button onClick={() => setActiveView('portfolio')} className="text-indigo-400 hover:underline">Manage in Portfolio →</button>
+                  <button onClick={() => showPortfolio(null)} className="text-indigo-400 hover:underline">Manage in Portfolio →</button>
                 </p>
               </div>
               <div className="flex flex-row flex-wrap items-center gap-3">
