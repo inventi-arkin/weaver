@@ -6,7 +6,7 @@
   <title>Weaver - Thread Support and Development together</title>
   <meta name="referrer" content="no-referrer">
   <!-- Release version shown in the page footer; bump on every upload (YYYY.MM.DD-N) -->
-  <meta name="weaver-version" content="2026.10.13-2">
+  <meta name="weaver-version" content="2026.10.13-3">
   
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -1201,6 +1201,7 @@
       const [spaces, setSpaces] = useState([]);
       const [folders, setFolders] = useState([]);
       const [lists, setLists] = useState([]);
+      const [showArchivedLists, setShowArchivedLists] = useState(false); // connect picker: archived folders and lists
       const [folderlessLists, setFolderlessLists] = useState([]);
       const [selectedTeam, setSelectedTeam] = useState('');
       const [selectedSpace, setSelectedSpace] = useState('');
@@ -1398,6 +1399,17 @@
           return callApi(`clickup/${endpoint}`, { connId });
       };
 
+      // Folders or lists: active ones first, then archived ones marked _archived (ClickUp leaves them out unless asked)
+      const fetchWithArchived = async (endpoint, key, connId) => {
+          const active = (await fetchClickUp(endpoint, connId))[key] || [];
+          try {
+            const ids = new Set(active.map(x => String(x.id)));
+            const archived = ((await fetchClickUp(`${endpoint}?archived=true`, connId))[key] || []).filter(x => !ids.has(String(x.id)));
+            return [...active, ...archived.map(x => ({ ...x, _archived: true }))];
+          } catch (err) { return active; } // archived ones are extra; the active ones still show
+      };
+      const archivedLabel = (o) => o._archived ? `${o.name} (archived)` : o.name;
+
       const saveConnection = (token) => callApi('connections', { method: 'POST', body: { token } });
 
       useEffect(() => {
@@ -1421,10 +1433,8 @@
         }
         const fetchSpaceData = async () => {
           try {
-            const dataFolders = await fetchClickUp(`space/${selectedSpace}/folder`, clickUpToken);
-            setFolders(dataFolders.folders || []);
-            const dataLists = await fetchClickUp(`space/${selectedSpace}/list`, clickUpToken);
-            setFolderlessLists(dataLists.lists || []);
+            setFolders(await fetchWithArchived(`space/${selectedSpace}/folder`, 'folders', clickUpToken));
+            setFolderlessLists(await fetchWithArchived(`space/${selectedSpace}/list`, 'lists', clickUpToken));
           } catch (err) { setClickUpError(err.message); }
         };
         fetchSpaceData();
@@ -1438,8 +1448,7 @@
         }
         const fetchLists = async () => {
           try {
-            const data = await fetchClickUp(`folder/${selectedFolder}/list`, clickUpToken);
-            setLists(data.lists || []);
+            setLists(await fetchWithArchived(`folder/${selectedFolder}/list`, 'lists', clickUpToken));
           } catch (err) { setClickUpError(err.message); }
         };
         fetchLists();
@@ -2224,11 +2233,11 @@
       };
 
       // FR-20: add a list to any card, using that card's key through weaver-api
-      const addListLoad = async (patch, endpoint, apply) => {
+      const addListLoad = async (patch, endpoint, apply, archivedKey) => {
         setPortfolioDialog(d => d && ({ ...d, ...patch, loading: true, error: null }));
         try {
           const card = portfoliosRef.current.flatMap(p => p.cards).find(c => c.id === patch.cardId || c.id === portfolioDialog?.cardId);
-          const data = await fetchClickUp(endpoint, card.token);
+          const data = archivedKey ? { [archivedKey]: await fetchWithArchived(endpoint, archivedKey, card.token) } : await fetchClickUp(endpoint, card.token);
           setPortfolioDialog(d => d && d.type === 'addlist' ? { ...d, ...apply(data), loading: false } : d);
         } catch (err) {
           setPortfolioDialog(d => d && d.type === 'addlist' ? { ...d, loading: false, error: err.message } : d);
@@ -2243,11 +2252,16 @@
         if (field === 'team') { setPortfolioDialog({ ...d, team: value, space: '', folder: '', list: '', spaces: [], folders: [], folderless: [], lists: [] }); if (value) addListLoad({ cardId: d.cardId }, `team/${value}/space`, (x) => ({ spaces: x.spaces || [] })); }
         if (field === 'space') {
           setPortfolioDialog({ ...d, space: value, folder: '', list: '', folders: [], folderless: [], lists: [] });
-          if (value) addListLoad({ cardId: d.cardId }, `space/${value}/folder`, (x) => ({ folders: x.folders || [] }))
-            .then(() => addListLoad({ cardId: d.cardId }, `space/${value}/list`, (x) => ({ folderless: x.lists || [] })));
+          if (value) addListLoad({ cardId: d.cardId }, `space/${value}/folder`, (x) => ({ folders: x.folders || [] }), 'folders')
+            .then(() => addListLoad({ cardId: d.cardId }, `space/${value}/list`, (x) => ({ folderless: x.lists || [] }), 'lists'));
         }
-        if (field === 'folder') { setPortfolioDialog({ ...d, folder: value, list: '', lists: [] }); if (value) addListLoad({ cardId: d.cardId }, `folder/${value}/list`, (x) => ({ lists: x.lists || [] })); }
+        if (field === 'folder') { setPortfolioDialog({ ...d, folder: value, list: '', lists: [] }); if (value) addListLoad({ cardId: d.cardId }, `folder/${value}/list`, (x) => ({ lists: x.lists || [] }), 'lists'); }
         if (field === 'list') setPortfolioDialog({ ...d, list: value });
+        if (field === 'archived') { // hiding archived ones drops an archived folder or list that was picked
+          const folderGone = !value && d.folders.find(f => String(f.id) === String(d.folder))?._archived;
+          const listGone = !value && (folderGone || (d.folder ? d.lists : d.folderless).find(l => String(l.id) === String(d.list))?._archived);
+          setPortfolioDialog({ ...d, showArchived: value, ...(folderGone ? { folder: '', lists: [] } : {}), ...(listGone ? { list: '' } : {}) });
+        }
       };
       const handleAddListToCard = () => {
         const d = portfolioDialog;
@@ -4320,11 +4334,25 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
                     </div>
                   )}
                   {selectedSpace && (
+                    <label className="-mt-2 flex items-center gap-2 text-sm text-slate-300 cursor-pointer w-fit">
+                      <input id="connect-archived" type="checkbox" checked={showArchivedLists} onChange={(e) => {
+                        const on = e.target.checked;
+                        setShowArchivedLists(on);
+                        if (!on) { // hiding archived ones drops an archived folder or list that was picked
+                          const folderGone = folders.find(f => String(f.id) === String(selectedFolder))?._archived;
+                          if (folderGone) { setSelectedFolder(''); setSelectedList(''); }
+                          else if (availableLists.find(l => String(l.id) === String(selectedList))?._archived) setSelectedList('');
+                        }
+                      }} className="accent-indigo-500" />
+                      Show archived folders and lists
+                    </label>
+                  )}
+                  {selectedSpace && (
                     <div>
                       <label className="block text-sm font-medium text-slate-300 mb-1">3. Select Folder <span className="text-slate-500 font-normal">(Optional)</span></label>
                       <select value={selectedFolder} onChange={(e) => { setSelectedFolder(e.target.value); setSelectedList(''); }} className="w-full bg-slate-950/60 border border-transparent rounded-lg px-3 py-2 text-white neon-input neon-input-indigo">
                         <option value="" className="bg-slate-900 text-slate-300">-- Folderless / Direct to Space --</option>
-                        {folders.map(f => <option key={f.id} value={f.id} className="bg-slate-900 text-white">{f.name}</option>)}
+                        {folders.filter(f => showArchivedLists || !f._archived).map(f => <option key={f.id} value={f.id} className="bg-slate-900 text-white">{archivedLabel(f)}</option>)}
                       </select>
                     </div>
                   )}
@@ -4333,7 +4361,7 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
                       <label className="block text-sm font-medium text-slate-300 mb-1">4. Select Task List</label>
                       <select value={selectedList} onChange={(e) => setSelectedList(e.target.value)} className="w-full bg-slate-950/60 border border-transparent rounded-lg px-3 py-2 text-white neon-input neon-input-indigo">
                         <option value="" className="bg-slate-900 text-slate-300">-- Choose a List --</option>
-                        {availableLists.map(l => <option key={l.id} value={l.id} className="bg-slate-900 text-white">{l.name}</option>)}
+                        {availableLists.filter(l => showArchivedLists || !l._archived).map(l => <option key={l.id} value={l.id} className="bg-slate-900 text-white">{archivedLabel(l)}</option>)}
                       </select>
                     </div>
                   )}
@@ -4634,14 +4662,15 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
             const card = portfolio.find(c => c.id === d.cardId);
             if (!card) return null;
             const have = new Set((card.workflows || []).map(w => String(w.listId)));
-            const pool = d.folder ? d.lists : d.folderless;
+            const shown = (items) => d.showArchived ? items : items.filter(o => !o._archived);
+            const pool = shown(d.folder ? d.lists : d.folderless);
             const sel = (id, label, value, field, options, placeholder) => (
               <div className="mt-4">
                 <label htmlFor={id} className="block text-sm font-medium text-slate-300 mb-1">{label}</label>
                 <select id={id} value={value} onChange={e => addListChoose(field, e.target.value)} disabled={d.loading && options.length === 0}
                   className="w-full bg-slate-950/60 border border-transparent rounded-lg px-3 py-2 text-white neon-input neon-input-indigo disabled:opacity-50">
                   <option value="" className="bg-slate-900 text-slate-300">{d.loading && options.length === 0 ? 'Loading...' : placeholder}</option>
-                  {options.map(o => <option key={o.id} value={o.id} disabled={field === 'list' && have.has(String(o.id))} className="bg-slate-900 text-white">{o.name}{field === 'list' && have.has(String(o.id)) ? ' (already added)' : ''}</option>)}
+                  {options.map(o => <option key={o.id} value={o.id} disabled={field === 'list' && have.has(String(o.id))} className="bg-slate-900 text-white">{archivedLabel(o)}{field === 'list' && have.has(String(o.id)) ? ' (already added)' : ''}</option>)}
                 </select>
               </div>
             );
@@ -4649,7 +4678,13 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
               <p className="text-sm text-slate-400 -mt-2">Uses this dashboard's ClickUp key. {card.id === activeCardId ? 'The new list syncs right away.' : 'Its tasks load when you open this dashboard.'}</p>
               {sel('addlist-team', '1. Workspace', d.team, 'team', d.teams, '-- Choose a Workspace --')}
               {d.team && sel('addlist-space', '2. Space', d.space, 'space', d.spaces, '-- Choose a Space --')}
-              {d.space && sel('addlist-folder', '3. Folder (optional)', d.folder, 'folder', d.folders, '-- No Folder (lists directly in the space) --')}
+              {d.space && (
+                <label className="mt-3 flex items-center gap-2 text-sm text-slate-300 cursor-pointer w-fit">
+                  <input id="addlist-archived" type="checkbox" checked={!!d.showArchived} onChange={e => addListChoose('archived', e.target.checked)} className="accent-indigo-500" />
+                  Show archived folders and lists
+                </label>
+              )}
+              {d.space && sel('addlist-folder', '3. Folder (optional)', d.folder, 'folder', shown(d.folders), '-- No Folder (lists directly in the space) --')}
               {d.space && sel('addlist-list', '4. List', d.list, 'list', pool, '-- Choose a List --')}
               {d.error && (
                 <div className="mt-4 p-3 bg-red-950/30 border border-red-900/50 rounded-xl text-sm text-red-300 flex items-start"><AlertTriangle className="h-4 w-4 text-red-400 mr-2 shrink-0 mt-0.5" aria-hidden="true" /><span>{d.error}</span></div>
