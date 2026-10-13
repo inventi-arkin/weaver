@@ -6,7 +6,7 @@
   <title>Weaver - Thread Support and Development together</title>
   <meta name="referrer" content="no-referrer">
   <!-- Release version shown in the page footer; bump on every upload (YYYY.MM.DD-N) -->
-  <meta name="weaver-version" content="2026.10.13-3">
+  <meta name="weaver-version" content="2026.10.13-4">
   
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -1061,7 +1061,8 @@
         lastListsWriteRef.current = json;
         // portfolios FR-10: the lists are always saved with the card they belong to, so another browser never applies them to a different dashboard
         const current = { portfolioId: currentPortfolioIdRef.current || null, cardId: activeCardIdRef.current || null };
-        teamWrite(() => setDoc(userDoc(user.uid), { lists, current }, { merge: true }), 'your lists', 'user-lists');
+        // listsCardId names the card these lists belong to; current alone can change first (setOpenCard), before the new lists are saved
+        teamWrite(() => setDoc(userDoc(user.uid), { lists, listsCardId: current.cardId, current }, { merge: true }), 'your lists', 'user-lists');
       };
       
       const [completionFilterType, setCompletionFilterType] = useState('none');
@@ -2482,13 +2483,16 @@
             // FR-22: the first load after the update seeds my lists from this browser
             const lists = mappedWorkflowsRef.current.map(listMeta);
             lastListsWriteRef.current = JSON.stringify(lists);
-            teamWrite(() => setDoc(userDoc(user.uid), { lists, seen: {}, createdAt: Date.now() }, { merge: true }), 'your lists', 'user-lists');
+            teamWrite(() => setDoc(userDoc(user.uid), { lists, listsCardId: activeCardIdRef.current || null, seen: {}, createdAt: Date.now() }, { merge: true }), 'your lists', 'user-lists');
           } else {
             const d = snap.data();
             setTeamSeen(d.seen || {});
             setRemoteCurrent(prev => JSON.stringify(prev) === JSON.stringify(d.current || null) ? prev : (d.current || null));
             // portfolios FR-10: lists saved by another browser for a different dashboard are not this dashboard's lists
-            const sameCard = !('current' in d) || (d.current?.cardId || null) === (activeCardIdRef.current || null);
+            // A switch saves the open card first and its lists after, so a snapshot can name the new card with the old card's lists;
+            // only lists saved for the open card apply (listsCardId; older versions only wrote current)
+            const listsOwner = 'listsCardId' in d ? d.listsCardId : ('current' in d ? d.current?.cardId : activeCardIdRef.current);
+            const sameCard = (listsOwner || null) === (activeCardIdRef.current || null);
             if (Array.isArray(d.lists) && sameCard) {
               const remote = d.lists.map(listMeta);
               const json = JSON.stringify(remote);
