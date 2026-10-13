@@ -6,7 +6,7 @@
   <title>Weaver - Thread Support and Development together</title>
   <meta name="referrer" content="no-referrer">
   <!-- Release version shown in the page footer; bump on every upload (YYYY.MM.DD-N) -->
-  <meta name="weaver-version" content="2026.10.12-3">
+  <meta name="weaver-version" content="2026.10.13-1">
   
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -71,6 +71,15 @@
       border-color: #10b981;
       text-shadow: 0 0 5px #ffffff, 0 0 10px #ffffff, 0 0 20px #ffffff;
       box-shadow: 0 0 5px #10b981, 0 0 20px #10b981, 0 0 50px #10b981, 0 0 100px #10b981;
+      outline: none;
+    }
+
+    .btn-neon-rose:hover, .btn-neon-rose:focus {
+      color: #ffffff;
+      background: #f43f5e;
+      border-color: #f43f5e;
+      text-shadow: 0 0 5px #ffffff, 0 0 10px #ffffff, 0 0 20px #ffffff;
+      box-shadow: 0 0 5px #f43f5e, 0 0 20px #f43f5e, 0 0 50px #f43f5e, 0 0 100px #f43f5e;
       outline: none;
     }
 
@@ -228,7 +237,7 @@
       Clock, Calendar, Flag, Users, TrendingDown, TrendingUp, Target, Tag, X, Activity, PieChart,
       Bug, ShieldAlert, Zap, Info as InfoIcon, Download, Image as ImageIcon, BarChart2,
       LayoutDashboard, Briefcase, Pencil, Check, PauseCircle, WifiOff, CloudOff, ShieldCheck, ShieldX,
-      Archive, CalendarX, Gauge
+      Archive, CalendarX, Gauge, ChevronLeft
     } from 'lucide-react';
 
     const firebaseConfig = {
@@ -964,6 +973,14 @@
       const [clickUpToken, setClickUpToken] = useState(() => localStorage.getItem(`weaver_clickup_conn_${appId}`) || '');
       const [needsReconnect, setNeedsReconnect] = useState(false);
       const [reconnectConnId, setReconnectConnId] = useState(null);
+      // saved-keys: the user's keys on weaver-api (labels only, never key material) offered in the connect dialog
+      const [savedKeys, setSavedKeys] = useState({ state: 'off', list: [] }); // off | loading | error | ready
+      const [showPasteField, setShowPasteField] = useState(false);
+      const [reconnectKeyId, setReconnectKeyId] = useState(null); // FR-8: a rejected key with no Portfolio card in this browser
+      const [forgetKeyId, setForgetKeyId] = useState(null);
+      const [forgetBusy, setForgetBusy] = useState(false);
+      const [forgetError, setForgetError] = useState(null);
+      const [keyLiveMsg, setKeyLiveMsg] = useState('');
       const [migration, setMigration] = useState(null);
       const [tempToken, setTempToken] = useState('');
       const [clickUpError, setClickUpError] = useState(null);
@@ -1441,11 +1458,33 @@
         }
       };
 
+      // saved-keys FR-5: one Worker call, no ClickUp call. Also refreshes the Portfolio token rows with the same answer.
+      const loadSavedKeys = async () => {
+        if (!canSaveToken) { setSavedKeys({ state: 'off', list: [] }); return; }
+        setSavedKeys({ state: 'loading', list: [] });
+        try {
+          const data = await callApi('connections/status');
+          const list = data.connections || [];
+          setSavedKeys({ state: 'ready', list });
+          setTokenStatuses(Object.fromEntries(list.map(c => [c.connId, c])));
+        } catch (e) {
+          setSavedKeys({ state: 'error', list: [] });
+        }
+      };
+
+      // Opens the connect dialog on the saved keys (Add Connection, or Connect ClickUp with no key in use)
+      const openKeyPicker = () => {
+        setShowPasteField(false); setReconnectKeyId(null);
+        setForgetKeyId(null); setForgetError(null); setKeyLiveMsg('');
+        loadSavedKeys();
+      };
+
       const handleConnectClickUp = () => {
         setSelectedTeam('');
         setSelectedSpace('');
         setSelectedFolder('');
         setSelectedList('');
+        setSavedKeys({ state: 'off', list: [] });
         setIsSwitchModalOpen(true);
         if (!canSaveToken && clickUpToken !== 'mock_token') {
           setIntegrationStep('signin_required');
@@ -1459,7 +1498,9 @@
             .then(data => { setTeams(data.teams || []); setIntegrationStep('selecting'); })
             .catch(err => { setClickUpError(err.message); setIntegrationStep('entering_token'); });
         } else {
+          setReconnectConnId(null);
           setIntegrationStep('entering_token');
+          openKeyPicker();
         }
       };
 
@@ -1467,6 +1508,7 @@
         setIntegrationStep('idle');
         setTempToken('');
         setClickUpError(null);
+        setReconnectKeyId(null); setForgetKeyId(null); setForgetError(null);
         setIsSwitchModalOpen(false);
       };
 
@@ -1479,12 +1521,14 @@
           // a connection the server no longer knows falls back to saving a new one
           let saved = null;
           const reconnectTarget = reconnectConnId ? portfolio.find(c => c.id === reconnectConnId) : null;
-          if (reconnectTarget && UUID_RE.test(reconnectTarget.token || '')) {
-            try { saved = await callApi(`connections/${reconnectTarget.token}`, { method: 'PUT', body: { token: tempToken } }); }
+          const putId = reconnectTarget && UUID_RE.test(reconnectTarget.token || '') ? reconnectTarget.token : reconnectKeyId; // saved-keys FR-8
+          if (putId) {
+            try { saved = await callApi(`connections/${putId}`, { method: 'PUT', body: { token: tempToken } }); }
             catch (e) { if (e.kind !== 'unknownconn') throw e; }
           }
           const { connId, workspaces } = saved || await saveConnection(tempToken);
           setTempToken('');
+          setReconnectKeyId(null);
           if (reconnectConnId) {
             // Re-entering the token of a saved connection: keep its lists, only swap the connection id
             const target = portfolio.find(c => c.id === reconnectConnId);
@@ -1509,20 +1553,75 @@
               return;
             }
           }
-          setTeams(workspaces || []);
-          if (connId !== clickUpToken && mappedWorkflowsRef.current.length > 0) {
-            // A different account: park the current connection in the Portfolio and start with a clean mapping
-            persistConnection(clickUpToken, mappedWorkflowsRef.current);
-            commitWorkflows([]);
-          }
-          setClickUpToken(connId);
-          localStorage.setItem(`weaver_clickup_conn_${appId}`, connId);
-          setNeedsReconnect(false);
-          setActiveView('dashboard');
-          setIntegrationStep('selecting');
+          startMapping(connId, workspaces);
         } catch (err) {
           setClickUpError(err.message);
           setIntegrationStep('entering_token');
+        }
+      };
+
+      // A connection is ready (pasted or picked from the saved keys): choose workspace, space, folder and list next
+      const startMapping = (connId, workspaces) => {
+        setTeams(workspaces || []);
+        if (connId !== clickUpToken && mappedWorkflowsRef.current.length > 0) {
+          // A different account: park the current connection in the Portfolio and start with a clean mapping
+          persistConnection(clickUpToken, mappedWorkflowsRef.current);
+          commitWorkflows([]);
+        }
+        setClickUpToken(connId);
+        localStorage.setItem(`weaver_clickup_conn_${appId}`, connId);
+        setNeedsReconnect(false);
+        setActiveView('dashboard');
+        setIntegrationStep('selecting');
+      };
+
+      // saved-keys FR-7: a valid or not-checked key works like a successful paste, without POST /connections
+      const handlePickSavedKey = async (k) => {
+        setIntegrationStep('connecting');
+        setClickUpError(null);
+        const wasMissing = needsReconnect;
+        try {
+          const data = await fetchClickUp('team', k.connId);
+          startMapping(k.connId, data.teams);
+        } catch (err) {
+          if (k.connId !== clickUpToken) setNeedsReconnect(wasMissing); // a 404 for the picked key says nothing about the active connection
+          setClickUpError(err.message);
+          setIntegrationStep('entering_token');
+          if (err.kind === 'unknownconn' || err.kind === 'token') loadSavedKeys(); // forgotten elsewhere or now rejected: show the list as it is now
+        }
+      };
+
+      // saved-keys FR-8: paste a new key for a rejected one; its connection id and lists are kept
+      const handlePickRejectedKey = (k) => {
+        const card = portfolio.filter(c => c.token === k.connId).sort((a, b) => (b.lastUsed || 0) - (a.lastUsed || 0))[0];
+        setReconnectConnId(card ? card.id : null);
+        setReconnectKeyId(card ? null : k.connId);
+        setTempToken(''); setClickUpError(null);
+        setShowPasteField(true);
+      };
+
+      const backToSavedKeys = () => {
+        setReconnectConnId(null); setReconnectKeyId(null);
+        setTempToken(''); setClickUpError(null);
+        setShowPasteField(false);
+      };
+
+      // saved-keys FR-11: delete the key on weaver-api and the Portfolio cards in this browser that use it
+      const handleForgetKey = async (k, names) => {
+        if (k.connId === clickUpToken) return;
+        setForgetBusy(true); setForgetError(null);
+        try {
+          await callApi(`connections/${k.connId}`, { method: 'DELETE' });
+          updatePortfolio(prev => prev.filter(c => c.token !== k.connId));
+          setSavedKeys(s => ({ ...s, list: s.list.filter(x => x.connId !== k.connId) }));
+          setTokenStatuses(prev => { const next = { ...prev }; delete next[k.connId]; return next; });
+          setForgetKeyId(null);
+          setKeyLiveMsg('Key forgotten');
+          logTransaction('ClickUp Key Forgotten', names, 'unlink');
+        } catch (e) {
+          setForgetError("Couldn't forget this key. Try again.");
+        } finally {
+          setForgetBusy(false);
         }
       };
 
@@ -1903,6 +2002,7 @@
         setIntegrationStep(canSaveToken ? 'entering_token' : 'signin_required');
         setIsSwitchModalOpen(true);
         if (mappedWorkflows.length === 0) setActiveView('dashboard');
+        openKeyPicker();
       };
 
       const handleRenameConnection = (id) => {
@@ -1914,8 +2014,8 @@
 
       const handleRemoveConnection = (conn) => {
         if (conn.token === clickUpToken) return;
-        if (!window.confirm(`Remove "${conn.name}" from your Portfolio? Its ClickUp token will be deleted from Weaver's server. You'll need to paste it again to reconnect.`)) return;
-        if (UUID_RE.test(conn.token || '')) callApi(`connections/${conn.token}`, { method: 'DELETE' }).catch(e => console.warn(e.message));
+        // saved-keys FR-12: the key stays saved on weaver-api; Forget key in the connect dialog deletes it
+        if (!window.confirm(`Remove "${conn.name}" from your Portfolio? Its ClickUp key stays saved, so you can pick it again under Add Connection. To delete the key, use Forget key there.`)) return;
         updatePortfolio(prev => prev.filter(c => c.id !== conn.id));
         logTransaction('Portfolio Connection Removed', conn.name, 'unlink');
       };
@@ -1923,7 +2023,8 @@
       const handleReconnect = (conn) => {
         setSelectedTeam(''); setSelectedSpace(''); setSelectedFolder(''); setSelectedList('');
         setTempToken(''); setClickUpError(null);
-        setReconnectConnId(conn.id);
+        setReconnectConnId(conn.id); setReconnectKeyId(null);
+        setSavedKeys({ state: 'off', list: [] });
         setIntegrationStep(canSaveToken ? 'entering_token' : 'signin_required');
         setIsSwitchModalOpen(true);
         if (mappedWorkflows.length === 0) setActiveView('dashboard');
@@ -3789,31 +3890,124 @@
               </div>
             )}
 
-            {integrationStep === 'entering_token' && (
-              <div className="bg-slate-900/40 backdrop-blur-md rounded-xl border border-white/10 shadow-2xl p-8 animate-in fade-in slide-in-from-bottom-4">
+            {integrationStep === 'entering_token' && (() => {
+              // saved-keys design S1-S6: saved keys first when the user has any, the paste field otherwise
+              const reconnecting = !!(reconnectConnId || reconnectKeyId);
+              const hasKeys = savedKeys.state === 'ready' && savedKeys.list.length > 0;
+              const pickerView = !showPasteField && !reconnecting && (savedKeys.state === 'loading' || hasKeys);
+              const keyInfo = (k) => {
+                const cards = portfolio.filter(c => c.token === k.connId).sort((a, b) => (b.lastUsed || 0) - (a.lastUsed || 0));
+                return { cards, names: (k.workspaces || []).map(w => w.name).join(', '), lastUsed: cards[0]?.lastUsed || 0 };
+              };
+              const errorBox = clickUpError && (
+                <div className="p-4 bg-red-950/30 border border-red-900/50 rounded-xl text-sm text-red-300">
+                  <div className="flex items-start mb-3"><AlertTriangle className="h-5 w-5 text-red-400 mr-2 shrink-0 mt-0.5" /><span className="font-medium">{clickUpError}</span></div>
+                  <button onClick={handleMockClickUpData} className="w-full flex justify-center py-2 px-4 border border-red-900/50 rounded-lg shadow-sm text-sm font-medium text-red-200 bg-red-950/40 hover:bg-red-900/30 transition-colors neon-border-rose">Bypass with Mock ClickUp Data (Preview)</button>
+                </div>
+              );
+              const header = (title, sub) => (
                 <div className="flex items-center mb-6">
                   <div className="bg-indigo-500/10 p-2.5 rounded-lg mr-4 border border-indigo-500/20"><Key className="h-6 w-6 text-indigo-400" /></div>
-                  <div><h3 className="text-lg font-semibold text-white">Enter ClickUp API Token</h3><p className="text-sm text-slate-400">Provide your Personal Access Token to retrieve your Workspaces.</p></div>
+                  <div><h3 className="text-lg font-semibold text-white">{title}</h3><p className="text-sm text-slate-400">{sub}</p></div>
                 </div>
+              );
+              const liveRegion = <p className="sr-only" aria-live="polite">{keyLiveMsg}</p>;
+              const card = (inner) => <div className="bg-slate-900/40 backdrop-blur-md rounded-xl border border-white/10 shadow-2xl p-5 sm:p-8 animate-in fade-in slide-in-from-bottom-4">{inner}{liveRegion}</div>;
+
+              if (pickerView) {
+                const statusText = (s) => s === 'valid' ? 'Token OK' : s === 'rejected' ? 'Token rejected' : 'Not checked yet';
+                const chip = (s) => s === 'valid'
+                  ? <span className="shrink-0 inline-flex items-center text-xs rounded-full px-2.5 py-1 border bg-emerald-500/10 border-emerald-500/20 text-emerald-400"><ShieldCheck className="h-3.5 w-3.5 mr-1.5" aria-hidden="true" />Token OK</span>
+                  : s === 'rejected'
+                  ? <span className="shrink-0 inline-flex items-center text-xs rounded-full px-2.5 py-1 border bg-rose-950/30 border-rose-900/50 text-rose-300"><ShieldX className="h-3.5 w-3.5 mr-1.5" aria-hidden="true" />Token rejected</span>
+                  : <span className="shrink-0 inline-flex items-center text-xs rounded-full px-2.5 py-1 border bg-slate-800/40 border-white/5 text-slate-400"><Clock className="h-3.5 w-3.5 mr-1.5" aria-hidden="true" />Not checked yet</span>;
+                const keys = savedKeys.list.map(k => ({ k, ...keyInfo(k) })).sort((a, b) => (b.lastUsed - a.lastUsed) || ((b.k.savedAt || 0) - (a.k.savedAt || 0)));
+                const cancelForget = (id) => { setForgetKeyId(null); setForgetError(null); setTimeout(() => document.querySelector(`[data-forget="${id}"]`)?.focus(), 0); };
+                return card(<>
+                  {header('Connect ClickUp', 'Pick a saved key or paste a new one.')}
+                  {errorBox && <div className="mb-4">{errorBox}</div>}
+                  <p className="text-xs font-bold uppercase tracking-wider text-slate-300">Your saved ClickUp keys</p>
+                  <p className="text-xs text-slate-500 mt-1 mb-3">Keys (Personal Access Tokens) you saved before. They stay on Weaver's server; this browser never sees them.</p>
+                  {savedKeys.state === 'loading' ? (
+                    <ul aria-label="Your saved ClickUp keys" aria-busy="true" className="space-y-2">
+                      <li className="sr-only">Loading your saved keys</li>
+                      {[0, 1, 2].map(i => <li key={i} className="rounded-lg border border-white/5 bg-slate-950/40 px-4 py-3 animate-pulse motion-reduce:animate-none"><div className="h-3 w-48 rounded bg-slate-700/60"></div><div className="h-2.5 w-64 max-w-full rounded bg-slate-800 mt-2"></div></li>)}
+                    </ul>
+                  ) : (
+                    <ul aria-label="Your saved ClickUp keys" className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                      {keys.map(({ k, cards, names }) => {
+                        const title = names
+                          ? <span className="text-sm font-medium text-white truncate" title={names}>{names}</span>
+                          : <span className="text-sm text-slate-300 italic">Saved key</span>;
+                        if (forgetKeyId === k.connId) return (
+                          <li key={k.connId} onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); cancelForget(k.connId); } }} className="rounded-lg border border-rose-500/30 bg-rose-950/20 p-4">
+                            <div className="mb-2 flex min-w-0">{title}</div>
+                            <p className="text-sm text-rose-200">Forget this ClickUp key? Weaver deletes it from its server.{cards.length > 0 && ` Portfolio cards that use it (${cards.map(c => c.name).join(', ')}) are removed too.`} Your ClickUp account and tasks are not affected.</p>
+                            {forgetError && <p className="text-sm text-rose-300 mt-2">{forgetError}</p>}
+                            <div className="flex justify-end gap-3 mt-3">
+                              <button autoFocus onClick={() => cancelForget(k.connId)} className="px-4 py-2 text-sm font-medium text-slate-300 rounded-lg neon-border-slate transition-all">Cancel</button>
+                              <button onClick={() => handleForgetKey(k, names || 'Saved key')} disabled={forgetBusy} className="btn-neon btn-neon-rose disabled:opacity-60">{forgetBusy ? 'Forgetting...' : 'Forget key'}</button>
+                            </div>
+                          </li>
+                        );
+                        const active = k.connId === clickUpToken;
+                        const used = cards.length ? `Used by: ${cards.slice(0, 2).map(c => c.name).join(', ')}${cards.length > 2 ? ` +${cards.length - 2} more` : ''}` : 'Not used by any Portfolio card';
+                        const saved = k.savedAt ? `Saved ${new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(k.savedAt))} · ` : '';
+                        const label = `${names || 'Saved key'}, ${statusText(k.status)}, ${cards.length ? 'used by ' + cards.map(c => c.name).join(' and ') : 'not used by any Portfolio card'}`;
+                        return (
+                          <li key={k.connId} className="rounded-lg border border-white/5 bg-slate-950/40 flex items-stretch neon-border-indigo focus-within:ring-2 focus-within:ring-indigo-400">
+                            <button onClick={() => k.status === 'rejected' ? handlePickRejectedKey(k) : handlePickSavedKey(k)} aria-label={label} className="flex-1 min-w-0 text-left px-4 py-3 focus:outline-none">
+                              <span className="flex flex-wrap sm:flex-nowrap items-center gap-2 min-w-0">{title}<span className="sm:ml-auto flex items-center gap-2">{chip(k.status)}<ChevronRight className="h-4 w-4 text-slate-500 hidden sm:block" aria-hidden="true" /></span></span>
+                              <span className="block text-xs text-slate-400 mt-1">
+                                {k.status === 'rejected'
+                                  ? <><span className="text-rose-300">ClickUp rejected this key. Paste a new one to keep its lists.</span> · {used}</>
+                                  : <>{saved}{used}{active && <span className="text-emerald-400 font-medium"> · In use</span>}</>}
+                              </span>
+                            </button>
+                            <span className="shrink-0 self-end m-1.5" title={active ? 'Switch to another connection first' : 'Forget key'}>
+                              <button data-forget={k.connId} onClick={() => { setForgetKeyId(k.connId); setForgetError(null); setKeyLiveMsg(''); }} disabled={active} aria-label={`Forget key for ${names || 'saved key'}`} className="h-10 w-10 inline-flex items-center justify-center rounded-md text-slate-500 neon-border-rose disabled:opacity-30 disabled:pointer-events-none"><Trash2 className="h-4 w-4" /></button>
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                  <div className="flex flex-col sm:flex-row sm:justify-between gap-3 pt-5">
+                    <button onClick={() => { setShowPasteField(true); setClickUpError(null); setForgetKeyId(null); }} className="btn-neon btn-neon-indigo w-full sm:w-auto"><Plus className="h-3.5 w-3.5 mr-1.5" />Use a different key</button>
+                    <button onClick={handleCancelIntegration} className="px-4 py-2 text-sm font-medium text-slate-400 rounded-lg neon-border-slate transition-all">Cancel</button>
+                  </div>
+                </>);
+              }
+
+              const pickedKey = reconnecting && savedKeys.list.find(k => k.connId === (reconnectKeyId || portfolio.find(c => c.id === reconnectConnId)?.token));
+              const picked = pickedKey && keyInfo(pickedKey);
+              return card(<>
+                {reconnecting && hasKeys
+                  ? header('Reconnect ClickUp', 'ClickUp rejected the saved key. Paste a new one to keep its lists.')
+                  : header('Enter ClickUp API Token', 'Provide your Personal Access Token to retrieve your Workspaces.')}
+                {picked && <p className="text-xs text-slate-400 -mt-3 mb-5">For: <span className="text-slate-200">{picked.names || 'Saved key'}</span>{picked.cards.length > 0 && ` · used by ${picked.cards.map(c => c.name).join(', ')}`}</p>}
+                {hasKeys && (showPasteField || reconnecting) && (
+                  <button onClick={backToSavedKeys} className="text-sm text-indigo-300 hover:text-indigo-200 mb-4 inline-flex items-center"><ChevronLeft className="h-4 w-4 mr-1" aria-hidden="true" />Back to saved keys</button>
+                )}
+                {savedKeys.state === 'error' && !reconnecting && (
+                  <div role="status" className="mb-4 flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+                    <AlertTriangle className="w-4 h-4 shrink-0" aria-hidden="true" /><span>Couldn't load your saved keys. <button onClick={loadSavedKeys} className="underline hover:text-white">Try again</button></span>
+                  </div>
+                )}
                 <div className="space-y-4">
                   <div>
                     <label className="block text-sm font-medium text-slate-300 mb-1">Personal Access Token</label>
                     <p className="text-xs text-slate-500 mb-2">Your token is sent once, checked with ClickUp and stored encrypted on Weaver's server. It is not kept in this browser.</p>
                     <input type="password" autoComplete="off" value={tempToken} onChange={(e) => setTempToken(e.target.value)} placeholder="pk_123456789_..." className="w-full bg-slate-950/60 border border-transparent rounded-lg px-4 py-3 text-white neon-input neon-input-indigo" />
                   </div>
-                  {clickUpError && (
-                    <div className="p-4 bg-red-950/30 border border-red-900/50 rounded-xl text-sm text-red-300">
-                      <div className="flex items-start mb-3"><AlertTriangle className="h-5 w-5 text-red-400 mr-2 shrink-0 mt-0.5" /><span className="font-medium">{clickUpError}</span></div>
-                      <button onClick={handleMockClickUpData} className="w-full flex justify-center py-2 px-4 border border-red-900/50 rounded-lg shadow-sm text-sm font-medium text-red-200 bg-red-950/40 hover:bg-red-900/30 transition-colors neon-border-rose">Bypass with Mock ClickUp Data (Preview)</button>
-                    </div>
-                  )}
+                  {errorBox}
                   <div className="flex justify-end space-x-3 pt-2">
                     <button onClick={handleCancelIntegration} className="px-4 py-2 text-sm font-medium text-slate-400 rounded-lg neon-border-slate transition-all">Cancel</button>
                     <button onClick={handleAuthenticateToken} disabled={!tempToken} className="btn-neon btn-neon-indigo">Authenticate</button>
                   </div>
                 </div>
-              </div>
-            )}
+              </>);
+            })()}
 
             {integrationStep === 'connecting' && (
               <div className="bg-slate-900/40 backdrop-blur-md rounded-xl border border-white/10 shadow-2xl p-12 flex flex-col items-center justify-center text-center animate-in fade-in">
