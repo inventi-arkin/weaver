@@ -6,7 +6,7 @@
   <title>Weaver - Thread Support and Development together</title>
   <meta name="referrer" content="no-referrer">
   <!-- Release version shown in the page footer; bump on every upload (YYYY.MM.DD-N) -->
-  <meta name="weaver-version" content="2026.10.13-5">
+  <meta name="weaver-version" content="2026.10.13-6">
   
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -1025,6 +1025,14 @@
       // team-data FR-23: every Firestore write goes through here; the local change is already applied, so a failure only queues a retry
       // `key`: a newer write with the same key replaces a queued one (whole-document saves must not be retried stale)
       const inflightWritesRef = useRef(new Set()); // writes not yet acknowledged; a dashboard switch waits for them before reloading
+      // Right after sign-in Firestore can still send a request with the previous (Preview) credentials, which is refused.
+      // A refusal in the first seconds of a sign-in is retried once, quietly; only a refusal after that raises the no-access banner.
+      const DENIED_GRACE_MS = 5000;
+      const deniedGraceUntilRef = useRef(0);
+      const deniedRetryRef = useRef(null);
+      useEffect(() => { deniedGraceUntilRef.current = user?.isTeam ? Date.now() + DENIED_GRACE_MS : 0; }, [user?.uid, user?.isTeam]);
+      const inDeniedGrace = () => Date.now() < deniedGraceUntilRef.current;
+      const afterDeniedGrace = (fn) => setTimeout(fn, Math.max(0, deniedGraceUntilRef.current - Date.now()) + 500);
       const teamWrite = async (write, what, key = null) => {
         const run = Promise.resolve().then(write);
         inflightWritesRef.current.add(run);
@@ -1033,6 +1041,10 @@
           return true;
         } catch (err) {
           console.error(`Error saving ${what}:`, err);
+          if (err.code === 'permission-denied' && inDeniedGrace()) {
+            console.warn(`Saving ${what} was refused right after sign-in; trying again`);
+            return new Promise(res => afterDeniedGrace(() => res(teamWrite(write, what, key))));
+          }
           if (err.code === 'permission-denied') { setTeamDenied(true); clearDismissed(['team-denied']); return false; }
           pendingTeamWrites.current = [...pendingTeamWrites.current.filter(p => !key || p.key !== key), { write, what, key }];
           setTeamSavePending(pendingTeamWrites.current.length);
@@ -1049,6 +1061,11 @@
         setTeamSavePending(pendingTeamWrites.current.length);
       };
       const teamReadError = (what) => (err) => {
+        if (err.code === 'permission-denied' && inDeniedGrace()) {
+          console.warn(`Reading ${what} was refused right after sign-in; trying again`);
+          if (!deniedRetryRef.current) deniedRetryRef.current = afterDeniedGrace(() => { deniedRetryRef.current = null; setTeamRetryTick(t => t + 1); }); // one re-subscribe for all of them
+          return;
+        }
         console.error(`Error fetching ${what}:`, err);
         if (err.code === 'permission-denied') { setTeamDenied(true); clearDismissed(['team-denied']); return; }
         setTeamLoadFailed(true);
