@@ -6,7 +6,7 @@
   <title>Weaver - Thread Support and Development together</title>
   <meta name="referrer" content="no-referrer">
   <!-- Release version shown in the page footer; bump on every upload (YYYY.MM.DD-N) -->
-  <meta name="weaver-version" content="2026.10.14-2">
+  <meta name="weaver-version" content="2026.10.14-3">
   
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -2681,6 +2681,68 @@
         });
       }, [user, mappedWorkflows, scopeByList]);
 
+      // sprint-metrics FR-33, FR-34: recorded status changes (ClickUp webhooks, kept by weaver-api) for the open dashboard.
+      // The first load reads the sprint's days; after that only yesterday and today, and only when a task's status or
+      // last update changed since the last read. Past days stay cached in this tab.
+      const [statusHistory, setStatusHistory] = useState({ connId: null, recorders: [], days: {} });
+      const historyReadRef = useRef({ connId: null, fp: null, loaded: false });
+      useEffect(() => {
+        const connId = clickUpToken;
+        if (!user?.isTeam || !connId || connId === 'mock_token' || isLegacyToken(connId) || !mappedWorkflows.length) return;
+        const flat = (tasks) => (tasks || []).flatMap(t => [t, ...flat(t.subtasks)]);
+        const fp = mappedWorkflows.flatMap(w => flat(w.tasks)).map(t => `${t.id}:${t.status?.status}:${t.date_updated}`).join('|');
+        const h = historyReadRef.current;
+        const sameConn = h.connId === connId;
+        if (sameConn && h.fp === fp) return;
+        const starts = mappedWorkflows.map(w => Number(w.listStartDate)).filter(Boolean);
+        const now = Date.now();
+        const from = sameConn && h.loaded ? now - 2 * 86400000 : (starts.length ? Math.min(...starts) : now - 14 * 86400000);
+        historyReadRef.current = { connId, fp, loaded: sameConn && h.loaded };
+        callApi('status-history', { method: 'POST', connId, body: { from, to: now } })
+          .then(r => {
+            if (historyReadRef.current.connId !== connId) return;
+            historyReadRef.current.loaded = true;
+            setStatusHistory(prev => ({ connId, recorders: r.recorders || [], days: { ...(prev.connId === connId ? prev.days : {}), ...(r.days || {}) } }));
+          })
+          .catch(() => { if (historyReadRef.current.connId === connId) historyReadRef.current.fp = null; }); // try again on the next sync
+      }, [user, clickUpToken, mappedWorkflows]);
+
+      // FR-31, FR-35: the status-history recorder of each workspace a Portfolio card's key can see
+      const [recordersByConn, setRecordersByConn] = useState({}); // connId -> { state: loading|ready|error, list, busy }
+      const loadRecorders = (connId) => {
+        setRecordersByConn(p => ({ ...p, [connId]: { ...(p[connId] || {}), state: p[connId]?.list ? 'ready' : 'loading' } }));
+        callApi('recorders', { connId })
+          .then(r => setRecordersByConn(p => ({ ...p, [connId]: { state: 'ready', list: r.recorders || [] } })))
+          .catch(() => setRecordersByConn(p => ({ ...p, [connId]: { ...(p[connId] || {}), state: 'error' } })));
+      };
+      const setRecorder = async (connId, rec, on) => {
+        const repair = on && rec.state === 'on'; // a failing webhook: delete it and create a new one
+        if (!on && !window.confirm(`Stop recording status history for ${rec.name}? Recorded history is kept; the charts go back to estimates from today on.`)) return;
+        setRecordersByConn(p => ({ ...p, [connId]: { ...(p[connId] || {}), busy: rec.teamId, error: null } }));
+        try {
+          if (repair) await callApi(`recorders/${rec.teamId}`, { method: 'DELETE', connId });
+          const r = await callApi(`recorders/${rec.teamId}`, { method: on ? 'POST' : 'DELETE', connId });
+          setRecordersByConn(p => ({ ...p, [connId]: { state: 'ready', list: (p[connId]?.list || []).map(x => x.teamId === rec.teamId ? r.recorder : x) } }));
+          historyReadRef.current.fp = null; // read the recorder state again with the next sync
+          logTransaction(on ? 'Status History On' : 'Status History Off', `${on ? 'Recording' : 'Stopped recording'} status history for ${rec.name}`, on ? 'info' : 'trash');
+        } catch (e) {
+          setRecordersByConn(p => ({ ...p, [connId]: { ...(p[connId] || {}), busy: null, error: e.message || 'Could not change the recorder.' } }));
+        }
+      };
+
+      // the recorder state (with ClickUp's webhook health) of the cards of the Portfolio being viewed: read on every visit
+      // to the Portfolio page, and for keys that appear while it is open
+      const recorderVisitRef = useRef(null);
+      useEffect(() => {
+        if (activeView !== 'portfolio' || !user?.isTeam) { recorderVisitRef.current = null; return; }
+        const visit = `${viewingPortfolioId}`;
+        const fresh = recorderVisitRef.current !== visit;
+        recorderVisitRef.current = visit;
+        const shown = viewingPortfolioId ? portfolios.filter(p => p.id === viewingPortfolioId) : portfolios;
+        const ids = [...new Set(shown.flatMap(p => p.cards || []).map(c => c.connId || c.token).filter(t => UUID_RE.test(t || '') && tokenStatuses[t]?.status !== 'rejected'))];
+        ids.forEach(id => { if (fresh || !recordersByConn[id]) loadRecorders(id); });
+      }, [activeView, viewingPortfolioId, portfolios, user]);
+
       // FR-16: a live toast for each new event by someone else, while this tab is visible
       const noteNewEvents = (listId, events) => {
         const known = knownEventIdsRef.current[listId];
@@ -3492,9 +3554,45 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
             ? scopeLinePoints.map((p, i) => { const y = 100 - (p.v / maxBurnupY) * 100; return i === 0 ? `M ${p.x},${y}` : `L ${p.x},${100 - (scopeLinePoints[i - 1].v / maxBurnupY) * 100} L ${p.x},${y}`; }).join(' ')
             : `M 0,${100 - (plottedScopeCount / maxBurnupY) * 100} L 100,${100 - (plottedScopeCount / maxBurnupY) * 100}`;
 
+        // sprint-metrics FR-37 to FR-42: real status history (ClickUp webhooks, kept by weaver-api) where it was recorded.
+        // A task's status on a day = the "to" of its last change up to then; before its first change, that change's "from";
+        // with no change since recording started, its current status. Days before recording started stay estimated (FR-41).
+        const histRecorders = statusHistory.connId === clickUpToken ? (statusHistory.recorders || []) : [];
+        const histSinces = histRecorders.map(r => Number(r.since)).filter(Boolean);
+        const historySince = histSinces.length ? Math.min(...histSinces) : null;
+        const historyUntil = histRecorders.some(r => r.state === 'on') ? Infinity : Math.max(0, ...histRecorders.map(r => Number(r.offAt) || 0));
+        const historyCovers = (ms) => historySince !== null && ms >= historySince && ms <= historyUntil;
+        const changesByTask = {};
+        if (historySince !== null) {
+            Object.values(statusHistory.days || {}).flat().forEach(c => { (changesByTask[c.task] = changesByTask[c.task] || []).push(c); });
+            Object.values(changesByTask).forEach(list => list.sort((a, b) => a.at - b.at));
+            // FR-37: a change the webhook missed shows up as a status different from the last recorded one
+            [...allFlatTasks, ...archivedFlatTasks].forEach(t => {
+                const list = changesByTask[t.id];
+                const cur = (t.status?.status || '').toLowerCase();
+                const last = list?.[list.length - 1];
+                const updated = parseDateMs(t.date_updated);
+                if (last && cur && last.to !== cur && updated > last.at) list.push({ task: t.id, from: last.to, to: cur, at: updated, inferred: true });
+            });
+        }
+        const statusColorByName = {};
+        [...allFlatTasks, ...archivedFlatTasks].forEach(t => { const n = (t.status?.status || '').toLowerCase(); if (n && t.status?.color && !statusColorByName[n]) statusColorByName[n] = t.status.color; });
+        const realStatusOn = (task, dateMs) => {
+            if (!historyCovers(dateMs)) return null;
+            const list = changesByTask[task.id] || [];
+            let last = null;
+            for (const c of list) { if (c.at <= dateMs) last = c; else break; }
+            if (last) return last.to;
+            if (list.length === 0) return (task.status?.status || '').toLowerCase() || null;
+            return list[0].from || null; // first change with no "from": unknown before it, so estimated
+        };
+        const dailyHistoryFull = historySince !== null && new Date(historySince).setHours(0, 0, 0, 0) <= new Date(minDate).setHours(0, 0, 0, 0) && historyUntil >= endChartDate;
+
         const getTaskStatusOnDate = (task, dateMs) => {
             const createdDate = parseDateMs(task.date_created);
             if (createdDate > 0 && dateMs < createdDate) return null; // Not created yet
+            const real = realStatusOn(task, dateMs); // FR-39: the recorded status, with the team's own status names and colours
+            if (real) return { status: real, color: statusColorByName[real] || '#94a3b8' };
 
             // Reconstruct timeline strictly from activity logs if they exist
             if (task.activity_logs && Array.isArray(task.activity_logs)) {
@@ -4008,6 +4106,37 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
             return { status, timeDisplay, avgMs };
         }).sort((a, b) => b.avgMs - a.avgMs);
 
+        // FR-38, FR-40, FR-42: time in each status from the recorded changes (working hours), longest wait and cycle time
+        const fmtWorkingMs = (ms) => {
+            const workingDayMs = 7 * 3600000; // a working day is 10am to 5pm
+            const days = Math.floor(ms / workingDayMs), hours = Math.floor((ms % workingDayMs) / 3600000), mins = Math.floor((ms % 3600000) / 60000);
+            return days > 0 ? `${days}d ${hours}h` : (hours > 0 ? `${hours}h ${mins}m` : `${mins}m`);
+        };
+        const histStatusStats = {};
+        const cycleTimes = [];
+        if (historySince !== null) {
+            filteredTasks.forEach(t => {
+                const list = changesByTask[t.id];
+                if (!list?.length) return;
+                list.forEach((c, i) => {
+                    const end = list[i + 1]?.at ?? (doneStatuses.includes(c.to) ? null : now);
+                    if (end === null || excludedStatusesForAccuracy.includes(c.to)) return;
+                    const ms = calculateWorkingMs(c.at, end);
+                    (histStatusStats[c.to] = histStatusStats[c.to] || { sum: 0, count: 0 });
+                    histStatusStats[c.to].sum += ms;
+                    histStatusStats[c.to].count++;
+                });
+                const started = list.find(c => !backlogStatuses.includes(c.to) && !doneStatuses.includes(c.to));
+                const finished = started && list.find(c => c.at > started.at && doneStatuses.includes(c.to));
+                if (finished) cycleTimes.push(calculateWorkingMs(started.at, finished.at));
+            });
+        }
+        const histTimeInStatusList = Object.entries(histStatusStats).map(([status, d]) => ({ status, avgMs: d.sum / d.count, timeDisplay: fmtWorkingMs(d.sum / d.count) })).sort((a, b) => b.avgMs - a.avgMs);
+        const timeInStatusRows = historySince !== null ? histTimeInStatusList : avgTimeInStatusList;
+        const longestWait = historySince !== null ? histTimeInStatusList[0] || null : null;
+        const cycleTimeAvg = cycleTimes.length ? fmtWorkingMs(cycleTimes.reduce((a, b) => a + b, 0) / cycleTimes.length) : null;
+
+
         // sprint-metrics FR-18: a main task is blocked when it waits on a task that is not done (ClickUp dependency
         // { task_id: this task, depends_on: the other }), and/or its status is "With Bug" or "With UI Bug".
         // A task outside the linked lists counts as not done (we cannot see its status).
@@ -4247,6 +4376,40 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
               )}
             </span>
           );
+        };
+
+        // sprint-metrics FR-31, FR-35: Record status history, per ClickUp workspace of this card's key
+        const renderRecorderRow = (conn) => {
+          if (!user?.isTeam || !UUID_RE.test(conn.token || '') || tokenStatuses[conn.token]?.status === 'rejected') return null;
+          const r = recordersByConn[conn.token];
+          if (!r || r.state === 'loading') return <div className="h-8 rounded-lg bg-slate-800/40 border border-white/5 animate-pulse motion-reduce:animate-none"><span className="sr-only">Checking status history...</span></div>;
+          if (r.state === 'error' && !r.list) return (
+            <div className="flex items-center justify-between gap-2 text-xs rounded-lg px-3 py-2 border bg-slate-800/40 border-white/5 text-slate-400">
+              <span>Status history: could not check</span>
+              <button onClick={() => loadRecorders(conn.token)} className="px-2.5 py-1 rounded-md border border-white/10 text-slate-300 neon-border-slate">Retry</button>
+            </div>
+          );
+          const fmtDay = (ms) => new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(ms));
+          return (r.list || []).map(rec => {
+            const failing = rec.state === 'on' && rec.health && rec.health !== 'active';
+            return (
+              <div key={rec.teamId} aria-label={`Status history for ${rec.name}`} className={`flex flex-wrap items-center justify-between gap-2 text-xs rounded-lg px-3 py-2 border ${failing ? 'bg-rose-950/30 border-rose-900/50 text-rose-300' : rec.state === 'on' ? 'bg-sky-500/10 border-sky-500/20 text-sky-200' : 'bg-slate-800/40 border-white/5 text-slate-400'}`}>
+                <span className="flex items-center min-w-0">
+                  <Activity className="h-3.5 w-3.5 mr-2 shrink-0" aria-hidden="true" />
+                  <span className="truncate">
+                    {rec.state !== 'on' ? `Status history: off${(r.list || []).length > 1 ? ` (${rec.name})` : ''}`
+                      : failing ? `Status history: failing (ClickUp reports the webhook as ${rec.health})`
+                      : `Recording status history since ${fmtDay(rec.since)}${(r.list || []).length > 1 ? ` (${rec.name})` : ''}`}
+                  </span>
+                </span>
+                <button onClick={() => setRecorder(conn.token, rec, rec.state !== 'on' || failing)} disabled={r.busy === rec.teamId}
+                  className={`px-2.5 py-1 rounded-md border disabled:opacity-50 ${rec.state === 'on' && !failing ? 'border-white/10 text-slate-300 neon-border-slate' : 'border-sky-500/30 text-sky-200 neon-border-indigo'}`}>
+                  {r.busy === rec.teamId ? 'Working...' : rec.state !== 'on' ? 'Record status history' : failing ? 'Turn on again' : 'Turn off'}
+                </button>
+                {r.error && <span role="alert" className="basis-full text-rose-300">{r.error}</span>}
+              </div>
+            );
+          });
         };
 
         const renderTokenRow = (conn) => {
@@ -4676,6 +4839,7 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
                       </div>
                       <div className="p-5 flex-1 space-y-3">
                         {renderTokenRow(conn)}
+                        {renderRecorderRow(conn)}
                         {(conn.workflows || []).length === 0 ? (
                           <p className="text-sm text-slate-500 italic">No lists linked yet.</p>
                         ) : (
@@ -5859,7 +6023,7 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
                         <BarChart2 className="h-5 w-5 text-purple-400 shrink-0" />
                         <div className="text-lg font-semibold text-white flex items-center flex-wrap gap-2">
                           Daily Status Distribution
-                          <div className="hover:z-[99999]"><MetricTooltip align="left" text="ClickUp does not send status history, so this is guessed from each task's dates. Only the closed part is exact."><span tabIndex={0} className="px-1.5 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-300 text-[10px] font-bold uppercase tracking-wider">Estimated</span></MetricTooltip></div>
+                          {!dailyHistoryFull && <div className="hover:z-[99999]"><MetricTooltip align="left" text={historySince !== null ? `History recorded since ${formatDate(historySince)}; earlier days are estimated.` : "ClickUp does not send status history, so this is guessed from each task's dates. Only the closed part is exact."}><span tabIndex={0} className="px-1.5 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-300 text-[10px] font-bold uppercase tracking-wider">Estimated</span></MetricTooltip></div>}
                           <div className="hover:z-[99999]">
                             <MetricTooltip align="left" text="Stacked bar chart showing task counts per status over the sprint timeline." formula="Each task's status on past days is inferred from its created, start and closed dates. Y-Axis: Task Count. X-Axis: Days.">
                               <InfoIcon className="h-4 w-4 text-slate-500 transition-colors" />
@@ -6085,12 +6249,19 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
 
                     <div className="flex-1 border-t md:border-t-0 md:border-l border-white/5 pt-6 md:pt-0 md:pl-8 lg:pl-12">
                       <div className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4 flex items-center flex-wrap gap-2">
-                        Average Time in Status <div className="hover:z-[99999]"><MetricTooltip align="left" text="ClickUp does not send status history, so this is guessed from each task's dates. Only the closed part is exact. Counted from the task's last edit, so a comment or any change resets the clock."><span tabIndex={0} className="px-1.5 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-300 text-[10px] font-bold uppercase tracking-wider">Estimated</span></MetricTooltip></div> <div className="hover:z-[99999]"><MetricTooltip align="center" text="Average working time tasks spend in intermediate phases." formula="Working time (10am-5pm on weekdays) since each open task's last update, averaged per status."><InfoIcon className="h-3.5 w-3.5 text-slate-500 transition-colors" /></MetricTooltip></div>
+                        Average Time in Status {historySince === null && <div className="hover:z-[99999]"><MetricTooltip align="left" text="ClickUp does not send status history, so this is guessed from each task's dates. Only the closed part is exact. Counted from the task's last edit, so a comment or any change resets the clock."><span tabIndex={0} className="px-1.5 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-300 text-[10px] font-bold uppercase tracking-wider">Estimated</span></MetricTooltip></div>} <div className="hover:z-[99999]"><MetricTooltip align="center" text="Average working time tasks spend in intermediate phases." formula="Working time (10am-5pm on weekdays) since each open task's last update, averaged per status."><InfoIcon className="h-3.5 w-3.5 text-slate-500 transition-colors" /></MetricTooltip></div>
                       </div>
                       
-                      {avgTimeInStatusList.length > 0 ? (
+                      {historySince !== null && (
+                        <div className="mb-4 space-y-1 text-sm">
+                          <p className="text-xs text-slate-500">From status changes recorded since {formatDate(historySince)}, in working hours.</p>
+                          {longestWait && <p className="text-amber-300">Longest wait: <span className="capitalize">{longestWait.status}</span>, {longestWait.timeDisplay}</p>}
+                          {cycleTimeAvg && <p className="text-slate-300">Cycle time: {cycleTimeAvg} <span className="text-slate-500">(start of work to done, {cycleTimes.length} {cycleTimes.length === 1 ? 'task' : 'tasks'})</span></p>}
+                        </div>
+                      )}
+                      {timeInStatusRows.length > 0 ? (
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3">
-                          {avgTimeInStatusList.map(stat => (
+                          {timeInStatusRows.map(stat => (
                             <div key={stat.status} className="flex justify-between items-center text-sm p-3 bg-slate-900/60 rounded-xl border border-white/5">
                               <span className="text-slate-300 capitalize truncate pr-4">{stat.status}</span>
                               <span className="text-indigo-300 font-mono font-medium shrink-0 bg-indigo-500/10 px-2 py-1 rounded-md border border-indigo-500/20">{stat.timeDisplay}</span>
@@ -6098,7 +6269,7 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
                           ))}
                         </div>
                       ) : (
-                        <div className="text-sm text-slate-500 italic p-6 bg-slate-900/60 rounded-xl border border-white/5 text-center">No status timing data is available for completed tasks yet.</div>
+                        <div className="text-sm text-slate-500 italic p-6 bg-slate-900/60 rounded-xl border border-white/5 text-center">{historySince !== null ? 'No status changes recorded yet.' : 'No status timing data is available for completed tasks yet.'}</div>
                       )}
                     </div>
                   </div>
