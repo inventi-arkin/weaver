@@ -6,7 +6,7 @@
   <title>Weaver - Thread Support and Development together</title>
   <meta name="referrer" content="no-referrer">
   <!-- Release version shown in the page footer; bump on every upload (YYYY.MM.DD-N) -->
-  <meta name="weaver-version" content="2026.10.13-6">
+  <meta name="weaver-version" content="2026.10.13-7">
   
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -28,6 +28,28 @@
     @keyframes tip-in { from { opacity: 0; } to { opacity: 1; } }
     .animate-tip-in { animation: tip-in .2s ease-out; }
     @media (prefers-reduced-motion: reduce) { .animate-tip-in { animation: none; } }
+
+    /* Dashboard switch (portfolios FR-23): a thread draws across the dimmed screen, the page reloads, then the screen parts along the thread */
+    @keyframes tc-draw { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+    @keyframes tc-dim { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes tc-label { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+    .thread-cut .tc-half { position: absolute; left: 0; right: 0; height: 50%; background: #020617; transition: transform .45s cubic-bezier(.7,0,.3,1); }
+    .thread-cut .tc-top { top: 0; }
+    .thread-cut .tc-bottom { bottom: 0; }
+    .thread-cut .tc-label { position: absolute; left: 16px; right: 16px; bottom: 22px; text-align: center; }
+    .thread-cut .tc-thread { position: absolute; left: 0; right: 0; top: 50%; height: 2px; margin-top: -1px; transform-origin: left center;
+      background: linear-gradient(90deg, rgba(99,102,241,0) 0%, #818cf8 18%, #e0e7ff 88%, #ffffff 100%);
+      box-shadow: 0 0 10px 1px rgba(165,180,252,.9), 0 0 36px 6px rgba(99,102,241,.5); transition: opacity .3s ease, transform .45s ease; }
+    .thread-cut.is-out .tc-half { animation: tc-dim .15s ease-out both; }
+    .thread-cut.is-out .tc-thread { animation: tc-draw .38s cubic-bezier(.2,.8,.2,1) .07s both; }
+    .thread-cut.is-out .tc-label { animation: tc-label .3s ease-out .1s both; }
+    .thread-cut.is-open .tc-top { transform: translateY(-100%); }
+    .thread-cut.is-open .tc-bottom { transform: translateY(100%); }
+    .thread-cut.is-open .tc-thread { opacity: 0; transform: scaleY(6); }
+    @media (prefers-reduced-motion: reduce) {
+      .thread-cut .tc-half, .thread-cut .tc-thread, .thread-cut .tc-label { animation: none !important; transition: opacity .2s ease !important; }
+      .thread-cut.is-open .tc-top, .thread-cut.is-open .tc-bottom { transform: none; opacity: 0; }
+    }
 
     /* Neon Glowing Buttons */
     .btn-neon {
@@ -311,6 +333,22 @@
       link: { Icon: Box, chip: 'bg-indigo-500/10 border-indigo-500/20', icon: 'text-indigo-400' },
       info: { Icon: InfoIcon, chip: 'bg-blue-500/10 border-blue-500/20', icon: 'text-blue-400' },
     };
+    // portfolios FR-23: the dashboard switch. 'out' draws the thread under the dashboard name before the reload; after it, 'closed'
+    // keeps the screen shut on the thread until the dashboard is ready, and 'open' parts the two halves along it.
+    const ThreadCut = ({ fx }) => fx ? (
+      <div className={`thread-cut is-${fx.phase} fixed inset-0 z-[999999] pointer-events-none overflow-hidden`} role="status" aria-live="polite">
+        <div className="tc-half tc-top">
+          <div className="tc-label">
+            {fx.portfolio && <p className="text-[11px] font-semibold uppercase tracking-[0.25em] text-indigo-300/80 truncate">{fx.portfolio}</p>}
+            <p className="mt-1 text-2xl sm:text-3xl font-bold text-white truncate">{fx.name}</p>
+          </div>
+        </div>
+        <div className="tc-half tc-bottom"></div>
+        <div className="tc-thread"></div>
+        <span className="sr-only">{fx.phase === 'open' ? '' : `Opening ${fx.name}`}</span>
+      </div>
+    ) : null;
+
     const ArchivedBadge = () => (
       <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-slate-700/60 text-slate-300 border border-slate-600 shrink-0"><Archive className="w-3 h-3" aria-hidden="true" />Archived</span>
     );
@@ -977,6 +1015,15 @@
       const pendingTeamWrites = useRef([]);
 
       const [warpStage, setWarpStage] = useState('idle');
+      // portfolios FR-23: a switch leaves the dashboard name for the page that loads next, which opens on the thread
+      const ARRIVE_KEY = `weaver_switch_arrive_${appId}`;
+      const [threadFx, setThreadFx] = useState(() => {
+        try {
+          const a = JSON.parse(sessionStorage.getItem(ARRIVE_KEY) || 'null');
+          sessionStorage.removeItem(ARRIVE_KEY);
+          return a && Math.abs(Date.now() - a.at) < 15000 ? { portfolio: a.portfolio || '', name: a.name || '', phase: 'closed' } : null;
+        } catch (e) { return null; }
+      });
       const [integrationStep, setIntegrationStep] = useState('idle');
       // clickUpToken holds the opaque connection id issued by weaver-api; the real ClickUp token never stays in the browser
       const [clickUpToken, setClickUpToken] = useState(() => localStorage.getItem(`weaver_clickup_conn_${appId}`) || '');
@@ -2111,11 +2158,11 @@
         if (conn.id === activeCardIdRef.current) { setActiveView('dashboard'); return; }
         persistConnection(clickUpToken, mappedWorkflowsRef.current); // keep the card we are leaving up to date
         const still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-        const step = still ? 0 : 130;
+        const label = { portfolio: portfoliosRef.current.find(p => p.cards.some(c => c.id === conn.id))?.name || '', name: conn.name || 'Dashboard' };
         newCardTargetRef.current = null;
-        setWarpStage('weaving');
+        setWarpStage('thread'); // blocks a second switch; the thread overlay below replaces the warp animation (FR-23)
+        setThreadFx({ ...label, phase: 'out' });
         setTimeout(() => {
-          setWarpStage('flash');
           setOpenCard(conn.id, conn.portfolioId || portfoliosRef.current.find(p => p.cards.some(c => c.id === conn.id))?.id);
           setClickUpToken(conn.token);
           localStorage.setItem(`weaver_clickup_conn_${appId}`, conn.token);
@@ -2131,17 +2178,31 @@
           logTransaction('Connection Switched', `Switched to portfolio connection: ${conn.name}`, 'link');
           // The opened dashboard starts from a fresh page load (nothing left over from the previous one). The card, key and lists
           // are already in this browser; wait at most 4 s for the account saves (both cards' lists, users/{uid}) to finish first.
+          try { sessionStorage.setItem(ARRIVE_KEY, JSON.stringify({ ...label, at: Date.now() })); } catch (e) {}
           setTimeout(async () => {
             const writes = [...inflightWritesRef.current];
             await Promise.race([Promise.allSettled(writes), new Promise(r => setTimeout(r, 4000))]);
             try { window.location.reload(); } catch (e) {}
-            setTimeout(() => { // still here (reload unavailable): finish the animation in place
-              setWarpStage('fade');
-              setTimeout(() => setWarpStage('idle'), step);
+            setTimeout(() => { // still here (reload unavailable): open the thread in place
+              try { sessionStorage.removeItem(ARRIVE_KEY); } catch (e) {}
+              setThreadFx(f => f && { ...f, phase: 'open' });
+              setTimeout(() => { setThreadFx(null); setWarpStage('idle'); }, 500);
             }, 1500);
-          }, step);
-        }, step);
+          }, 0);
+        }, still ? 0 : 450); // the thread finishes drawing before the page reloads
       };
+
+      // FR-23: after the reload the screen stays shut on the thread until the dashboard is ready (signed in, Portfolios loaded), at most 6 s
+      useEffect(() => {
+        if (threadFx?.phase !== 'closed') return;
+        const open = () => {
+          setThreadFx(f => f && f.phase === 'closed' ? { ...f, phase: 'open' } : f);
+          setTimeout(() => setThreadFx(f => f && f.phase === 'open' ? null : f), 500);
+        };
+        const ready = authInitialized && (!user || portfoliosReady);
+        const t = setTimeout(open, ready ? 150 : 6000);
+        return () => clearTimeout(t);
+      }, [threadFx?.phase, authInitialized, !!user, portfoliosReady]);
 
       // portfolios FR-7: Add Connection always makes a new card, in the given Portfolio (the one on screen) or the current one
       const handleNewConnection = (targetPortfolioId) => {
@@ -2803,7 +2864,7 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
       if (!authInitialized) {
         return (
           <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-            <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+            {threadFx ? <ThreadCut fx={threadFx} /> : <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>}
           </div>
         );
       }
@@ -4735,7 +4796,8 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
           <div className="min-h-screen bg-slate-950 font-sans text-slate-100 relative">
             <WebNestBackground opacity={0.35} />
 
-            {warpStage !== 'idle' && (
+            <ThreadCut fx={threadFx} />
+            {warpStage !== 'idle' && warpStage !== 'thread' && (
               <div className="fixed inset-0 z-[999999] pointer-events-none flex flex-col items-center justify-center overflow-hidden">
                 <div className={`absolute inset-0 bg-slate-950 transition-opacity ${warpStage === 'fade' ? 'opacity-0 duration-[1500ms] ease-in-out' : 'opacity-100 duration-300'}`}></div>
                 <div className={`absolute rounded-full transition-all ease-in-out ${warpStage === 'flash' || warpStage === 'fade' ? 'w-[150vw] h-[150vw] bg-indigo-100 blur-[100px] opacity-100 duration-[400ms]' : 'w-[20vw] h-[20vw] bg-indigo-600/20 blur-[80px] opacity-100 animate-pulse duration-0'}`}></div>
