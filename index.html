@@ -6,7 +6,7 @@
   <title>Weaver - Thread Support and Development together</title>
   <meta name="referrer" content="no-referrer">
   <!-- Release version shown in the page footer; bump on every upload (YYYY.MM.DD-N) -->
-  <meta name="weaver-version" content="2026.10.13-7">
+  <meta name="weaver-version" content="2026.10.14-1">
   
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -1015,6 +1015,9 @@
       const pendingTeamWrites = useRef([]);
 
       const [warpStage, setWarpStage] = useState('idle');
+      // sprint-metrics: which sprint tile's task list is open (blocked | gap-estimate | gap-assignee | gap-due | focus), and Needs Attention showing all
+      const [sprintOpen, setSprintOpen] = useState(null);
+      const [attentionAll, setAttentionAll] = useState(false);
       // portfolios FR-23: a switch leaves the dashboard name for the page that loads next, which opens on the thread
       const ARRIVE_KEY = `weaver_switch_arrive_${appId}`;
       const [threadFx, setThreadFx] = useState(() => {
@@ -3110,12 +3113,17 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
             if (t.due_date) taskMaxDate = Math.max(taskMaxDate, parseInt(t.due_date));
         });
 
+        // sprint-metrics FR-19b: a "(spillover)" list holds the previous sprint's leftovers, so its dates are not this sprint's
+        // (its tasks still count as sprint work). A dashboard with only spillover lists uses their dates.
+        const isSpilloverList = (wf) => /\(spillover\)\s*$/i.test(wf.list || '');
+        const sprintWorkflows = activeWorkflows.some(wf => !isSpilloverList(wf)) ? activeWorkflows.filter(wf => !isSpilloverList(wf)) : activeWorkflows;
         let minDate = Infinity;
         let maxDate = 0;
-        activeWorkflows.forEach(wf => {
+        sprintWorkflows.forEach(wf => {
           if (wf.listStartDate) minDate = Math.min(minDate, parseInt(wf.listStartDate));
           if (wf.listDueDate) maxDate = Math.max(maxDate, parseInt(wf.listDueDate));
         });
+        const hasSprintDates = minDate !== Infinity && maxDate !== 0 && maxDate > minDate; // FR-22
         if (minDate === Infinity) minDate = taskMinDate;
         if (maxDate === 0) maxDate = taskMaxDate;
         
@@ -3240,98 +3248,64 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
         const completedMotherCount = completedMotherTasks.length;
         const completedMotherEstHours = Math.round(completedMotherTasks.reduce((sum, t) => sum + (parseInt(t.time_estimate) || 0), 0) / 3600000);
 
-        let initialBurnedMs = 0;
-        const validEvents = [];
-        
-        independentTasks.forEach(t => {
-            let est = Number(t.time_estimate) || 0;
-            const totalSpent = Number(t.time_spent) || 0;
-            if (totalSpent > est) est = totalSpent;
-            
-            const localAdded = Number(t._totalLocalAddedMs) || 0;
-            const nativeSpent = Math.max(0, totalSpent - localAdded);
-            const isDone = doneStatuses.includes((t.status?.status || '').toLowerCase());
-            
-            if (isDone && est > 0) {
-                let dDate = parseDateMs(t.date_closed) || parseDateMs(t.date_updated) || parseDateMs(t.date_created) || minDate;
-                if (dDate <= minDate) {
-                    initialBurnedMs += est;
-                } else {
-                    validEvents.push({ date: dDate, burned: est });
-                }
-            } else if (!isDone && nativeSpent > 0) {
-                let cDate = parseDateMs(t.date_created) || minDate;
-                let uDate = parseDateMs(t.date_updated) || now;
-                if (cDate < minDate) cDate = minDate;
-                if (uDate > now) uDate = now;
-                if (uDate < cDate) uDate = cDate;
-                
-                const duration = Math.max(1, uDate - cDate);
-                const slices = 10;
-                for (let i = 1; i <= slices; i++) {
-                    const sliceDate = cDate + (duration * (i/slices));
-                    if (sliceDate <= minDate) {
-                        initialBurnedMs += (nativeSpent / slices);
-                    } else {
-                        validEvents.push({ date: sliceDate, burned: nativeSpent / slices });
-                    }
-                }
+        // sprint-metrics FR-6 to FR-10: the Burndown shows remaining work = estimate − time logged so far (never below 0),
+        // and a done task counts 0 from the day it closed. Estimates are never raised to the time spent, so an overrun stays
+        // visible (FR-8 note). Tasks without an estimate are left out; the readiness tile counts them.
+        const isBugContainerName = (t) => /qa bugs|ui bugs/i.test(t.name || '');
+        const isDoneTask = (t) => doneStatuses.includes((t?.status?.status || '').toLowerCase());
+        const ledgerOf = (task) => [...(task.localLedger || []), ...(task.subtasks || []).flatMap(ledgerOf)];
+        const burndownTasks = independentTasks.filter(t => Number(t.time_estimate) > 0 && !isBugContainerName(t)).map(t => {
+            const isDone = isDoneTask(t);
+            const closedAt = isDone ? (parseDateMs(t.date_closed) || parseDateMs(t.date_updated) || minDate) : Infinity;
+            const logEvents = ledgerOf(t).map(e => ({ date: parseDateMs(e.timestamp) || minDate, ms: Number(e.ms) || 0 }));
+            // ClickUp's time_spent carries no dates: spread it evenly from created (or sprint start) to closed / last update, as before
+            const nativeSpent = Number(t.rawNativeSpent) || 0;
+            if (nativeSpent > 0) {
+                const cDate = Math.max(parseDateMs(t.date_created) || minDate, minDate);
+                const uDate = Math.max(cDate, Math.min(isDone ? closedAt : (parseDateMs(t.date_updated) || now), now));
+                for (let i = 1; i <= 10; i++) logEvents.push({ date: cDate + (uDate - cDate) * (i / 10), ms: nativeSpent / 10 });
             }
+            return { est: Number(t.time_estimate), closedAt, logEvents };
         });
-
-        const extractBurndownLedgerEntries = (tasks) => {
-            tasks.forEach(t => {
-                const isDone = doneStatuses.includes((t.status?.status || '').toLowerCase());
-                if (!isDone) {
-                    const entries = t.localLedger || [];
-                    entries.forEach(entry => {
-                        const eDate = parseDateMs(entry.timestamp);
-                        if (eDate <= minDate) {
-                            initialBurnedMs += Number(entry.ms);
-                        } else {
-                            validEvents.push({ date: eDate, burned: Number(entry.ms) });
-                        }
-                    });
-                }
-                if (t.subtasks) extractBurndownLedgerEntries(t.subtasks);
-            });
-        };
-        extractBurndownLedgerEntries(independentTasks);
-        
-        validEvents.sort((a,b) => a.date - b.date);
-
-        let historicalBurnedMs = initialBurnedMs;
-        const startY = totalEstimateMs > 0 ? (initialBurnedMs / totalEstimateMs) * 100 : 0;
-        const burndownPointsData = [{ x: 0, y: Math.max(0, Math.min(100, startY)), date: minDate, value: totalEstimateMs - initialBurnedMs }];
+        const burndownTotalMs = burndownTasks.reduce((s, b) => s + b.est, 0);
+        const burndownTotalHours = Math.round(burndownTotalMs / 3600000) || 1;
+        const remainingAt = (atMs) => burndownTasks.reduce((sum, b) => {
+            if (b.closedAt <= atMs) return sum;
+            const logged = b.logEvents.reduce((s, e) => s + (e.date <= atMs ? e.ms : 0), 0);
+            return sum + Math.max(0, b.est - logged);
+        }, 0);
+        const toBurndownY = (remaining) => burndownTotalMs > 0 ? Math.max(0, Math.min(100, (1 - remaining / burndownTotalMs) * 100)) : 0;
 
         const oneDayMs = 86400000;
         const endChartDate = Math.min(now, maxDate);
-        let currentDayMs = minDate + oneDayMs;
+        const startRemaining = remainingAt(minDate);
+        const burndownPointsData = [{ x: 0, y: toBurndownY(startRemaining), date: minDate, value: startRemaining }];
+        for (let dayMs = minDate + oneDayMs; dayMs <= endChartDate; dayMs += oneDayMs) {
+            const rem = remainingAt(dayMs);
+            burndownPointsData.push({ x: Math.max(0, Math.min(100, ((dayMs - minDate) / totalDurationMs) * 100)), y: toBurndownY(rem), date: dayMs, value: rem });
+        }
+        const remainingNow = remainingAt(now);
+        const burndownFinalX = Math.max(0, Math.min(100, now >= maxDate ? 100 : ((now - minDate) / totalDurationMs) * 100));
+        const lastBurndownPoint = burndownPointsData[burndownPointsData.length - 1];
+        if (burndownFinalX - lastBurndownPoint.x < 2) Object.assign(lastBurndownPoint, { x: burndownFinalX, y: toBurndownY(remainingNow), date: now, value: remainingNow });
+        else burndownPointsData.push({ x: burndownFinalX, y: toBurndownY(remainingNow), date: now, value: remainingNow });
 
-        while (currentDayMs <= endChartDate) {
-            while (validEvents.length > 0 && validEvents[0].date <= currentDayMs) {
-                historicalBurnedMs += validEvents.shift().burned;
+        // FR-9: the ideal line falls only on working days and stays flat over weekends
+        const idealBurndownPoints = [];
+        if (sprintWorkingDays > 0 && totalDurationMs > 0) {
+            let wdLeft = sprintWorkingDays;
+            const xOf = (ms) => Math.max(0, Math.min(100, ((ms - minDate) / totalDurationMs) * 100));
+            for (const d = new Date(sprintStart); d <= sprintEnd; d.setDate(d.getDate() + 1)) {
+                idealBurndownPoints.push(`${xOf(d.getTime())},${(1 - wdLeft / sprintWorkingDays) * 100}`);
+                if (d.getDay() !== 0 && d.getDay() !== 6) wdLeft--;
+                idealBurndownPoints.push(`${xOf(d.getTime() + oneDayMs)},${(1 - wdLeft / sprintWorkingDays) * 100}`);
             }
-            const stepX = ((currentDayMs - minDate) / totalDurationMs) * 100;
-            const stepY = totalEstimateMs > 0 ? (historicalBurnedMs / totalEstimateMs) * 100 : 0;
-            burndownPointsData.push({ x: Math.max(0, Math.min(100, stepX)), y: Math.max(0, Math.min(100, stepY)), date: currentDayMs, value: totalEstimateMs - historicalBurnedMs });
-            currentDayMs += oneDayMs;
         }
+        const idealBurndownPath = idealBurndownPoints.length ? `M ${idealBurndownPoints.join(' L ')}` : 'M 0,0 L 100,100';
 
-        while (validEvents.length > 0) {
-            historicalBurnedMs += validEvents.shift().burned;
-        }
-        const burndownFinalX = now >= maxDate ? 100 : ((now - minDate) / totalDurationMs) * 100;
-        const burndownFinalY = totalEstimateMs > 0 ? (historicalBurnedMs / totalEstimateMs) * 100 : 0;
-
-        if (burndownPointsData.length > 0 && (burndownFinalX - burndownPointsData[burndownPointsData.length - 1].x) < 2) {
-            burndownPointsData[burndownPointsData.length - 1].y = Math.max(0, Math.min(100, burndownFinalY));
-            burndownPointsData[burndownPointsData.length - 1].x = Math.max(0, Math.min(100, burndownFinalX));
-            burndownPointsData[burndownPointsData.length - 1].date = now;
-            burndownPointsData[burndownPointsData.length - 1].value = totalEstimateMs - historicalBurnedMs;
-        } else {
-            burndownPointsData.push({ x: Math.max(0, Math.min(100, burndownFinalX)), y: Math.max(0, Math.min(100, burndownFinalY)), date: now, value: totalEstimateMs - historicalBurnedMs });
-        }
+        // FR-8: open main tasks that have logged more than their estimate
+        const overEstimateOpen = independentTasks.filter(t => !isDoneTask(t) && !isBugContainerName(t) && Number(t.time_estimate) > 0 && Number(t.time_spent) > Number(t.time_estimate));
+        const overEstimateOpenMs = overEstimateOpen.reduce((s, t) => s + Number(t.time_spent) - Number(t.time_estimate), 0);
 
         const generateSmoothPath = (points) => {
             if (points.length === 0) return "";
@@ -3781,8 +3755,29 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
         const spillOverCount = spillOverTasks.length;
         const spillOverEstHours = Math.round(spillOverTasks.reduce((sum, t) => sum + (parseInt(t.time_estimate) || 0), 0) / 3600000);
 
-        const devDemandHours = plottedScopeEstHours * 0.8;
-        const qaDemandHours = plottedScopeEstHours * 0.2;
+        // sprint-metrics FR-11 to FR-14: demand per role comes from who the work is assigned to (no fixed 80/20 split).
+        // A subtask with its own assignee and estimate counts for those people; the main task's assignees get the rest.
+        const roleOf = (username) => (userRoles[username] || 'Developer') === 'QA' ? 'QA' : 'Developer';
+        const demandMs = { Developer: 0, QA: 0, Unassigned: 0 };
+        const addDemand = (ms, assignees) => {
+            if (!(ms > 0)) return;
+            const names = (assignees || []).map(a => a.username || `User_${a.id}`);
+            if (names.length === 0) { demandMs.Unassigned += ms; return; }
+            names.forEach(n => { demandMs[roleOf(n)] += ms / names.length; });
+        };
+        filteredMotherTasks.forEach(t => {
+            let handedOut = 0;
+            const walk = (subs) => (subs || []).forEach(s => {
+                const own = Number(s.directEstimate !== undefined ? s.directEstimate : s.time_estimate) || 0;
+                if (own > 0 && s.assignees?.length) { addDemand(own, s.assignees); handedOut += own; }
+                walk(s.subtasks);
+            });
+            walk(t.subtasks);
+            addDemand(Math.max(0, (Number(t.time_estimate) || 0) - handedOut), t.assignees);
+        });
+        const devDemandHours = Math.round(demandMs.Developer / 3600000);
+        const qaDemandHours = Math.round(demandMs.QA / 3600000);
+        const unassignedDemandHours = Math.round(demandMs.Unassigned / 3600000);
 
         const devUtilPct = devCapacityHours > 0 ? Math.round((devDemandHours / devCapacityHours) * 100) : 0;
         const qaUtilPct = qaCapacityHours > 0 ? Math.round((qaDemandHours / qaCapacityHours) * 100) : 0;
@@ -3794,26 +3789,10 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
         const criticalBugsCount = allBugs.filter(t => ['high', 'urgent', 'critical'].includes((t.priority?.priority || '').toLowerCase())).length;
         const bugResolutionRate = totalBugsCount === 0 ? 0 : Math.round((resolvedBugsCount / totalBugsCount) * 100);
 
-        let totalQualityScore = 0;
-        let evaluatedMotherTasks = 0;
-        filteredMotherTasks.forEach(motherTask => {
-            evaluatedMotherTasks++;
-            const taskBugs = extractBugs([motherTask]);
-            if (taskBugs.length === 0) {
-                totalQualityScore += 100;
-            } else {
-                let penalty = 0;
-                taskBugs.forEach(bug => {
-                    const priority = (bug.priority?.priority || 'normal').toLowerCase();
-                    if (['critical', 'urgent'].includes(priority)) penalty += 20;
-                    else if (priority === 'high') penalty += 15;
-                    else if (priority === 'normal') penalty += 10;
-                    else penalty += 5;
-                });
-                totalQualityScore += Math.max(0, 100 - penalty);
-            }
-        });
-        const avgQualityRate = evaluatedMotherTasks > 0 ? Math.round(totalQualityScore / evaluatedMotherTasks) : 100;
+        // sprint-metrics FR-23: bug ratios on done main tasks replace the penalty-point quality score
+        const bugsOnDoneMain = completedMotherTasks.map(t => extractBugs([t]).length);
+        const bugsPer10Done = completedMotherTasks.length > 0 ? (bugsOnDoneMain.reduce((a, b) => a + b, 0) / completedMotherTasks.length) * 10 : null;
+        const doneWithBugPct = completedMotherTasks.length > 0 ? Math.round((bugsOnDoneMain.filter(n => n > 0).length / completedMotherTasks.length) * 100) : null;
 
         let fixVelocitySumMs = 0;
         let fixVelocityCount = 0;
@@ -3851,8 +3830,6 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
           }
         }
 
-        let totalEstForAccuracyMs = 0;
-        let totalActualForAccuracyMs = 0;
         const timeInStatusStats = {};
         const excludedStatusesForAccuracy = ['open', 'backlog', 'sprint backlog', 'todo', 'to do', 'closed', 'complete', 'done', 'resolved'];
 
@@ -3872,7 +3849,6 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
             }
 
             if (isDone) {
-                let actualRunningMs = 0;
                 let parsedTimeInStatus = {};
 
                 if (t.activity_logs && Array.isArray(t.activity_logs) && t.activity_logs.length > 0) {
@@ -3914,39 +3890,36 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
                     }
                 }
 
-                if (Object.keys(parsedTimeInStatus).length > 0) {
-                    let ongoingDevMs = 0;
-                    Object.entries(parsedTimeInStatus).forEach(([statusStr, durationMs]) => {
-                        const cleanStatus = statusStr.toLowerCase().trim();
-                        if (!excludedStatusesForAccuracy.includes(cleanStatus)) {
-                            if (!timeInStatusStats[cleanStatus]) timeInStatusStats[cleanStatus] = { sum: 0, count: 0 };
-                            timeInStatusStats[cleanStatus].sum += durationMs;
-                            timeInStatusStats[cleanStatus].count++;
-                        }
-                        // Explicitly target Ongoing Dev for the Accuracy calculation
-                        if (cleanStatus === 'ongoing dev' || cleanStatus === 'in progress') {
-                            ongoingDevMs += durationMs;
-                        }
-                    });
-                    actualRunningMs = ongoingDevMs;
-                } else {
-                    const end_date = t.date_closed ? parseDateMs(t.date_closed) : (t.date_updated ? parseDateMs(t.date_updated) : minDate);
-                    const start_date = t.start_date ? parseDateMs(t.start_date) : (t.date_created ? parseDateMs(t.date_created) : end_date);
-                    actualRunningMs = calculateWorkingMs(start_date, end_date);
-                }
-
-                const estimateMs = t.time_estimate ? parseDateMs(t.time_estimate) : 0;
-                if (actualRunningMs > 0 && estimateMs > 0) {
-                    totalEstForAccuracyMs += estimateMs;
-                    totalActualForAccuracyMs += actualRunningMs;
-                }
+                Object.entries(parsedTimeInStatus).forEach(([statusStr, durationMs]) => {
+                    const cleanStatus = statusStr.toLowerCase().trim();
+                    if (!excludedStatusesForAccuracy.includes(cleanStatus)) {
+                        if (!timeInStatusStats[cleanStatus]) timeInStatusStats[cleanStatus] = { sum: 0, count: 0 };
+                        timeInStatusStats[cleanStatus].sum += durationMs;
+                        timeInStatusStats[cleanStatus].count++;
+                    }
+                });
             }
         });
 
+        // sprint-metrics FR-1 to FR-3: Est. Accuracy compares the estimate with the hours actually logged (ClickUp + Weaver).
+        // It counts the topmost done tasks (a done main task with its subtasks, or a done subtask under an open task), so no hour counts twice.
+        const accuracyTasks = [];
+        let accuracySkipped = 0;
+        const collectDoneForAccuracy = (tasks) => tasks.forEach(t => {
+            if (isDoneTask(t) && !isBugContainerName(t) && checkGlobalFilter(t)) {
+                const est = Number(t.time_estimate) || 0, logged = Number(t.time_spent) || 0;
+                if (est > 0 && logged > 0) accuracyTasks.push({ est, logged }); else accuracySkipped++;
+            } else collectDoneForAccuracy(t.subtasks || []);
+        });
+        collectDoneForAccuracy(activeWorkflows.flatMap(wf => wf.tasks || []));
+        const accuracyEstMs = accuracyTasks.reduce((s, a) => s + a.est, 0);
+        const accuracyLoggedMs = accuracyTasks.reduce((s, a) => s + a.logged, 0);
         let estimationAccuracyDisplay = "N/A";
-        if (totalEstForAccuracyMs > 0) {
-            const error = Math.abs(totalActualForAccuracyMs - totalEstForAccuracyMs) / totalEstForAccuracyMs;
+        let accuracyDirection = '';
+        if (accuracyEstMs > 0) {
+            const error = Math.abs(accuracyLoggedMs - accuracyEstMs) / accuracyEstMs;
             estimationAccuracyDisplay = `${Math.max(0, Math.round((1 - error) * 100))}%`;
+            accuracyDirection = accuracyLoggedMs > accuracyEstMs * 1.1 ? 'under-estimated' : accuracyLoggedMs < accuracyEstMs * 0.9 ? 'over-estimated' : 'on target';
         }
 
         const avgTimeInStatusList = Object.entries(timeInStatusStats).map(([status, data]) => {
@@ -3960,23 +3933,87 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
             return { status, timeDisplay, avgMs };
         }).sort((a, b) => b.avgMs - a.avgMs);
 
-        const stalledTasksCandidates = filteredTasks.filter(t => {
-            const nameLower = (t.name || '').toLowerCase();
+        // sprint-metrics FR-18: a main task is blocked when it waits on a task that is not done (ClickUp dependency
+        // { task_id: this task, depends_on: the other }), and/or its status is "With Bug" or "With UI Bug".
+        // A task outside the linked lists counts as not done (we cannot see its status).
+        const taskById = new Map(lookupTasks.map(t => [t.id, t]));
+        const openMainTasks = filteredMotherTasks.filter(t => !isDoneTask(t));
+        const blockedById = new Map();
+        openMainTasks.forEach(t => {
+            const waitingOn = (t.dependencies || [])
+                .filter(d => d && d.task_id === t.id && d.depends_on && d.depends_on !== t.id)
+                .map(d => taskById.get(d.depends_on) || { id: d.depends_on, name: null })
+                .filter(o => !isDoneTask(o));
             const statusLower = (t.status?.status || '').toLowerCase();
-            if (nameLower === 'ui bugs' || nameLower === 'qa bugs' || doneStatuses.includes(statusLower) || statusLower === 'sprint backlog') return false;
-            const createdDate = parseInt(t.date_created);
-            const estimateMs = parseInt(t.time_estimate);
-            if (createdDate && estimateMs > 0 && (now - createdDate > estimateMs)) return true;
-            return false;
+            const bugStatus = statusLower === 'with bug' || statusLower === 'with ui bug' ? t.status.status : null;
+            if (!waitingOn.length && !bugStatus) return;
+            blockedById.set(t.id, { waitingOn, bugStatus, openBugs: extractBugs([t]).filter(b => !isDoneTask(b)).length });
         });
+        const blockedTasks = openMainTasks.filter(t => blockedById.has(t.id));
+        const blockedWaitingCount = blockedTasks.filter(t => blockedById.get(t.id).waitingOn.length > 0).length;
+        const blockedBugCount = blockedTasks.filter(t => blockedById.get(t.id).bugStatus).length;
+        const blockedLabels = (info) => [
+            ...(info.waitingOn.length === 1 ? [`Waiting on ${info.waitingOn[0].name ? `"${info.waitingOn[0].name}"` : 'a task outside these lists'}`] : info.waitingOn.length > 1 ? [`Waiting on ${info.waitingOn.length} tasks`] : []),
+            ...(info.bugStatus ? [info.bugStatus] : []),
+            ...(info.openBugs > 0 ? [`${info.openBugs} open ${info.openBugs === 1 ? 'bug' : 'bugs'}`] : []),
+        ];
 
-        const stalledTaskIds = new Set(stalledTasksCandidates.map(t => t.id));
-        const hasStalledDescendant = (task) => task.subtasks?.some(sub => stalledTaskIds.has(sub.id) || hasStalledDescendant(sub)) || false;
+        // FR-20: open main tasks that are not ready to be worked on
+        const readinessGaps = {
+            estimate: openMainTasks.filter(t => !(Number(t.time_estimate) > 0)),
+            assignee: openMainTasks.filter(t => !t.assignees?.length),
+            due: openMainTasks.filter(t => !t.due_date),
+        };
 
-        const stalledTasks = stalledTasksCandidates
-          .filter(t => !hasStalledDescendant(t))
-          .sort((a, b) => (now - (parseInt(b.date_created) || now)) - (now - (parseInt(a.date_created) || now)))
-          .slice(0, 5);
+        // FR-15 to FR-17: Needs Attention = blocked, overdue (due before today) or over estimate; replaces the age-versus-estimate rule
+        const todayStartMs = new Date(now).setHours(0, 0, 0, 0);
+        const attentionTasks = openMainTasks.map(t => {
+            const due = parseDateMs(t.due_date);
+            const overdueDays = due && due < todayStartMs ? Math.max(1, Math.round((todayStartMs - new Date(due).setHours(0, 0, 0, 0)) / 86400000)) : 0;
+            const est = Number(t.time_estimate) || 0, logged = Number(t.time_spent) || 0;
+            const overPct = est > 0 && logged > est ? Math.round(((logged - est) / est) * 100) : 0;
+            const blocked = blockedById.get(t.id);
+            const labels = [
+                ...(blocked ? ['Blocked', ...blockedLabels(blocked)] : []),
+                ...(overdueDays ? [`${overdueDays} ${overdueDays === 1 ? 'day' : 'days'} overdue`] : []),
+                ...(overPct ? [`+${overPct}% over estimate`] : []),
+            ];
+            return { task: t, blocked: !!blocked, overdueDays, overPct, labels };
+        }).filter(a => a.blocked || a.overdueDays || a.overPct)
+          .sort((a, b) => (b.blocked - a.blocked) || ((b.overdueDays > 0) - (a.overdueDays > 0)) || (b.overdueDays - a.overdueDays) || (b.overPct - a.overPct));
+
+        // FR-19, FR-21, FR-22: where the sprint stands (working days, Monday to Friday)
+        const workingDaysThrough = (fromMs, toMs) => {
+            let n = 0;
+            for (const d = new Date(new Date(fromMs).setHours(0, 0, 0, 0)); d.getTime() <= toMs; d.setDate(d.getDate() + 1)) if (d.getDay() !== 0 && d.getDay() !== 6) n++;
+            return n;
+        };
+        const sprintEndOfDayMs = sprintEnd.getTime() + oneDayMs - 1;
+        const sprintPhase = !hasSprintDates ? 'none' : now < sprintStart.getTime() ? 'before' : now > sprintEndOfDayMs ? 'after' : 'during';
+        const sprintDayNum = sprintPhase === 'during' ? Math.max(1, Math.min(sprintWorkingDays, workingDaysThrough(sprintStart.getTime(), todayStartMs))) : sprintPhase === 'after' ? sprintWorkingDays : 0;
+        const sprintDaysLeft = sprintPhase === 'before' ? sprintWorkingDays : Math.max(0, sprintWorkingDays - sprintDayNum);
+        let sprintForecast = null;
+        if (sprintPhase === 'during' && sprintDayNum >= 2 && totalMainTasks > 0) {
+            const doneMain = completedBreakdown.mothers;
+            const shortfall = doneMain >= totalMainTasks ? 0 : Math.round(totalMainTasks - (doneMain + (doneMain / sprintDayNum) * sprintDaysLeft));
+            sprintForecast = shortfall <= 0
+              ? { onTrack: true, text: doneMain >= totalMainTasks ? 'All main tasks done' : 'On track' }
+              : { onTrack: false, text: `About ${shortfall} ${shortfall === 1 ? 'task' : 'tasks'} won't finish at the current pace` };
+        }
+
+        // FR-19a: sprint focus = the tags on the main tasks (modules, features, epics), most used first, without complexity/severity tags
+        const FOCUS_SKIP_TAGS = new Set(['major', 'minor', 'critical', 'trivial', 'low', 'medium', 'high', 'urgent', 'easy', 'hard', 'complex', 'simple', 'spill over']);
+        const focusCounts = {};
+        allMotherTasks.forEach(t => new Set((t.tags || []).map(tag => (tag.name || '').trim()).filter(n => n && !FOCUS_SKIP_TAGS.has(n.toLowerCase()))).forEach(n => { focusCounts[n] = (focusCounts[n] || 0) + 1; }));
+        const sprintFocus = Object.entries(focusCounts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+
+        // the task list under the sprint tiles (one open at a time)
+        const sprintPanel = {
+            blocked: { title: 'Blocked tasks', tasks: blockedTasks, note: (t) => blockedLabels(blockedById.get(t.id)).join(' · ') },
+            'gap-estimate': { title: 'Open main tasks with no estimate', tasks: readinessGaps.estimate },
+            'gap-assignee': { title: 'Open main tasks with no assignee', tasks: readinessGaps.assignee },
+            'gap-due': { title: 'Open main tasks with no due date', tasks: readinessGaps.due },
+        }[sprintOpen] || null;
 
         const handleExportCSV = () => {
             const escapeCSV = (str) => {
@@ -5304,6 +5341,90 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
                   </div>
                 </div>
 
+                {/* Sprint status (sprint-metrics FR-18 to FR-22): day, days left, forecast, focus tags, Blocked and readiness tiles */}
+                <section aria-label="Sprint status" className="mb-8 bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl p-5 md:p-6">
+                  <div className="flex flex-col lg:flex-row lg:items-center gap-4 lg:gap-8">
+                    <div className="flex items-center gap-3 shrink-0">
+                      <div className="bg-sky-500/10 p-2.5 rounded-lg border border-sky-500/20 shrink-0"><Calendar className="h-5 w-5 text-sky-400" /></div>
+                      {sprintPhase === 'none' ? (
+                        <p className="text-sm text-slate-400 max-w-xs">Set the list's start and due dates in ClickUp to see sprint progress.</p>
+                      ) : (
+                        <div>
+                          <div className="text-lg font-semibold text-white">
+                            {sprintPhase === 'before' ? `Starts ${formatDate(sprintStart.getTime())}` : sprintPhase === 'after' ? `Ended ${formatDate(sprintEnd.getTime())}` : `Day ${sprintDayNum} of ${sprintWorkingDays}`}
+                          </div>
+                          <div className="text-xs text-slate-400">
+                            {formatDate(sprintStart.getTime())} – {formatDate(sprintEnd.getTime())}
+                            {sprintPhase !== 'after' && ` · ${sprintDaysLeft} working ${sprintDaysLeft === 1 ? 'day' : 'days'} left`}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    {sprintForecast && (
+                      <span className={`self-start lg:self-center px-3 py-1 rounded-full text-xs font-semibold border ${sprintForecast.onTrack ? 'text-emerald-300 bg-emerald-500/10 border-emerald-500/30' : 'text-amber-300 bg-amber-500/10 border-amber-500/30'}`}>{sprintForecast.text}</span>
+                    )}
+                    {sprintFocus.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5 min-w-0 lg:ml-auto">
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mr-1">Focus</span>
+                        {(sprintOpen === 'focus' ? sprintFocus : sprintFocus.slice(0, 6)).map(([name, count]) => (
+                          <button key={name} onClick={() => { setCompletionFilterType('tags'); setSelectedTagFilter(name); }} title={`Show only tasks tagged ${name}`} className="px-2 py-0.5 rounded-full text-xs border border-indigo-500/30 bg-indigo-500/10 text-indigo-200 hover:bg-indigo-500/20 transition-colors">
+                            {name} <span className="opacity-60">{count}</span>
+                          </button>
+                        ))}
+                        {sprintFocus.length > 6 && (
+                          <button onClick={() => setSprintOpen(o => o === 'focus' ? null : 'focus')} className="text-xs text-indigo-400 hover:underline">{sprintOpen === 'focus' ? 'Show fewer' : `+${sprintFocus.length - 6} more`}</button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-5">
+                    <div className="bg-slate-900/60 p-4 rounded-xl border border-white/5">
+                      <div className="text-sm font-medium text-slate-400 flex items-center gap-1"><PauseCircle className="h-4 w-4 text-rose-400 mr-1" /> Blocked <div className="hover:z-[99999]"><MetricTooltip align="left" text="Open main tasks waiting on another task that is not done, or in status With Bug / With UI Bug."><InfoIcon className="h-3 w-3 text-slate-500" /></MetricTooltip></div></div>
+                      <div className="flex items-end justify-between gap-3 mt-1">
+                        <div>
+                          <p className="text-2xl font-extrabold text-white">{blockedTasks.length}</p>
+                          <p className="text-xs text-slate-500">{blockedWaitingCount} waiting on a task · {blockedBugCount} with bugs</p>
+                        </div>
+                        {blockedTasks.length > 0 && (
+                          <button onClick={() => setSprintOpen(o => o === 'blocked' ? null : 'blocked')} aria-expanded={sprintOpen === 'blocked'} className="text-xs text-indigo-400 hover:underline shrink-0">{sprintOpen === 'blocked' ? 'Hide tasks' : 'Show tasks'}</button>
+                        )}
+                      </div>
+                    </div>
+                    <div className="bg-slate-900/60 p-4 rounded-xl border border-white/5">
+                      <div className="text-sm font-medium text-slate-400 flex items-center gap-1"><ListTodo className="h-4 w-4 text-amber-400 mr-1" /> Readiness gaps <div className="hover:z-[99999]"><MetricTooltip align="left" text="Open main tasks missing an estimate, an assignee or a due date."><InfoIcon className="h-3 w-3 text-slate-500" /></MetricTooltip></div></div>
+                      <div className="grid grid-cols-3 gap-2 mt-2">
+                        {[['gap-estimate', 'No estimate', readinessGaps.estimate.length], ['gap-assignee', 'No assignee', readinessGaps.assignee.length], ['gap-due', 'No due date', readinessGaps.due.length]].map(([key, label, n]) => (
+                          <button key={key} disabled={n === 0} onClick={() => setSprintOpen(o => o === key ? null : key)} aria-expanded={sprintOpen === key} aria-label={`${label}: ${n}`} className={`text-left px-2.5 py-1.5 rounded-lg border transition-colors ${sprintOpen === key ? 'border-indigo-500/50 bg-indigo-500/10' : 'border-white/5 bg-slate-900/40'} ${n === 0 ? 'cursor-default' : 'hover:border-indigo-500/40'}`}>
+                            <span className={`block text-lg font-bold ${n > 0 ? 'text-amber-300' : 'text-white'}`}>{n}</span>
+                            <span className="block text-[11px] text-slate-400">{label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {sprintPanel && (
+                    <div className="mt-4 bg-slate-900/60 rounded-xl border border-white/5">
+                      <div className="px-4 py-2.5 border-b border-white/5 flex items-center justify-between">
+                        <span className="text-xs font-semibold text-slate-300">{sprintPanel.title} ({sprintPanel.tasks.length})</span>
+                        <button onClick={() => setSprintOpen(null)} aria-label="Close task list" className="text-slate-500 hover:text-white"><X className="h-4 w-4" /></button>
+                      </div>
+                      <ul className="divide-y divide-white/5 max-h-72 overflow-y-auto">
+                        {sprintPanel.tasks.map(t => (
+                          <li key={t.id} className="px-4 py-2.5 flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: t.status?.color || '#94a3b8' }} /><span className="text-sm text-slate-200 truncate">{t.name}</span></div>
+                              {sprintPanel.note && <div className="text-xs text-slate-500 ml-3.5">{sprintPanel.note(t)}</div>}
+                            </div>
+                            <span className="text-[10px] uppercase tracking-wider text-slate-500 shrink-0">{t.status?.status}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </section>
+
                 {/* 1. Overall Progress & Distribution Section */}
                 <div className="mb-8">
                   <div className="flex items-center space-x-2 mb-4 group/tooltip">
@@ -5433,7 +5554,7 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
                           <div className="text-lg font-semibold text-white flex items-center flex-wrap gap-2">
                             Sprint Burndown
                             <div className="hover:z-[99999]">
-                              <MetricTooltip align="right" text="Tracks remaining task effort versus your ideal timeline." formula="Y-Axis: Remaining tracked hours. X-Axis: Elapsed time between earliest Start Date and latest Due Date.">
+                              <MetricTooltip align="right" text="Remaining work versus the ideal timeline. A done task counts 0 from the day it closed; tasks without an estimate are left out." formula="Remaining = sum over open main tasks of max(estimate − hours logged, 0). The ideal line falls on working days only.">
                                 <InfoIcon className="h-4 w-4 text-slate-500 transition-colors" />
                               </MetricTooltip>
                             </div>
@@ -5452,7 +5573,7 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
                     
                     <div className="relative h-56 w-full hover:z-[99999] group/chart">
                       <div className="absolute left-0 top-0 bottom-6 w-8 flex flex-col justify-between text-xs font-medium text-slate-500 text-right pr-2">
-                         {generateYAxisLabels(totalEstHours, 'h').map((label, idx) => (<span key={idx}>{label}</span>))}
+                         {generateYAxisLabels(burndownTotalHours, 'h').map((label, idx) => (<span key={idx}>{label}</span>))}
                       </div>
                       
                       <div className="absolute left-10 right-2 top-2 bottom-6 cursor-crosshair z-10 group-hover/chart:z-[999999]"
@@ -5475,7 +5596,7 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
                           <line x1="33.3" y1="0" x2="33.3" y2="100" stroke="#111827" strokeWidth="1" vectorEffect="non-scaling-stroke" />
                           <line x1="66.6" y1="0" x2="66.6" y2="100" stroke="#111827" strokeWidth="1" vectorEffect="non-scaling-stroke" />
                           <line x1="100" y1="0" x2="100" y2="100" stroke="#111827" strokeWidth="1" vectorEffect="non-scaling-stroke" />
-                          <line x1="0" y1="0" x2="100" y2="100" stroke="#475569" strokeWidth="2" strokeDasharray="6 6" vectorEffect="non-scaling-stroke" />
+                          <path d={idealBurndownPath} fill="none" stroke="#475569" strokeWidth="2" strokeDasharray="6 6" vectorEffect="non-scaling-stroke" />
                           
                           {areaPath && (
                             <path d={areaPath} fill="url(#burndownGradient)" />
@@ -5522,6 +5643,9 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
                         <span className="-mr-4">{dayLabels[3]}</span>
                       </div>
                     </div>
+                    {overEstimateOpen.length > 0 && (
+                      <p className="mt-4 text-xs text-amber-300/90 flex items-center gap-1.5"><ClockAlert className="h-3.5 w-3.5 shrink-0" /> {overEstimateOpen.length} open {overEstimateOpen.length === 1 ? 'task' : 'tasks'} over estimate (+{formatDuration(overEstimateOpenMs)})</p>
+                    )}
                   </div>
 
                   {/* Main Tasks Burnup */}
@@ -5621,8 +5745,9 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
                         <BarChart2 className="h-5 w-5 text-purple-400 shrink-0" />
                         <div className="text-lg font-semibold text-white flex items-center flex-wrap gap-2">
                           Daily Status Distribution
+                          <div className="hover:z-[99999]"><MetricTooltip align="left" text="ClickUp does not send status history, so this is guessed from each task's dates. Only the closed part is exact."><span tabIndex={0} className="px-1.5 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-300 text-[10px] font-bold uppercase tracking-wider">Estimated</span></MetricTooltip></div>
                           <div className="hover:z-[99999]">
-                            <MetricTooltip align="left" text="Stacked bar chart showing task counts per status over the sprint timeline." formula="Parses Activity Logs. Y-Axis: Task Count. X-Axis: Days.">
+                            <MetricTooltip align="left" text="Stacked bar chart showing task counts per status over the sprint timeline." formula="Each task's status on past days is inferred from its created, start and closed dates. Y-Axis: Task Count. X-Axis: Days.">
                               <InfoIcon className="h-4 w-4 text-slate-500 transition-colors" />
                             </MetricTooltip>
                           </div>
@@ -5774,18 +5899,24 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
                         <div className="space-y-4">
                           <div>
                              <div className="flex justify-between items-center mb-1.5">
-                               <div className="text-xs font-medium text-slate-400 flex items-center gap-1.5">Developer Util (80% Demand) <div className="hover:z-[99999]"><MetricTooltip align="left" text="Dev workload vs capacity." formula="(Total Est Hours × 80%) ÷ Dev Capacity"><InfoIcon className="h-3 w-3 text-slate-500" /></MetricTooltip></div></div>
+                               <div className="text-xs font-medium text-slate-400 flex items-center gap-1.5">Developer Util <span className="text-slate-500">({devDemandHours}h / {Math.round(devCapacityHours)}h)</span> <div className="hover:z-[99999]"><MetricTooltip align="left" text="Estimated hours assigned to Developers vs Developer capacity." formula="Each task's estimate split equally among its assignees, by their role ÷ Dev Capacity"><InfoIcon className="h-3 w-3 text-slate-500" /></MetricTooltip></div></div>
                                <span className="text-xs font-bold text-white">{devUtilPct}%</span>
                              </div>
                              <div className="w-full bg-slate-900/60 border border-white/5 rounded-full h-1.5 overflow-hidden"><div className={`h-full rounded-full transition-all duration-1000 ${devUtilPct > 100 ? 'bg-rose-500' : 'bg-blue-500'}`} style={{ width: `${Math.min(devUtilPct, 100)}%` }}></div></div>
                           </div>
                           <div>
                              <div className="flex justify-between items-center mb-1.5">
-                               <div className="text-xs font-medium text-slate-400 flex items-center gap-1.5">QA Util (20% Demand) <div className="hover:z-[99999]"><MetricTooltip align="left" text="QA workload vs capacity." formula="(Total Est Hours × 20%) ÷ QA Capacity"><InfoIcon className="h-3 w-3 text-slate-500" /></MetricTooltip></div></div>
+                               <div className="text-xs font-medium text-slate-400 flex items-center gap-1.5">QA Util <span className="text-slate-500">({qaDemandHours}h / {Math.round(qaCapacityHours)}h)</span> <div className="hover:z-[99999]"><MetricTooltip align="left" text="Estimated hours assigned to QA vs QA capacity." formula="Each task's estimate split equally among its assignees, by their role ÷ QA Capacity"><InfoIcon className="h-3 w-3 text-slate-500" /></MetricTooltip></div></div>
                                <span className="text-xs font-bold text-white">{qaUtilPct}%</span>
                              </div>
                              <div className="w-full bg-slate-900/60 border border-white/5 rounded-full h-1.5 overflow-hidden"><div className={`h-full rounded-full transition-all duration-1000 ${qaUtilPct > 100 ? 'bg-rose-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(qaUtilPct, 100)}%` }}></div></div>
                           </div>
+                          {unassignedDemandHours > 0 && (
+                            <div className="flex justify-between items-center text-xs text-amber-300/90 bg-amber-500/5 border border-amber-500/10 rounded-lg px-2.5 py-1.5">
+                              <span className="flex items-center gap-1.5">Unassigned demand <div className="hover:z-[99999]"><MetricTooltip align="left" text="Estimated hours on main tasks with no assignee. Not counted for either role."><InfoIcon className="h-3 w-3 text-slate-500" /></MetricTooltip></div></span>
+                              <span className="font-bold">{unassignedDemandHours}h</span>
+                            </div>
+                          )}
                         </div>
                       </div>
 
@@ -5837,16 +5968,17 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
                       <div className="flex items-center flex-wrap space-x-3 mb-3">
                         <div className="bg-purple-500/10 p-2.5 rounded-lg border border-purple-500/20 shrink-0"><Target className="h-6 w-6 text-purple-400" /></div>
                         <h2 className="text-lg font-semibold text-white flex items-center flex-wrap gap-2">
-                          Est. Accuracy <div className="hover:z-[99999]"><MetricTooltip align="left" text="Measures the accuracy of time estimates against actual time spent." formula="100 - (|Actual Duration - Estimated Time| / Estimated Time * 100) for completed tasks."><InfoIcon className="h-4 w-4 text-slate-500 transition-colors" /></MetricTooltip></div>
+                          Est. Accuracy <div className="hover:z-[99999]"><MetricTooltip align="left" text={`Estimated hours vs hours logged (ClickUp + Weaver) on done tasks.${accuracySkipped > 0 ? ` ${accuracySkipped} done ${accuracySkipped === 1 ? 'task was' : 'tasks were'} left out: no estimate or no time logged.` : ''}${accuracyEstMs === 0 ? ' No done task has both an estimate and logged time yet.' : ''}`} formula="100 − (|Logged − Estimated| ÷ Estimated × 100), summed over done tasks with both."><InfoIcon className="h-4 w-4 text-slate-500 transition-colors" /></MetricTooltip></div>
                         </h2>
                       </div>
-                      <p className="text-sm text-slate-400 mb-5 leading-relaxed">Measures how closely the initial time estimates match the actual duration it takes to complete tasks.</p>
-                      <div className="flex items-end"><span className="text-6xl font-extrabold text-white tracking-tight leading-none">{estimationAccuracyDisplay}</span></div>
+                      <p className="text-sm text-slate-400 mb-5 leading-relaxed">How closely the estimates match the hours actually logged on done tasks.</p>
+                      <div className="flex items-end gap-3"><span className="text-6xl font-extrabold text-white tracking-tight leading-none">{estimationAccuracyDisplay}</span>{accuracyDirection && <span className={`text-sm font-medium mb-1 ${accuracyDirection === 'on target' ? 'text-emerald-400' : 'text-amber-300'}`}>{accuracyDirection}</span>}</div>
+                      {accuracyEstMs > 0 && <p className="text-xs text-slate-500 mt-3">Est. {formatDuration(accuracyEstMs)} · Logged {formatDuration(accuracyLoggedMs)} · {accuracyTasks.length} {accuracyTasks.length === 1 ? 'task' : 'tasks'}</p>}
                     </div>
 
                     <div className="flex-1 border-t md:border-t-0 md:border-l border-white/5 pt-6 md:pt-0 md:pl-8 lg:pl-12">
                       <div className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4 flex items-center flex-wrap gap-2">
-                        Average Time in Status <div className="hover:z-[99999]"><MetricTooltip align="center" text="Average working time tasks spend in intermediate phases." formula="Parses Activity Logs, calculates time between changes (counting only 10am-5pm on weekdays), and averages it."><InfoIcon className="h-3.5 w-3.5 text-slate-500 transition-colors" /></MetricTooltip></div>
+                        Average Time in Status <div className="hover:z-[99999]"><MetricTooltip align="left" text="ClickUp does not send status history, so this is guessed from each task's dates. Only the closed part is exact. Counted from the task's last edit, so a comment or any change resets the clock."><span tabIndex={0} className="px-1.5 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-300 text-[10px] font-bold uppercase tracking-wider">Estimated</span></MetricTooltip></div> <div className="hover:z-[99999]"><MetricTooltip align="center" text="Average working time tasks spend in intermediate phases." formula="Working time (10am-5pm on weekdays) since each open task's last update, averaged per status."><InfoIcon className="h-3.5 w-3.5 text-slate-500 transition-colors" /></MetricTooltip></div>
                       </div>
                       
                       {avgTimeInStatusList.length > 0 ? (
@@ -5920,8 +6052,9 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
                       <div className="neon-card transition-all bg-slate-900/40 backdrop-blur-md p-6 rounded-2xl border border-purple-500/10 shadow-xl flex items-start space-x-4 cursor-default group">
                         <div className="bg-purple-500/10 p-3 rounded-lg border border-purple-500/20 group-hover:border-purple-500/50 transition-colors"><Target className="h-6 w-6 text-purple-400" /></div>
                         <div className="min-w-0">
-                          <div className="text-sm font-medium text-slate-400 flex items-center gap-1 flex-wrap">Avg Quality Rate <div className="hover:z-[99999]"><MetricTooltip align="left" text="Average quality score across mother tasks." formula="100% minus penalty points for each bug based on complexity/priority. (Critical: -20, High: -15, Normal: -10, Low: -5)."><InfoIcon className="h-3.5 w-3.5" /></MetricTooltip></div></div>
-                          <p className="text-2xl font-bold text-white mt-1 group-hover:text-purple-300 transition-colors">{avgQualityRate}%</p>
+                          <div className="text-sm font-medium text-slate-400 flex items-center gap-1 flex-wrap">Bugs per 10 done <div className="hover:z-[99999]"><MetricTooltip align="left" text="Bugs found on done main tasks, per 10 done main tasks, and the share of done main tasks that had at least one bug." formula="Bugs under done main tasks ÷ done main tasks × 10"><InfoIcon className="h-3.5 w-3.5" /></MetricTooltip></div></div>
+                          <p className="text-2xl font-bold text-white mt-1 group-hover:text-purple-300 transition-colors">{bugsPer10Done === null ? 'N/A' : bugsPer10Done.toFixed(1)}</p>
+                          {doneWithBugPct !== null && <p className="text-xs text-slate-500 mt-0.5">{doneWithBugPct}% of done tasks had a bug</p>}
                         </div>
                       </div>
 
@@ -5960,24 +6093,33 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
                   </div>
                 )}
 
-                {/* Stalled Tasks */}
-                {stalledTasks.length > 0 && (
+                {/* Needs Attention (sprint-metrics FR-15 to FR-17): blocked, overdue or over estimate */}
+                {attentionTasks.length > 0 && (
                   <div className="mb-8 bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl">
                     <div className="px-6 py-4 border-b border-white/5 bg-slate-900/30 flex justify-between items-center rounded-t-2xl">
-                      <div className="text-sm font-bold text-white flex items-center gap-2"><ClockAlert className="h-4 w-4 text-amber-500" /> Needs Attention <div className="hover:z-[99999]"><MetricTooltip text="Tasks exceeding estimate"><InfoIcon className="h-3 w-3 text-slate-500 transition-colors" /></MetricTooltip></div></div>
-                      <span className="text-[10px] font-bold text-amber-500 border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 rounded uppercase tracking-wider">Stalled</span>
+                      <div className="text-sm font-bold text-white flex items-center gap-2"><ClockAlert className="h-4 w-4 text-amber-500" /> Needs Attention <div className="hover:z-[99999]"><MetricTooltip text="Open main tasks that are blocked, overdue (due before today) or over their estimate. Blocked first, then most overdue, then most over estimate."><InfoIcon className="h-3 w-3 text-slate-500 transition-colors" /></MetricTooltip></div></div>
+                      <span className="text-[10px] font-bold text-amber-500 border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 rounded uppercase tracking-wider">{attentionTasks.length} {attentionTasks.length === 1 ? 'task' : 'tasks'}</span>
                     </div>
                     <ul className="divide-y divide-white/5">
-                      {stalledTasks.map(task => (
-                        <li key={task.id} className="p-5 hover:bg-white/5 flex items-center justify-between transition-colors">
-                          <div>
-                            <div className="flex items-center gap-2 mb-1"><div className="w-1.5 h-1.5 rounded-full" style={{backgroundColor: task.status?.color || '#94a3b8'}}/><span className="text-sm font-bold text-slate-200">{task.name}</span></div>
-                            <div className="text-xs text-slate-500 ml-3.5"><ClockAlert className="w-3 h-3 inline mr-1 text-amber-500/50" /> Elapsed: {Math.floor((now - parseInt(task.date_created))/86400000)}d / Est: {Math.round(parseInt(task.time_estimate)/3600000)}h</div>
+                      {(attentionAll ? attentionTasks : attentionTasks.slice(0, 5)).map(({ task, labels, blocked }) => (
+                        <li key={task.id} className="p-5 hover:bg-white/5 flex items-center justify-between gap-3 transition-colors">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 mb-1.5"><div className="w-1.5 h-1.5 rounded-full shrink-0" style={{backgroundColor: task.status?.color || '#94a3b8'}}/><span className="text-sm font-bold text-slate-200 truncate">{task.name}</span></div>
+                            <div className="flex flex-wrap gap-1.5 ml-3.5">
+                              {labels.map((label, i) => (
+                                <span key={i} className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border ${blocked && i === 0 ? 'text-rose-300 bg-rose-500/10 border-rose-500/30' : 'text-amber-300 bg-amber-500/10 border-amber-500/20'}`}>{label}</span>
+                              ))}
+                            </div>
                           </div>
-                          {task.assignees && task.assignees.length > 0 && <img src={task.assignees[0].profilePicture || `https://ui-avatars.com/api/?name=${task.assignees[0].username}`} referrerPolicy="no-referrer" className="w-6 h-6 rounded-full border border-slate-700 bg-slate-800 object-cover" />}
+                          {task.assignees && task.assignees.length > 0 && <img src={task.assignees[0].profilePicture || `https://ui-avatars.com/api/?name=${task.assignees[0].username}`} referrerPolicy="no-referrer" alt={task.assignees[0].username || ''} className="w-6 h-6 rounded-full border border-slate-700 bg-slate-800 object-cover shrink-0" />}
                         </li>
                       ))}
                     </ul>
+                    {attentionTasks.length > 5 && (
+                      <div className="px-6 py-3 border-t border-white/5">
+                        <button onClick={() => setAttentionAll(v => !v)} className="text-xs text-indigo-400 hover:underline">{attentionAll ? 'Show fewer' : `+${attentionTasks.length - 5} more`}</button>
+                      </div>
+                    )}
                   </div>
                 )}
 
