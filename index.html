@@ -6,7 +6,7 @@
   <title>Weaver - Thread Support and Development together</title>
   <meta name="referrer" content="no-referrer">
   <!-- Release version shown in the page footer; bump on every upload (YYYY.MM.DD-N) -->
-  <meta name="weaver-version" content="2026.10.14-3">
+  <meta name="weaver-version" content="2026.10.16-1">
   
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -4218,7 +4218,6 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
             'gap-assignee': { title: 'Open main tasks with no assignee', tasks: readinessGaps.assignee },
             'gap-due': { title: 'Open main tasks with no due date', tasks: readinessGaps.due },
             'scope-added': { title: 'Added after the sprint started', tasks: scopeAdded.map(e => scopeTaskFor(e, `Added ${formatDate(e.firstSeen)}`)), note: (t) => t._note },
-            'scope-removed': { title: 'Removed during the sprint', tasks: scopeRemoved.map(e => scopeTaskFor(e, `Removed ${formatDate(e.goneAt)}`)), note: (t) => t._note },
         }[sprintOpen] || null;
 
         // FR-30: a linked backlog list makes every metric count backlog work as sprint scope
@@ -5673,7 +5672,8 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
                             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mt-1">
                               <span className="text-sm text-slate-300">Committed <span className="text-xl font-extrabold text-white">{scopeCommitted.length}</span>{scopeCarried > 0 && <span className="text-xs text-slate-500"> (incl. {scopeCarried} carried over)</span>}</span>
                               <button disabled={scopeAdded.length === 0} onClick={() => setSprintOpen(o => o === 'scope-added' ? null : 'scope-added')} aria-expanded={sprintOpen === 'scope-added'} className={`text-sm ${scopeAdded.length ? 'text-amber-300 hover:underline' : 'text-slate-500 cursor-default'}`}>Added +{scopeAdded.length}</button>
-                              <button disabled={scopeRemoved.length === 0} onClick={() => setSprintOpen(o => o === 'scope-removed' ? null : 'scope-removed')} aria-expanded={sprintOpen === 'scope-removed'} className={`text-sm ${scopeRemoved.length ? 'text-sky-300 hover:underline' : 'text-slate-500 cursor-default'}`}>Removed −{scopeRemoved.length}</button>
+                              {/* Count only: removed tasks are mostly deleted in ClickUp, and the scope record keeps ids only, so a list could not name them */}
+                              <span className={`text-sm ${scopeRemoved.length ? 'text-sky-300' : 'text-slate-500'}`}>Removed −{scopeRemoved.length}</span>
                             </div>
                             {scopePartialSince > 0 && <p className="text-[11px] text-slate-500 mt-1">Partial: recorded since {formatDate(scopePartialSince)}</p>}
                           </>
