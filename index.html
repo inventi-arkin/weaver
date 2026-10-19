@@ -6,7 +6,7 @@
   <title>Weaver - Thread Support and Development together</title>
   <meta name="referrer" content="no-referrer">
   <!-- Release version shown in the page footer; bump on every upload (YYYY.MM.DD-N) -->
-  <meta name="weaver-version" content="2026.10.19-1">
+  <meta name="weaver-version" content="2026.10.19-2">
   
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -259,7 +259,7 @@
       Clock, Calendar, Flag, Users, TrendingDown, TrendingUp, Target, Tag, X, Activity, PieChart,
       Bug, ShieldAlert, Zap, Info as InfoIcon, Download, Image as ImageIcon, BarChart2,
       LayoutDashboard, Briefcase, Pencil, Check, PauseCircle, WifiOff, CloudOff, ShieldCheck, ShieldX,
-      Archive, CalendarX, Gauge, ChevronLeft, ChevronDown, ArrowRightLeft, Search
+      Archive, CalendarX, Gauge, ChevronLeft, ChevronDown, ArrowRightLeft, Search, GanttChartSquare, ExternalLink, ChevronUp
     } from 'lucide-react';
 
     const firebaseConfig = {
@@ -546,8 +546,10 @@
       return { est, spent };
     };
 
-    const CarouselTask = ({ task, color, depth = 0, expandedTasks, toggleTaskExpand }) => {
+    const CarouselTask = ({ task, color, depth = 0, expandedTasks, toggleTaskExpand, onTimeline, inBugs = false }) => {
       const subs = task.subtasks || [];
+      const isBugBox = /qa bugs|ui bugs/i.test(task.name || '');
+      const canTimeline = onTimeline && !isBugBox && (depth === 0 || inBugs); // task-timeline D-3: main tasks and bug items, not containers
       const isOpen = !!expandedTasks[task.id];
       const { est, spent } = taskTimes(task);
       const pct = Math.round(100 * spent / Math.max(est, spent, 1));
@@ -559,6 +561,7 @@
           <div className="flex items-start gap-2">
             <span className="mt-1.5 h-2 w-2 rounded-full shrink-0" style={{ background: PRIORITY_DOT[prio] || '#475569' }} title={prio ? `Priority: ${prio}` : 'No priority'} />
             <span className={`${depth ? 'text-xs' : 'text-sm'} font-semibold text-slate-100 leading-5 flex-1 min-w-0 break-words`}>{task.name || 'Unnamed Task'}{task._archived && <> <ArchivedBadge /></>}</span>
+            {canTimeline && <button onClick={(e) => { e.stopPropagation(); onTimeline(task.id, e.currentTarget); }} aria-label={`Timeline for ${task.name || 'task'}`} title="Timeline" className="shrink-0 p-0.5 rounded text-slate-500 hover:text-indigo-300"><GanttChartSquare className="h-4 w-4" /></button>}
             {!depth && (
               <span className="flex -space-x-1.5 shrink-0 pl-1">
                 {(task.assignees || []).slice(0, 3).map((a, i) => (
@@ -583,7 +586,7 @@
           {!depth && hasTime && <div className="ml-4 mt-1.5 h-1 rounded bg-slate-900 overflow-hidden"><div className="h-full" style={{ width: `${pct}%`, background: color }} /></div>}
           {isOpen && subs.length > 0 && (
             <div className="mt-2 ml-3 pl-2 border-l border-dashed border-white/10 space-y-1.5">
-              {subs.map(s => <CarouselTask key={s.id} task={s} color={color} depth={depth + 1} expandedTasks={expandedTasks} toggleTaskExpand={toggleTaskExpand} />)}
+              {subs.map(s => <CarouselTask key={s.id} task={s} color={color} depth={depth + 1} expandedTasks={expandedTasks} toggleTaskExpand={toggleTaskExpand} onTimeline={onTimeline} inBugs={isBugBox} />)}
             </div>
           )}
         </div>
@@ -591,7 +594,7 @@
     };
 
     // groups: [{ status, color, tasks }]. storageKey: where this user's tab order is saved (per user, list and explorer).
-    const StatusCarousel = ({ groups, storageKey, expandedTasks, toggleTaskExpand }) => {
+    const StatusCarousel = ({ groups, storageKey, expandedTasks, toggleTaskExpand, defaultOrder = [], onTimeline }) => {
       const SP = 170, EX = 130;
       const keyOf = (g) => g.status.toLowerCase();
       const readSaved = () => { try { const v = JSON.parse(localStorage.getItem(storageKey) || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; } };
@@ -606,10 +609,13 @@
       const pos = useRef(0), target = useRef(0), anim = useRef(null), centerKey = useRef(null), flashTimer = useRef(null);
       const chipDrag = useRef(null), swipe = useRef(null), skipClick = useRef(false), wheelAt = useRef(0), live = useRef({});
 
-      // Saved names first, in saved order; statuses never seen before follow in default order (open statuses A to Z, then done statuses A to Z)
+      // Saved names first, in saved order; statuses never seen before follow in default order.
+      // status-order A-2 FR-9, FR-12, FR-13: the default is the list's own order in ClickUp; statuses ClickUp doesn't list go last, A to Z.
+      // Without ClickUp's order (not synced yet): open statuses A to Z, then done statuses A to Z.
       const orderBy = (list, order) => [...list].sort((x, y) => { const ix = order.indexOf(keyOf(x)), iy = order.indexOf(keyOf(y)); return (ix < 0 ? 1e6 : ix) - (iy < 0 ? 1e6 : iy); });
       const doneFirst = (g) => (DONE_NAMES.includes(keyOf(g)) ? 1 : 0); // done statuses follow the open ones by default
-      const byDefault = [...groups].sort((x, y) => (doneFirst(x) - doneFirst(y)) || (x.status < y.status ? -1 : x.status > y.status ? 1 : 0));
+      const rank = (g) => { const i = defaultOrder.indexOf(keyOf(g)); return i < 0 ? 1e6 : i; };
+      const byDefault = [...groups].sort((x, y) => (defaultOrder.length ? rank(x) - rank(y) : doneFirst(x) - doneFirst(y)) || (keyOf(x) < keyOf(y) ? -1 : keyOf(x) > keyOf(y) ? 1 : 0));
       const cardData = orderBy(byDefault, saved);
       const chipData = orderBy(byDefault, chipOrder || saved);
       const isDefault = cardData.every((g, i) => g === byDefault[i]);
@@ -742,7 +748,7 @@
         <div className="relative z-0 isolate">
           <div className="flex items-center justify-end gap-3 px-6 pt-3 min-h-[28px]">
             <span className={`text-[11px] text-emerald-300 transition-opacity duration-300 ${savedFlash ? 'opacity-100' : 'opacity-0'}`}>✓ Order saved</span>
-            {!isDefault && <button onClick={() => persist([], 'Status order reset to default.')} className="text-[11px] text-slate-400 hover:text-white underline underline-offset-2">Reset order</button>}
+            {!isDefault && <button onClick={() => persist([], defaultOrder.length ? "Status order reset to ClickUp's order." : 'Status order reset to default.')} className="text-[11px] text-slate-400 hover:text-white underline underline-offset-2">Reset order</button>}
             {canSort && <span className="text-[11px] text-slate-500 hidden md:inline">drag the tabs to reorder · swipe or ← → to browse</span>}
           </div>
           <div className="relative z-10 bg-gradient-to-b from-slate-900/60 to-transparent">
@@ -792,7 +798,7 @@
                         <span className="absolute left-0 bottom-0 h-0.5" style={{ width: `${pct}%`, background: g.color }} />
                       </header>
                       <div className="wv-tasks flex-1 min-h-0 overflow-y-auto p-3 space-y-2" tabIndex={0} aria-label={`${g.status} tasks`}>
-                        {g.tasks.map(t => <CarouselTask key={t.id} task={t} color={g.color} expandedTasks={expandedTasks} toggleTaskExpand={toggleTaskExpand} />)}
+                        {g.tasks.map(t => <CarouselTask key={t.id} task={t} color={g.color} expandedTasks={expandedTasks} toggleTaskExpand={toggleTaskExpand} onTimeline={onTimeline} />)}
                       </div>
                     </article>
                   );
@@ -1158,6 +1164,16 @@
         try { const val = JSON.parse(localStorage.getItem(`weaver_settings_${appId}_${activeListId}`) || '{}').qaHoursPerDay; return val !== undefined ? val : 7; } catch(e) { return 7; }
       });
       
+      // task-timeline A-1 FR-19, FR-20: when each role's working day starts ("HH:MM"; missing means 10:00)
+      const [devShiftStart, setDevShiftStart] = useState(() => {
+        if (!activeListId) return '10:00';
+        try { return JSON.parse(localStorage.getItem(`weaver_settings_${appId}_${activeListId}`) || '{}').devShiftStart || '10:00'; } catch(e) { return '10:00'; }
+      });
+      const [qaShiftStart, setQaShiftStart] = useState(() => {
+        if (!activeListId) return '10:00';
+        try { return JSON.parse(localStorage.getItem(`weaver_settings_${appId}_${activeListId}`) || '{}').qaShiftStart || '10:00'; } catch(e) { return '10:00'; }
+      });
+
       const [isBlockerModalOpen, setIsBlockerModalOpen] = useState(false);
       const [dateBlockers, setDateBlockers] = useState(() => {
         if (!activeListId) return [];
@@ -1207,6 +1223,24 @@
       const [timeEntryNote, setTimeEntryNote] = useState('');
       const [timeEntryHours, setTimeEntryHours] = useState('');
       const [selectedTaskIdForTime, setSelectedTaskIdForTime] = useState('');
+      // task-timeline: the open timeline drawer, the Task Timelines table's view, and whether older history is wanted (FR-12)
+      const [timelineTaskId, setTimelineTaskId] = useState(null);
+      const timelineOpenerRef = useRef(null);
+      const [timelineView, setTimelineView] = useState({ type: 'All', completeOnly: false, sort: 'lead', dir: -1, all: false });
+      const [timelineWanted, setTimelineWanted] = useState(false);
+      const [timelineExporting, setTimelineExporting] = useState(false);
+      // FR-12: the table counts as opened once it scrolls into view
+      const timelineCardObs = useRef(null);
+      const timelineCardRef = useRef((el) => {
+        if (timelineCardObs.current) { timelineCardObs.current.disconnect(); timelineCardObs.current = null; }
+        if (!el || typeof IntersectionObserver === 'undefined') return;
+        const ob = new IntersectionObserver((entries) => { if (entries.some(e => e.isIntersecting)) { setTimelineWanted(true); ob.disconnect(); } });
+        ob.observe(el);
+        timelineCardObs.current = ob;
+      }).current;
+      useEffect(() => { if (timelineTaskId && typeof document !== 'undefined') setTimeout(() => document.getElementById('timeline-close')?.focus(), 0); }, [timelineTaskId]);
+      const openTimeline = (taskId, opener) => { timelineOpenerRef.current = opener || (typeof document !== 'undefined' ? document.activeElement : null); setTimelineTaskId(taskId); setTimelineWanted(true); };
+      const closeTimeline = () => { setTimelineTaskId(null); const o = timelineOpenerRef.current; timelineOpenerRef.current = null; if (o && o.focus && o.isConnected) setTimeout(() => o.focus(), 0); };
       const [timeAssignee, setTimeAssignee] = useState('');
       const [taskSearchQuery, setTaskSearchQuery] = useState('');
       const [showMyTasksOnly, setShowMyTasksOnly] = useState(false);
@@ -1567,7 +1601,7 @@
         await inChunks(capSnap.docs, async (c) => {
           if ((await getDoc(listDoc(c.id))).exists()) return; // the new version already uses this list
           const d = c.data();
-          const fields = Object.fromEntries(['devHoursPerDay', 'qaHoursPerDay', 'dateBlockers', 'userRoles'].filter(k => d[k] !== undefined).map(k => [k, d[k]]));
+          const fields = Object.fromEntries(['devHoursPerDay', 'qaHoursPerDay', 'devShiftStart', 'qaShiftStart', 'dateBlockers', 'userRoles'].filter(k => d[k] !== undefined).map(k => [k, d[k]]));
           await setDoc(listDoc(c.id), { ...fields, updatedAt: Date.now(), updatedBy: user.uid });
           capacity++;
         });
@@ -1952,6 +1986,7 @@
           let listDueDate = workflow.listDueDate || null;
           let listName = workflow.list, spaceName = workflow.space, folderName = workflow.folder;
           let archivedRaw = workflow.archivedRaw || [];
+          let listStatuses = workflow.listStatuses || []; // status-order A-2 FR-9, FR-10: the list's own status order in ClickUp
 
           if (clickUpToken === 'mock_token') {
             updatedTasks = buildTaskTree(MOCK_CLICKUP_DATA.tasks[workflow.listId] || MOCK_CLICKUP_DATA.tasks['mock_list_1']);
@@ -1962,6 +1997,9 @@
               listStartDate = listDetail.start_date || null;
               listDueDate = listDetail.due_date || null;
               if (listDetail.name) listName = listDetail.name;
+              if (Array.isArray(listDetail.statuses) && listDetail.statuses.length) listStatuses = [...listDetail.statuses]
+                .sort((a, b) => (Number(a.orderindex) || 0) - (Number(b.orderindex) || 0))
+                .map(x => ({ status: String(x.status || ''), color: x.color || null, type: x.type || null }));
               if (listDetail.space?.name) spaceName = listDetail.space.name;
               if (listDetail.folder) folderName = listDetail.folder.hidden ? 'No Folder' : (listDetail.folder.name || folderName);
 
@@ -2002,7 +2040,7 @@
               return workflow;
             }
           }
-          return { ...workflow, list: listName, space: spaceName, folder: folderName, tasks: updatedTasks, archivedRaw, lastSynced: Date.now(), listStartDate, listDueDate };
+          return { ...workflow, list: listName, space: spaceName, folder: folderName, tasks: updatedTasks, archivedRaw, listStatuses, lastSynced: Date.now(), listStartDate, listDueDate };
         }));
 
         setMappedWorkflows(prev => {
@@ -2483,6 +2521,8 @@
           const listId = String(activeListId);
           if ('devHoursPerDay' in updates) queueHoursEvent(listId, 'Dev', devHoursPerDay, updates.devHoursPerDay);
           if ('qaHoursPerDay' in updates) queueHoursEvent(listId, 'QA', qaHoursPerDay, updates.qaHoursPerDay);
+          if ('devShiftStart' in updates) queueShiftEvent(listId, 'Developers', devShiftStart, updates.devShiftStart);
+          if ('qaShiftStart' in updates) queueShiftEvent(listId, 'QA', qaShiftStart, updates.qaShiftStart);
           if ('dateBlockers' in updates) blockerEvents(listId, dateBlockers, updates.dateBlockers);
           await teamWrite(() => setDoc(listDoc(listId), { ...updates, updatedAt: Date.now(), updatedBy: user.uid }, { merge: true }), 'capacity settings', `cap-${listId}-${Object.keys(updates).join()}`);
         }
@@ -2548,6 +2588,8 @@
           const localSettings = JSON.parse(localStorage.getItem(`weaver_settings_${appId}_${activeListId}`) || '{}');
           setDevHoursPerDay(localSettings.devHoursPerDay !== undefined ? localSettings.devHoursPerDay : 7);
           setQaHoursPerDay(localSettings.qaHoursPerDay !== undefined ? localSettings.qaHoursPerDay : 7);
+          setDevShiftStart(localSettings.devShiftStart || '10:00');
+          setQaShiftStart(localSettings.qaShiftStart || '10:00');
           setDateBlockers(localSettings.dateBlockers || []);
           setUserRoles(localSettings.userRoles || {});
         } catch (e) { console.warn(e); }
@@ -2561,11 +2603,15 @@
             const d = snapshot.data();
             setDevHoursPerDay(d.devHoursPerDay !== undefined ? d.devHoursPerDay : 7);
             setQaHoursPerDay(d.qaHoursPerDay !== undefined ? d.qaHoursPerDay : 7);
+            setDevShiftStart(d.devShiftStart || '10:00');
+            setQaShiftStart(d.qaShiftStart || '10:00');
             setDateBlockers(d.dateBlockers || []);
             setUserRoles(d.userRoles || {});
           } else {
             setDevHoursPerDay(7);
             setQaHoursPerDay(7);
+            setDevShiftStart('10:00');
+            setQaShiftStart('10:00');
             setDateBlockers([]);
             setUserRoles({});
           }
@@ -2686,7 +2732,8 @@
       // The first load reads the sprint's days; after that only yesterday and today, and only when a task's status or
       // last update changed since the last read. Past days stay cached in this tab.
       const [statusHistory, setStatusHistory] = useState({ connId: null, recorders: [], days: {} });
-      const historyReadRef = useRef({ connId: null, fp: null, loaded: false });
+      const [historyError, setHistoryError] = useState(false); // task-timeline FR-13
+      const historyReadRef = useRef({ connId: null, fp: null, loaded: false, firstFrom: null });
       useEffect(() => {
         const connId = clickUpToken;
         if (!user?.isTeam || !connId || connId === 'mock_token' || isLegacyToken(connId) || !mappedWorkflows.length) return;
@@ -2698,15 +2745,43 @@
         const starts = mappedWorkflows.map(w => Number(w.listStartDate)).filter(Boolean);
         const now = Date.now();
         const from = sameConn && h.loaded ? now - 2 * 86400000 : (starts.length ? Math.min(...starts) : now - 14 * 86400000);
-        historyReadRef.current = { connId, fp, loaded: sameConn && h.loaded };
+        historyReadRef.current = { connId, fp, loaded: sameConn && h.loaded, firstFrom: sameConn && h.loaded ? h.firstFrom : from };
         callApi('status-history', { method: 'POST', connId, body: { from, to: now } })
           .then(r => {
             if (historyReadRef.current.connId !== connId) return;
             historyReadRef.current.loaded = true;
+            setHistoryError(false);
             setStatusHistory(prev => ({ connId, recorders: r.recorders || [], days: { ...(prev.connId === connId ? prev.days : {}), ...(r.days || {}) } }));
           })
-          .catch(() => { if (historyReadRef.current.connId === connId) historyReadRef.current.fp = null; }); // try again on the next sync
+          .catch(() => { if (historyReadRef.current.connId === connId) { historyReadRef.current.fp = null; setHistoryError(true); } }); // try again on the next sync
       }, [user, clickUpToken, mappedWorkflows]);
+
+      // task-timeline FR-12: tasks older than the sprint need recorded days before it. Once per session, only after a
+      // timeline is opened or the Task Timelines table is shown: from the recording start (at most 60 days back) to the
+      // first day already read, in 40-day requests (the Worker reads at most 45 days per request). Failed reads retry on the next sync.
+      const olderHistoryRef = useRef({ connId: null, state: null });
+      useEffect(() => {
+        const connId = clickUpToken;
+        if (!timelineWanted || !user?.isTeam || statusHistory.connId !== connId) return;
+        const o = olderHistoryRef.current;
+        if (o.connId === connId && o.state) return;
+        const sinces = (statusHistory.recorders || []).map(r => Number(r.since)).filter(Boolean);
+        const loadedFrom = historyReadRef.current.firstFrom;
+        if (!sinces.length || !loadedFrom) return;
+        const want = Math.max(Math.min(...sinces), Date.now() - 60 * 86400000);
+        if (want >= loadedFrom) { olderHistoryRef.current = { connId, state: 'done' }; return; }
+        olderHistoryRef.current = { connId, state: 'loading' };
+        const ranges = [];
+        for (let to = loadedFrom; to > want; to -= 40 * 86400000) ranges.push({ from: Math.max(want, to - 40 * 86400000), to });
+        Promise.all(ranges.map(body => callApi('status-history', { method: 'POST', connId, body })))
+          .then(rs => {
+            if (olderHistoryRef.current.connId !== connId) return;
+            olderHistoryRef.current.state = 'done';
+            setHistoryError(false);
+            setStatusHistory(prev => prev.connId !== connId ? prev : { ...prev, days: { ...rs.reduce((a, r) => ({ ...a, ...(r.days || {}) }), {}), ...prev.days } });
+          })
+          .catch(() => { if (olderHistoryRef.current.connId === connId) { olderHistoryRef.current.state = null; setHistoryError(true); } });
+      }, [timelineWanted, statusHistory, clickUpToken, user]);
 
       // FR-31, FR-35: the status-history recorder of each workspace a Portfolio card's key can see
       const [recordersByConn, setRecordersByConn] = useState({}); // connId -> { state: loading|ready|error, list, busy }
@@ -2795,6 +2870,17 @@
         entry.timer = setTimeout(() => {
           delete hoursEventRef.current[key];
           if (Number(entry.from) !== Number(entry.to)) addTeamEvent(listId, 'hours_changed', `${user.name} changed ${label} hours to ${entry.to}/day`);
+        }, 2000);
+        hoursEventRef.current[key] = entry;
+      };
+      const queueShiftEvent = (listId, label, from, to) => {
+        const key = `${listId}:shift:${label}`;
+        const cur = hoursEventRef.current[key];
+        if (cur) clearTimeout(cur.timer);
+        const entry = { from: cur ? cur.from : from, to };
+        entry.timer = setTimeout(() => {
+          delete hoursEventRef.current[key];
+          if (entry.from !== entry.to) addTeamEvent(listId, 'hours_changed', `${user.name} changed the ${label} working day to start at ${entry.to}`);
         }, 2000);
         hoursEventRef.current[key] = entry;
       };
@@ -3117,41 +3203,47 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
             return !isNaN(n) ? n : new Date(d).getTime() || 0;
         };
 
-        const calculateWorkingMs = (startMs, endMs) => {
-            if (!startMs || !endMs || startMs >= endMs) return 0;
-            
-            const start = new Date(startMs);
-            const end = new Date(endMs);
-            
-            let totalMs = 0;
-            let current = new Date(start);
+        // task-timeline A-1 FR-19 to FR-22: working time counts only the hours of a role's working day (Working Day settings),
+        // Monday to Friday, in this browser's time zone. A task's day is the QA day when all its assignees are QA, else the Developers day.
+        const parseShift = (start, hours, role) => {
+            const [h, m] = String(start || '10:00').split(':').map(Number);
+            const startMin = Math.max(0, Math.min(1410, (h || 0) * 60 + (m || 0)));
+            const hrs = Math.max(1, Math.min(24, Number(hours) || 7));
+            return { role, startMin, hours: Math.min(hrs, (1440 - startMin) / 60) };
+        };
+        const devShift = parseShift(devShiftStart, devHoursPerDay, 'Developers');
+        const qaShift = parseShift(qaShiftStart, qaHoursPerDay, 'QA');
+        const taskRole = (t) => { const a = t?.assignees || []; return a.length > 0 && a.every(x => (userRoles[x.username] || 'Developer') === 'QA') ? 'QA' : 'Developer'; };
+        const shiftOf = (t) => taskRole(t) === 'QA' ? qaShift : devShift;
 
+        const calculateWorkingMs = (startMs, endMs, shift = devShift) => {
+            if (!startMs || !endMs || startMs >= endMs) return 0;
+            const end = new Date(endMs);
+            let totalMs = 0;
+            let current = new Date(startMs);
             while (current < end) {
                 const day = current.getDay();
-                
-                // Skip weekends (0 = Sunday, 6 = Saturday)
-                if (day !== 0 && day !== 6) {
+                if (day !== 0 && day !== 6) { // weekdays only
                     const workStart = new Date(current);
-                    workStart.setHours(10, 0, 0, 0); // 10:00 AM
-                    
-                    const workEnd = new Date(current);
-                    workEnd.setHours(17, 0, 0, 0); // 5:00 PM
-                    
+                    workStart.setHours(Math.floor(shift.startMin / 60), shift.startMin % 60, 0, 0);
+                    const workEnd = new Date(workStart.getTime() + shift.hours * 3600000);
                     const periodStart = current > workStart ? current : workStart;
                     const periodEnd = end < workEnd ? end : workEnd;
-                    
-                    if (periodStart < periodEnd) {
-                        totalMs += periodEnd.getTime() - periodStart.getTime();
-                    }
+                    if (periodStart < periodEnd) totalMs += periodEnd.getTime() - periodStart.getTime();
                 }
-                
                 // Move to next day at midnight
                 current.setDate(current.getDate() + 1);
                 current.setHours(0, 0, 0, 0);
             }
-            
             return totalMs;
         };
+
+        // status-order A-2 FR-9 to FR-12, FR-14: one status order for the whole dashboard, ClickUp's own list order
+        // (the first linked list, then statuses only other lists have); statuses ClickUp no longer lists go last, A to Z
+        const clickUpStatusOrder = [];
+        activeWorkflows.forEach(wf => (wf.listStatuses || []).forEach(x => { const k = x.status.toLowerCase(); if (k && !clickUpStatusOrder.includes(k)) clickUpStatusOrder.push(k); }));
+        const statusRank = (name) => { const i = clickUpStatusOrder.indexOf(String(name || '').toLowerCase()); return i < 0 ? 1e6 : i; };
+        const byStatusOrder = (a, b) => (statusRank(a) - statusRank(b)) || (String(a).toLowerCase() < String(b).toLowerCase() ? -1 : String(a).toLowerCase() > String(b).toLowerCase() ? 1 : 0);
 
         const filteredTaskIds = new Set(filteredTasks.map(t => t.id));
         const independentTasks = filteredTasks.filter(t => !t.parent || !filteredTaskIds.has(t.parent));
@@ -3577,6 +3669,7 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
             });
         }
         const statusColorByName = {};
+        activeWorkflows.forEach(wf => (wf.listStatuses || []).forEach(x => { const n = x.status.toLowerCase(); if (n && x.color && !statusColorByName[n]) statusColorByName[n] = x.color; }));
         [...allFlatTasks, ...archivedFlatTasks].forEach(t => { const n = (t.status?.status || '').toLowerCase(); if (n && t.status?.color && !statusColorByName[n]) statusColorByName[n] = t.status.color; });
         const realStatusOn = (task, dateMs) => {
             if (!historyCovers(dateMs)) return null;
@@ -3587,6 +3680,137 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
             if (list.length === 0) return (task.status?.status || '').toLowerCase() || null;
             return list[0].from || null; // first change with no "from": unknown before it, so estimated
         };
+        // ---- task-timeline FR-1 to FR-8: each task's periods from creation to now, from the recorded history only ----
+        // Sources: recorded (webhook), inferred (FR-37), done (ClickUp's done date, FR-3), gap (not recorded). Gaps never count as time in a status.
+        const fmtDur = (ms, shift = devShift) => {
+            const dayMs = shift.hours * 3600000;
+            const d = Math.floor(ms / dayMs), h = Math.floor((ms % dayMs) / 3600000), m = Math.floor((ms % 3600000) / 60000);
+            return d > 0 ? `${d}d${h ? ` ${h}h` : ''}` : h > 0 ? `${h}h${m ? ` ${m}m` : ''}` : `${m}m`;
+        };
+        const fmtCalendar = (ms) => {
+            const d = Math.floor(ms / 86400000), h = Math.floor((ms % 86400000) / 3600000);
+            return d > 0 ? `${d} day${d === 1 ? '' : 's'}${h ? ` ${h} hour${h === 1 ? '' : 's'}` : ''}` : `${h || '<1'} hour${h === 1 ? '' : 's'}`;
+        };
+        const buildTimeline = (t) => {
+            const created = parseDateMs(t.date_created);
+            if (!created) return null;
+            const shift = shiftOf(t);
+            const cur = (t.status?.status || '').toLowerCase();
+            const isDone = doneStatuses.includes(cur);
+            const doneAt = isDone ? (parseDateMs(t.date_done) || parseDateMs(t.date_closed) || null) : null;
+            const changes = (changesByTask[t.id] || []).filter(c => c.at >= created);
+            const raw = [];
+            const add = (status, from, to, source) => { if (to !== null && to <= from) return; raw.push({ status, from, to, source }); };
+            const addChanges = () => changes.forEach((c, i) => add(c.to, c.at, changes[i + 1]?.at ?? null, c.inferred ? 'inferred' : 'recorded'));
+            const complete = historySince !== null && created >= historySince;
+            if (complete) {
+                if (!changes.length) add(cur, created, null, 'recorded');
+                else { add(changes[0].from || 'unknown', created, changes[0].at, changes[0].from ? 'recorded' : 'gap'); addChanges(); }
+            } else if (historySince !== null) {
+                const firstKnown = changes.length ? changes[0].at : historySince;
+                if (doneAt && doneAt < firstKnown) { // FR-3: finished before anything was recorded
+                    add('unknown', created, doneAt, 'gap');
+                    add(changes.length ? (changes[0].from || cur) : cur, doneAt, changes.length ? changes[0].at : null, 'done');
+                } else {
+                    add('unknown', created, firstKnown, 'gap');
+                    if (!changes.length) add(cur, historySince, null, 'recorded');
+                }
+                addChanges();
+            } else { // recorder never on for this workspace
+                if (doneAt) { add('unknown', created, doneAt, 'gap'); add(cur, doneAt, null, 'done'); }
+                else { const since = Math.max(created, parseDateMs(t.date_updated) || created); add('unknown', created, since, 'gap'); add(cur, since, null, 'since'); }
+            }
+            const periods = raw.map(x => {
+                const end = x.to ?? now;
+                const workMs = x.source === 'gap' ? 0 : calculateWorkingMs(x.from, end, shift);
+                return { ...x, end, workMs, calMs: Math.max(0, end - x.from), current: x.to === null };
+            });
+            const partial = periods.some(x => x.source === 'gap' || x.source === 'since');
+            // FR-6: cycle time from the first move into a working status to the move into done; lead time from creation to done
+            const started = changes.find(c => !backlogStatuses.includes(c.to) && !doneStatuses.includes(c.to));
+            const finished = started && changes.find(c => c.at > started.at && doneStatuses.includes(c.to));
+            const cycleMs = finished ? calculateWorkingMs(started.at, finished.at, shift) : null;
+            const doneMoment = isDone ? (changes.find(c => doneStatuses.includes(c.to))?.at ?? (periods.find(x => x.source === 'done')?.from ?? null)) : null;
+            const leadMs = doneMoment !== null ? calculateWorkingMs(created, doneMoment, shift) : null;
+            const openMs = isDone ? null : calculateWorkingMs(created, now, shift);
+            const byStatus = {};
+            periods.forEach(x => { if (x.source !== 'gap' && x.source !== 'since') byStatus[x.status] = (byStatus[x.status] || 0) + x.workMs; }); // FR-7, FR-15
+            return { task: t, created, shift, periods, partial, complete: !partial, cycleMs, leadMs, openMs, byStatus };
+        };
+        // D-3: main tasks and the bug items inside QA Bugs / UI Bugs (never the containers), after the global filter
+        const timelineMain = filteredMotherTasks.filter(t => !isBugContainerName(t));
+        const timelineMainIds = new Set(timelineMain.map(t => t.id));
+        const timelineBugs = extractBugs(activeWorkflows.flatMap(wf => wf.tasks || [])).filter(t => !timelineMainIds.has(t.id) && !isBugContainerName(t) && checkGlobalFilter(t));
+        const timelineRows = [...timelineMain.map(t => ({ type: 'Task', t })), ...timelineBugs.map(t => ({ type: 'Bug', t }))]
+            .map(r => { const tl = buildTimeline(r.t); return tl && { ...tl, type: r.type }; }).filter(Boolean);
+        const timelineStatusCols = [...new Set([...clickUpStatusOrder, ...timelineRows.flatMap(r => Object.keys(r.byStatus))])]
+            .filter(n => n !== 'unknown' && !doneStatuses.includes(n) && timelineRows.some(r => r.byStatus[n] > 0 || clickUpStatusOrder.includes(n)))
+            .sort(byStatusOrder);
+        const timelineRow = !timelineTaskId ? null : timelineRows.find(r => r.task.id === timelineTaskId) || (() => {
+            const t = lookupTasks.find(x => x.id === timelineTaskId); // filtered out, archived or gone: still show what is known
+            const tl = t && buildTimeline(t);
+            return tl ? { ...tl, type: 'Task', gone: !allFlatTasks.some(x => x.id === timelineTaskId) } : { gone: true, missing: true };
+        })();
+        const listNameOfTask = (t) => (activeWorkflows.find(wf => flattenTasksDeep(wf.tasks || []).some(x => x.id === t.id)) || {}).list || '';
+        const timelineLoading = !!user?.isTeam && !!clickUpToken && clickUpToken !== 'mock_token' && !isLegacyToken(clickUpToken) && statusHistory.connId !== clickUpToken && !historyError;
+        const recorderOff = !timelineLoading && historySince === null;
+        const fmtWhen = (ms) => new Date(ms).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        // FR-14 to FR-17: the Task Timelines table: filter, sort (lead time, longest first; unknown last), first 50 rows
+        const tlSortVal = (r, key) => key === 'name' ? (r.task.name || '').toLowerCase() : key === 'created' ? r.created : key === 'lead' ? r.leadMs : key === 'cycle' ? r.cycleMs : (r.byStatus[key] || 0);
+        const timelineShown = timelineRows
+            .filter(r => timelineView.type === 'All' || (timelineView.type === 'Bugs' ? r.type === 'Bug' : r.type === 'Task'))
+            .filter(r => !timelineView.completeOnly || r.complete)
+            .sort((a, b) => {
+                const x = tlSortVal(a, timelineView.sort), y = tlSortVal(b, timelineView.sort);
+                if (x === null && y === null) return 0; if (x === null) return 1; if (y === null) return -1;
+                return (x > y ? 1 : x < y ? -1 : 0) * timelineView.dir;
+            });
+        const timelineVisible = timelineView.all ? timelineShown : timelineShown.slice(0, 50);
+        const setTimelineSort = (key) => setTimelineView(v => ({ ...v, sort: key, dir: v.sort === key ? -v.dir : (key === 'name' ? 1 : -1) }));
+        // FR-18: one CSV row per period of the rows the filter shows
+        const exportTimelineCsv = () => {
+            if (!timelineShown.length) return;
+            setTimelineExporting(true);
+            const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+            const iso = (ms) => { if (ms === null || ms === undefined) return ''; const d = new Date(ms), off = -d.getTimezoneOffset(), pad = (n) => String(Math.floor(Math.abs(n))).padStart(2, '0');
+                return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}${off >= 0 ? '+' : '-'}${pad(off / 60)}:${pad(off % 60)}`; };
+            const srcName = { recorded: 'Recorded', inferred: 'Inferred', gap: 'Not recorded', since: 'Not recorded', done: 'ClickUp done date' };
+            const lines = [['Task ID', 'Task', 'Type', 'List', 'Assignees', 'Status', 'Entered at', 'Left at', 'Working hours', 'Calendar hours', 'Source'].map(esc).join(',')];
+            let periods = 0;
+            timelineShown.forEach(r => r.periods.forEach(x => {
+                periods++;
+                lines.push([r.task.id, r.task.name, r.type, listNameOfTask(r.task), (r.task.assignees || []).map(a => a.username).join('; '), x.source === 'gap' ? 'Unknown' : x.status, iso(x.from), x.current ? '' : iso(x.to),
+                    x.source === 'gap' || x.source === 'since' ? '' : (x.workMs / 3600000).toFixed(1), (x.calMs / 3600000).toFixed(1), srcName[x.source]].map(esc).join(','));
+            }));
+            const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            const dash = (activeWorkflows.map(w => w.list).join(' + ') || 'dashboard').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase();
+            link.href = url;
+            link.setAttribute('download', `weaver-timeline-${dash}-${new Date().toISOString().split('T')[0]}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            setTimelineExporting(false);
+            setToasts(prev => [...prev, { id: `tl-${Date.now()}`, local: true, summary: `Exported ${timelineShown.length} ${timelineShown.length === 1 ? 'task' : 'tasks'}, ${periods} periods`, expires: Date.now() + TOAST_MS }]);
+        };
+        // S6: the status strip: one segment per period, width = working time (a gap: its calendar length at the task's day length)
+        const statusColor = (n) => statusColorByName[n] || '#94a3b8';
+        const renderStrip = (r, h) => {
+            const w = (x) => x.source === 'gap' || x.source === 'since' ? x.calMs * (5 / 7) * (r.shift.hours / 24) : x.workMs;
+            const total = r.periods.reduce((a, x) => a + w(x), 0) || 1;
+            return (
+                <div className={`flex w-full ${h} rounded-full overflow-hidden bg-slate-800`} role="img" aria-label={`Status strip: ${r.periods.map(x => `${x.source === 'gap' ? 'not recorded' : x.status} ${x.source === 'gap' ? fmtCalendar(x.calMs) : fmtDur(x.workMs, r.shift)}`).join(', ')}`}>
+                    {r.periods.map((x, i) => {
+                        const pct = (w(x) / total) * 100;
+                        if (pct <= 0) return null;
+                        const hatched = x.source === 'gap' || x.source === 'since';
+                        return <span key={i} title={`${hatched && x.source === 'gap' ? 'Not recorded' : x.status} · ${hatched ? fmtCalendar(x.calMs) : fmtDur(x.workMs, r.shift)}`} className="h-full border-r border-slate-900 last:border-r-0" style={{ width: `${pct}%`, background: hatched ? 'repeating-linear-gradient(45deg,#334155 0 4px,#1e293b 4px 8px)' : x.source === 'inferred' ? `${statusColor(x.status)}99` : statusColor(x.status) }} />;
+                    })}
+                </div>
+            );
+        };
+
         const dailyHistoryFull = historySince !== null && new Date(historySince).setHours(0, 0, 0, 0) <= new Date(minDate).setHours(0, 0, 0, 0) && historyUntil >= endChartDate;
 
         const getTaskStatusOnDate = (task, dateMs) => {
@@ -3682,7 +3906,7 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
         }
         
         const maxDailyTasks = Math.max(1, ...dailyStatusData.map(d => Object.values(d.breakdown).reduce((sum, item) => sum + item.count, 0)));
-        const sortedStatuses = Array.from(allStatusesMap.keys()).sort();
+        const sortedStatuses = Array.from(allStatusesMap.keys()).sort(byStatusOrder); // status-order A-2 FR-14
 
         const handleBarChartMouseMove = (e) => {
             const rect = e.currentTarget.getBoundingClientRect();
@@ -4014,7 +4238,7 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
 
             if (!isDone && !excludedStatusesForAccuracy.includes(statusName)) {
                 const lastUpdated = t.date_updated ? parseDateMs(t.date_updated) : (t.date_created ? parseDateMs(t.date_created) : referenceNow);
-                const timeInCurrent = calculateWorkingMs(lastUpdated, referenceNow);
+                const timeInCurrent = calculateWorkingMs(lastUpdated, referenceNow, shiftOf(t));
                 if (timeInCurrent > 0) {
                     if (!timeInStatusStats[statusName]) timeInStatusStats[statusName] = { sum: 0, count: 0 };
                     timeInStatusStats[statusName].sum += timeInCurrent;
@@ -4034,7 +4258,7 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
                         statusLogs.forEach(log => {
                             const changeDate = parseDateMs(log.date);
                             if (lastDate > 0 && changeDate >= lastDate) {
-                                const workingMs = calculateWorkingMs(lastDate, changeDate);
+                                const workingMs = calculateWorkingMs(lastDate, changeDate, shiftOf(t));
                                 parsedTimeInStatus[currentStatus] = (parsedTimeInStatus[currentStatus] || 0) + workingMs;
                             }
                             currentStatus = (log.after?.status || log.after || currentStatus).toString().toLowerCase();
@@ -4044,7 +4268,7 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
                         if (t.date_closed && lastDate > 0) {
                             const closedDate = parseDateMs(t.date_closed);
                             if (closedDate >= lastDate) {
-                                const workingMs = calculateWorkingMs(lastDate, closedDate);
+                                const workingMs = calculateWorkingMs(lastDate, closedDate, shiftOf(t));
                                 parsedTimeInStatus[currentStatus] = (parsedTimeInStatus[currentStatus] || 0) + workingMs;
                             }
                         }
@@ -4098,8 +4322,7 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
 
         const avgTimeInStatusList = Object.entries(timeInStatusStats).map(([status, data]) => {
             const avgMs = data.sum / data.count;
-            // A "working day" is 7 hours (10am to 5pm)
-            const workingDayMs = 7 * 60 * 60 * 1000;
+            const workingDayMs = devShift.hours * 3600000; // averages over the team are shown in Developers days (A-1 FR-22)
             const days = Math.floor(avgMs / workingDayMs);
             const hours = Math.floor((avgMs % workingDayMs) / 3600000);
             const mins = Math.floor((avgMs % 3600000) / 60000);
@@ -4108,8 +4331,8 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
         }).sort((a, b) => b.avgMs - a.avgMs);
 
         // FR-38, FR-40, FR-42: time in each status from the recorded changes (working hours), longest wait and cycle time
-        const fmtWorkingMs = (ms) => {
-            const workingDayMs = 7 * 3600000; // a working day is 10am to 5pm
+        const fmtWorkingMs = (ms, shift = devShift) => {
+            const workingDayMs = shift.hours * 3600000; // 1d = that role's hours per day (A-1 FR-22)
             const days = Math.floor(ms / workingDayMs), hours = Math.floor((ms % workingDayMs) / 3600000), mins = Math.floor((ms % 3600000) / 60000);
             return days > 0 ? `${days}d ${hours}h` : (hours > 0 ? `${hours}h ${mins}m` : `${mins}m`);
         };
@@ -4122,18 +4345,18 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
                 list.forEach((c, i) => {
                     const end = list[i + 1]?.at ?? (doneStatuses.includes(c.to) ? null : now);
                     if (end === null || excludedStatusesForAccuracy.includes(c.to)) return;
-                    const ms = calculateWorkingMs(c.at, end);
+                    const ms = calculateWorkingMs(c.at, end, shiftOf(t));
                     (histStatusStats[c.to] = histStatusStats[c.to] || { sum: 0, count: 0 });
                     histStatusStats[c.to].sum += ms;
                     histStatusStats[c.to].count++;
                 });
                 const started = list.find(c => !backlogStatuses.includes(c.to) && !doneStatuses.includes(c.to));
                 const finished = started && list.find(c => c.at > started.at && doneStatuses.includes(c.to));
-                if (finished) cycleTimes.push(calculateWorkingMs(started.at, finished.at));
+                if (finished) cycleTimes.push(calculateWorkingMs(started.at, finished.at, shiftOf(t)));
             });
         }
         const histTimeInStatusList = Object.entries(histStatusStats).map(([status, d]) => ({ status, avgMs: d.sum / d.count, timeDisplay: fmtWorkingMs(d.sum / d.count) })).sort((a, b) => b.avgMs - a.avgMs);
-        const timeInStatusRows = historySince !== null ? histTimeInStatusList : avgTimeInStatusList;
+        const timeInStatusRows = [...(historySince !== null ? histTimeInStatusList : avgTimeInStatusList)].sort((a, b) => byStatusOrder(a.status, b.status)); // status-order A-2 FR-14
         const longestWait = historySince !== null ? histTimeInStatusList[0] || null : null;
         const cycleTimeAvg = cycleTimes.length ? fmtWorkingMs(cycleTimes.reduce((a, b) => a + b, 0) / cycleTimes.length) : null;
 
@@ -5144,6 +5367,99 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
               </div>
             )}
 
+            {/* task-timeline S2, FR-1 to FR-13: Task timeline drawer */}
+            {timelineTaskId && timelineRow && (
+              <>
+                <div className="fixed inset-0 z-40 bg-slate-950/60" onClick={closeTimeline} aria-hidden="true" />
+                <aside role="dialog" aria-modal="true" aria-labelledby="timeline-name" data-timeline-drawer
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') { e.stopPropagation(); closeTimeline(); return; }
+                    if (e.key !== 'Tab') return;
+                    const f = [...e.currentTarget.querySelectorAll('button, a[href], [tabindex="0"]')].filter(x => !x.disabled);
+                    if (!f.length) return;
+                    if (e.shiftKey && document.activeElement === f[0]) { e.preventDefault(); f[f.length - 1].focus(); }
+                    else if (!e.shiftKey && document.activeElement === f[f.length - 1]) { e.preventDefault(); f[0].focus(); }
+                  }}
+                  className="fixed inset-y-0 right-0 z-50 w-full sm:max-w-[420px] lg:max-w-[480px] bg-slate-900 border-l border-slate-700/80 shadow-2xl flex flex-col overflow-x-hidden animate-in slide-in-from-right duration-200">
+                  {timelineRow.missing ? (
+                    <div className="p-5">
+                      <div className="flex items-start justify-between gap-3"><span id="timeline-name" className="text-[10px] uppercase tracking-widest text-slate-500">Task timeline</span><button id="timeline-close" onClick={closeTimeline} aria-label="Close timeline" className="text-slate-400 hover:text-white p-1 rounded"><X className="h-5 w-5" /></button></div>
+                      <p className="text-sm text-slate-400 mt-4">This task is no longer in these lists.</p>
+                    </div>
+                  ) : (() => {
+                    const r = timelineRow, t = r.task;
+                    const st = (t.status?.status || '').toLowerCase();
+                    const srcTag = (x) => x.source === 'inferred' ? <span title="Weaver missed this change and saw it at the next sync; the time is the task's last update." className="ml-1.5 px-1.5 py-0.5 rounded border border-slate-600 text-[10px] uppercase tracking-wider text-slate-400">inferred</span>
+                      : x.source === 'done' ? <span className="ml-1.5 px-1.5 py-0.5 rounded border border-slate-600 text-[10px] uppercase tracking-wider text-slate-400">from ClickUp done date</span>
+                      : x.source === 'since' ? <span className="ml-1.5 px-1.5 py-0.5 rounded border border-slate-600 text-[10px] uppercase tracking-wider text-slate-400">not recorded</span> : null;
+                    return (
+                      <>
+                        <div className="p-5 border-b border-white/5">
+                          <div className="flex items-start justify-between gap-3">
+                            <span className="text-[10px] uppercase tracking-widest text-slate-500">Task timeline</span>
+                            <button id="timeline-close" onClick={closeTimeline} aria-label="Close timeline" className="text-slate-400 hover:text-white -mt-1 p-1 rounded"><X className="h-5 w-5" /></button>
+                          </div>
+                          <h2 id="timeline-name" className="text-lg font-bold text-white mt-1 line-clamp-3 [overflow-wrap:anywhere]">{t.name || 'Unnamed Task'} {t.url && <a href={t.url} target="_blank" rel="noopener noreferrer" aria-label="Open in ClickUp" title="Open in ClickUp" className="inline-block align-middle text-indigo-300 hover:text-indigo-200"><ExternalLink className="h-4 w-4" /></a>}</h2>
+                          <p className="text-xs text-slate-400 mt-1">{[listNameOfTask(t), (t.assignees || []).map(a => a.username).join(', ') || 'Unassigned'].filter(Boolean).join(' · ')}</p>
+                          <div className="flex flex-wrap items-center gap-2 mt-3">
+                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-white/10 text-[11px] uppercase tracking-wider text-slate-200"><span className="w-2 h-2 rounded-full" style={{ background: t.status?.color || statusColor(st) }} />{t.status?.status}</span>
+                            {!timelineLoading && (r.complete
+                              ? <span className="px-1.5 py-0.5 rounded border text-[10px] font-bold uppercase tracking-wider border-emerald-500/30 bg-emerald-500/10 text-emerald-300">Complete</span>
+                              : <span tabIndex={0} title="Weaver records status changes from the day recording starts. Earlier time can't be known." className="px-1.5 py-0.5 rounded border text-[10px] font-bold uppercase tracking-wider border-amber-500/30 bg-amber-500/10 text-amber-300">{historySince !== null ? `Partial · recorded since ${formatDate(historySince)}` : 'Partial'}</span>)}
+                          </div>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-5">
+                          {r.gone && <p className="mb-3 text-xs text-slate-400">This task is no longer in these lists.</p>}
+                          {recorderOff && <div className="mb-3 rounded-xl border border-slate-600/50 bg-slate-800/40 p-3 text-xs text-slate-300 flex flex-wrap items-center gap-3"><span className="flex-1 min-w-[200px]">Status history isn't being recorded for this workspace. Turn on <b>Record status history</b> on the Portfolio page to build timelines from now on.</span><button onClick={() => { closeTimeline(); setActiveView('portfolio'); }} className="btn-neon btn-neon-sm">Open Portfolio</button></div>}
+                          {historyError && <div role="alert" className="mb-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-200">History could not be loaded; retrying on the next sync.</div>}
+                          {timelineLoading ? (
+                            <><p className="text-xs text-slate-500 mb-3">Loading history…</p>{[0, 1, 2, 3].map(i => <div key={i} className="h-10 mb-3 rounded-lg bg-slate-800/60 animate-pulse" />)}</>
+                          ) : (
+                            <>
+                              <div className="mb-4">{renderStrip(r, 'h-3')}</div>
+                              <ol>
+                                <li className="relative pl-6 pb-4">
+                                  <span className="absolute left-[5px] top-3 bottom-0 border-l-2 border-slate-700" aria-hidden="true" />
+                                  <span className="absolute left-0 top-1 w-3 h-3 rounded-full border-2 border-indigo-400 bg-slate-900" aria-hidden="true" />
+                                  <div className="flex items-baseline justify-between gap-3"><span className="text-sm text-slate-200">Created</span><span className="text-xs text-slate-400 tabular-nums whitespace-nowrap">{fmtWhen(r.created)}</span></div>
+                                </li>
+                                {r.periods.map((x, i) => {
+                                  const c = statusColor(x.status);
+                                  if (x.source === 'gap') return (
+                                    <li key={i} className="relative pl-6 pb-4" aria-label={`Not recorded, ${formatDate(x.from)} to ${formatDate(x.end)}, ${fmtCalendar(x.calMs)}, not counted`}>
+                                      <span className="absolute left-[5px] top-0 bottom-0 border-l-2 border-dashed border-slate-600" aria-hidden="true" />
+                                      <span className="absolute left-0 top-1 w-3 h-3 rounded-full border-2 border-dashed border-slate-500 bg-slate-900" aria-hidden="true" />
+                                      <div className="flex items-baseline justify-between gap-3"><span className="text-sm italic text-slate-500">Unknown <span className="not-italic text-[10px] uppercase tracking-wider">not recorded</span></span><span className="text-xs text-slate-500 tabular-nums whitespace-nowrap">{formatDate(x.from)} → {formatDate(x.end)}</span></div>
+                                      <div className="text-xs text-slate-500">({fmtCalendar(x.calMs)}, not counted)</div>
+                                    </li>
+                                  );
+                                  const hollow = x.source === 'inferred' || x.source === 'since';
+                                  return (
+                                    <li key={i} className="relative pl-6 pb-4" aria-label={`${x.status}, ${x.source}, entered ${fmtWhen(x.from)}, ${fmtDur(x.workMs, r.shift)} working time${x.current ? ', current status' : ''}`}>
+                                      <span className={`absolute left-[5px] top-0 bottom-0 border-l-2 ${x.source === 'since' ? 'border-dashed' : ''}`} style={{ borderColor: hollow ? `${c}80` : c }} aria-hidden="true" />
+                                      <span className={`absolute left-0 top-1 w-3 h-3 rounded-full ${x.current ? 'animate-pulse motion-reduce:animate-none' : ''}`} style={hollow ? { border: `2px solid ${c}`, background: '#0f172a' } : { background: c }} aria-hidden="true" />
+                                      <div className="flex items-baseline justify-between gap-3"><span className="text-sm text-slate-200"><span className="capitalize">{x.status}</span>{srcTag(x)}</span><span className="text-xs text-slate-400 tabular-nums whitespace-nowrap">{x.source === 'since' ? `since at least ${formatDate(x.from)}` : fmtWhen(x.from)}</span></div>
+                                      {x.source !== 'since' && <div className="text-xs text-slate-300 tabular-nums" title={`${fmtCalendar(x.calMs)} calendar · 1d = ${r.shift.hours} h, ${r.shift.role} shift`}>{x.current && <b className="text-indigo-300">now </b>}{fmtDur(x.workMs, r.shift)} <span className="text-slate-500">working</span></div>}
+                                    </li>
+                                  );
+                                })}
+                              </ol>
+                            </>
+                          )}
+                        </div>
+                        <div className="p-5 border-t border-white/5 grid grid-cols-2 gap-4">
+                          <div><div className="text-[10px] uppercase tracking-wider text-slate-500">Cycle time</div>{r.cycleMs !== null && !timelineLoading ? <div className="text-base font-bold text-white">{fmtDur(r.cycleMs, r.shift)}</div> : <div className="text-sm text-slate-500" title={historySince !== null ? `Recording started ${formatDate(historySince)}` : 'Status history is not recorded'}>not known</div>}</div>
+                          {r.openMs !== null
+                            ? <div><div className="text-[10px] uppercase tracking-wider text-slate-500">Open for</div><div className="text-base font-bold text-white">{fmtDur(r.openMs, r.shift)}</div></div>
+                            : <div><div className="text-[10px] uppercase tracking-wider text-slate-500">Lead time</div>{r.leadMs !== null && !timelineLoading ? <div className="text-base font-bold text-white">{fmtDur(r.leadMs, r.shift)}</div> : <div className="text-sm text-slate-500" title={historySince !== null ? `Recording started ${formatDate(historySince)}` : 'Status history is not recorded'}>not known</div>}</div>}
+                        </div>
+                      </>
+                    );
+                  })()}
+                </aside>
+              </>
+            )}
+
             {selectedDrillDownAssignee && (
               <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md" onClick={() => setSelectedDrillDownAssignee(null)}>
                  {renderAssigneeDrillDown(selectedDrillDownAssignee)}
@@ -5354,21 +5670,46 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
                      <button onClick={() => setIsBlockerModalOpen(false)} className="p-1.5 rounded-lg text-slate-400 neon-border-slate transition-colors"><X className="w-5 h-5" /></button>
                    </div>
                    <div className="p-5 space-y-6">
-                     <div className="bg-slate-900/60 p-4 rounded-xl border border-white/5 space-y-4">
+                     {/* task-timeline A-1 FR-19, FR-20, design S5: Working Day per role (shift start + hours per day) */}
+                     <div className="bg-slate-900/60 p-4 rounded-xl border border-white/5 space-y-3">
                         <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider flex items-center justify-between">
-                           Daily Working Hours
+                           Working Day
                            <span className="text-[10px] text-indigo-400 font-bold bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20">List-Specific</span>
                         </h3>
-                        <div className="grid grid-cols-2 gap-4">
-                          <div>
-                             <label className="block text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider font-semibold">Developers</label>
-                             <input type="number" min="1" max="24" value={devHoursPerDay} onChange={e => { const val = e.target.value; setDevHoursPerDay(val); const num = Number(val); if(!isNaN(num) && val !== '') saveSettings({ devHoursPerDay: num }); }} className="w-full bg-slate-950/60 border border-transparent rounded-lg px-3 py-2 text-sm text-white neon-input neon-input-indigo" />
-                          </div>
-                          <div>
-                             <label className="block text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider font-semibold">QA Resources</label>
-                             <input type="number" min="1" max="24" value={qaHoursPerDay} onChange={e => { const val = e.target.value; setQaHoursPerDay(val); const num = Number(val); if(!isNaN(num) && val !== '') saveSettings({ qaHoursPerDay: num }); }} className="w-full bg-slate-950/60 border border-transparent rounded-lg px-3 py-2 text-sm text-white neon-input neon-input-indigo" />
-                          </div>
-                        </div>
+                        {(() => {
+                          const times = Array.from({ length: 48 }, (_, i) => `${String(Math.floor(i / 2)).padStart(2, '0')}:${i % 2 ? '30' : '00'}`);
+                          const toMin = (hhmm) => { const [h, m] = String(hhmm || '10:00').split(':').map(Number); return (h || 0) * 60 + (m || 0); };
+                          const fits = (start, hours) => { const n = Number(hours); return hours !== '' && !isNaN(n) && n >= 1 && n <= 24 && toMin(start) + n * 60 <= 1440; };
+                          const endOf = (start, hours) => { const e = toMin(start) + Number(hours) * 60; return `${String(Math.floor(e / 60)).padStart(2, '0')}:${String(Math.round(e % 60)).padStart(2, '0')}`; };
+                          const roles = [
+                            { label: 'Developers', id: 'dev', start: devShiftStart, hours: devHoursPerDay, setStart: setDevShiftStart, setHours: setDevHoursPerDay, startKey: 'devShiftStart', hoursKey: 'devHoursPerDay' },
+                            { label: 'QA Resources', id: 'qa', start: qaShiftStart, hours: qaHoursPerDay, setStart: setQaShiftStart, setHours: setQaHoursPerDay, startKey: 'qaShiftStart', hoursKey: 'qaHoursPerDay' },
+                          ];
+                          return (
+                            <>
+                              <div className="grid grid-cols-[auto_1fr_1fr] gap-x-3 gap-y-1 items-center">
+                                <span />
+                                <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Shift starts at</span>
+                                <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Hours per day</span>
+                                {roles.map(r => {
+                                  const ok = fits(r.start, r.hours);
+                                  return (
+                                    <React.Fragment key={r.id}>
+                                      <span className="text-xs text-slate-300 font-semibold">{r.label}</span>
+                                      <select aria-label={`${r.label} shift starts at`} value={r.start} onChange={e => { const v = e.target.value; r.setStart(v); if (fits(v, r.hours)) saveSettings({ [r.startKey]: v }); }} className="w-full bg-slate-950/60 border border-transparent rounded-lg px-3 py-2 text-sm text-white neon-input neon-input-indigo">
+                                        {(times.includes(r.start) ? times : [r.start, ...times]).map(t => <option key={t} value={t}>{t}</option>)}
+                                      </select>
+                                      <input aria-label={`${r.label} hours per day`} type="number" min="1" max="24" value={r.hours} onChange={e => { const val = e.target.value; r.setHours(val); if (fits(r.start, val)) saveSettings({ [r.hoursKey]: Number(val) }); }} aria-invalid={!ok} className={`w-full bg-slate-950/60 border rounded-lg px-3 py-2 text-sm text-white neon-input neon-input-indigo ${ok ? 'border-transparent' : 'border-rose-500'}`} />
+                                      <span />
+                                      <span data-working-day={r.id} aria-live="polite" className={`col-span-2 text-xs mb-2 ${ok ? 'text-slate-400' : 'text-rose-300'}`}>{ok ? `1 day = ${Number(r.hours)} h · ${r.start}–${endOf(r.start, r.hours)} · Mon–Fri` : 'Shift must end by midnight'}</span>
+                                    </React.Fragment>
+                                  );
+                                })}
+                              </div>
+                              <p className="text-[11px] text-slate-500">Durations in Time in Status, Cycle time and task timelines count only these hours, Monday to Friday. Each task uses its assignees' role (all QA → QA day, otherwise Developers).</p>
+                            </>
+                          );
+                        })()}
                      </div>
                      <div className="space-y-3">
                        <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider flex items-center justify-between">Active Blockers<span className="text-indigo-400">{dateBlockers.length} Items</span></h3>
@@ -5484,7 +5825,7 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
                     <div className={`mt-0.5 shrink-0 p-1.5 rounded border ${st.chip}`}><st.Icon className={`w-3.5 h-3.5 ${st.icon}`} aria-hidden="true" /></div>
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium text-slate-200 line-clamp-2 break-words">{t.summary}</p>
-                      <p className="text-[11px] text-slate-500 mt-0.5">{t.listName} · <button onClick={openPanelFromToast} className="text-indigo-300 hover:text-indigo-200">View</button></p>
+                      {!t.local && <p className="text-[11px] text-slate-500 mt-0.5">{t.listName} · <button onClick={openPanelFromToast} className="text-indigo-300 hover:text-indigo-200">View</button></p>}
                     </div>
                     <button onClick={() => setToasts(p => p.filter(x => x.id !== t.id))} aria-label="Dismiss" className="self-start p-1 text-slate-500 hover:text-slate-200"><X className="w-4 h-4" /></button>
                   </div>
@@ -5693,7 +6034,7 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
                         {sprintPanel.tasks.map(t => (
                           <li key={t.id} className="px-4 py-2.5 flex items-center justify-between gap-3">
                             <div className="min-w-0">
-                              <div className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: t.status?.color || '#94a3b8' }} /><span className="text-sm text-slate-200 truncate">{t.name}</span></div>
+                              <div className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: t.status?.color || '#94a3b8' }} />{t.id && lookupTasks.some(x => x.id === t.id) ? <button onClick={(e) => openTimeline(t.id, e.currentTarget)} className="text-left text-sm text-slate-200 truncate hover:underline hover:text-indigo-200">{t.name}</button> : <span className="text-sm text-slate-200 truncate">{t.name}</span>}</div>
                               {sprintPanel.note && <div className="text-xs text-slate-500 ml-3.5">{sprintPanel.note(t)}</div>}
                             </div>
                             <span className="text-[10px] uppercase tracking-wider text-slate-500 shrink-0">{t.status?.status}</span>
@@ -6250,7 +6591,7 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
 
                     <div className="flex-1 border-t md:border-t-0 md:border-l border-white/5 pt-6 md:pt-0 md:pl-8 lg:pl-12">
                       <div className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4 flex items-center flex-wrap gap-2">
-                        Average Time in Status {historySince === null && <div className="hover:z-[99999]"><MetricTooltip align="left" text="ClickUp does not send status history, so this is guessed from each task's dates. Only the closed part is exact. Counted from the task's last edit, so a comment or any change resets the clock."><span tabIndex={0} className="px-1.5 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-300 text-[10px] font-bold uppercase tracking-wider">Estimated</span></MetricTooltip></div>} <div className="hover:z-[99999]"><MetricTooltip align="center" text="Average working time tasks spend in intermediate phases." formula="Working time (10am-5pm on weekdays) since each open task's last update, averaged per status."><InfoIcon className="h-3.5 w-3.5 text-slate-500 transition-colors" /></MetricTooltip></div>
+                        Average Time in Status {historySince === null && <div className="hover:z-[99999]"><MetricTooltip align="left" text="ClickUp does not send status history, so this is guessed from each task's dates. Only the closed part is exact. Counted from the task's last edit, so a comment or any change resets the clock."><span tabIndex={0} className="px-1.5 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-300 text-[10px] font-bold uppercase tracking-wider">Estimated</span></MetricTooltip></div>} <div className="hover:z-[99999]"><MetricTooltip align="center" text="Average working time tasks spend in intermediate phases." formula={`Working time (shift from Working Day settings: Developers ${devShiftStart} + ${devShift.hours} h, QA ${qaShiftStart} + ${qaShift.hours} h, Mon–Fri) since each open task's last update, averaged per status. 1d = ${devShift.hours} h.`}><InfoIcon className="h-3.5 w-3.5 text-slate-500 transition-colors" /></MetricTooltip></div>
                       </div>
                       
                       {historySince !== null && (
@@ -6274,6 +6615,70 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
                       )}
                     </div>
                   </div>
+                </div>
+
+                {/* task-timeline S3, FR-14 to FR-18: Task Timelines table */}
+                <div ref={timelineCardRef} className="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl p-5 mb-8" aria-labelledby="task-timelines-title">
+                  <div className="flex flex-wrap items-center gap-3 mb-4">
+                    <h2 id="task-timelines-title" className="text-sm font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-2">Task Timelines
+                      <div className="hover:z-[99999]"><MetricTooltip align="left" text="Time each task spent in each status, from Weaver's recorded history." formula={`Working time: Developers ${devShiftStart} + ${devShift.hours} h, QA ${qaShiftStart} + ${qaShift.hours} h, Mon–Fri (Working Day settings). Each task uses its assignees' role.`}><InfoIcon className="h-3.5 w-3.5 text-slate-500 transition-colors" /></MetricTooltip></div>
+                    </h2>
+                    <div className="ml-auto flex flex-wrap items-center gap-3">
+                      <div role="radiogroup" aria-label="Show" className="flex rounded-lg border border-white/10 overflow-hidden text-xs">
+                        {['Tasks', 'Bugs', 'All'].map(k => <button key={k} role="radio" aria-checked={timelineView.type === k} disabled={timelineLoading} onClick={() => setTimelineView(v => ({ ...v, type: k }))} className={`px-3 py-1.5 ${timelineView.type === k ? 'bg-indigo-600/30 text-white' : 'text-slate-400 hover:text-white'}`}>{k}</button>)}
+                      </div>
+                      <label className="flex items-center gap-2 text-xs text-slate-400"><input type="checkbox" disabled={timelineLoading} checked={timelineView.completeOnly} onChange={e => { const c = e.target.checked; setTimelineView(v => ({ ...v, completeOnly: c })); }} className="accent-indigo-500" /> Complete only</label>
+                      <button onClick={exportTimelineCsv} disabled={timelineLoading || timelineExporting || !timelineShown.length} title={!timelineShown.length ? 'No rows to export' : undefined} className="btn-neon btn-neon-sm disabled:opacity-40 disabled:cursor-not-allowed"><Download className="w-3.5 h-3.5 mr-1.5" />{timelineExporting ? 'Exporting…' : 'Export CSV'}</button>
+                    </div>
+                  </div>
+                  {recorderOff && user?.isTeam && <div className="mb-3 rounded-xl border border-slate-600/50 bg-slate-800/40 p-3 text-xs text-slate-300 flex flex-wrap items-center gap-3"><span className="flex-1 min-w-[200px]">Status history isn't being recorded for this workspace. Turn on <b>Record status history</b> on the Portfolio page to build timelines from now on.</span><button onClick={() => setActiveView('portfolio')} className="btn-neon btn-neon-sm">Open Portfolio</button></div>}
+                  {historyError && <div role="alert" className="mb-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-200">History could not be loaded; retrying on the next sync.</div>}
+                  <div className="overflow-x-auto rounded-xl border border-white/5">
+                    <table className="w-full text-sm">
+                      <thead className="border-b border-white/5"><tr>
+                        <th scope="col" className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-slate-500 font-semibold whitespace-nowrap sticky left-0 bg-slate-900 z-[1]" aria-sort={timelineView.sort === 'name' ? (timelineView.dir === 1 ? 'ascending' : 'descending') : undefined}><button onClick={() => setTimelineSort('name')} className="uppercase tracking-wider hover:text-white">Task{timelineView.sort === 'name' && (timelineView.dir === 1 ? ' ▲' : ' ▼')}</button></th>
+                        <th scope="col" className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-slate-500 font-semibold hidden lg:table-cell">Type</th>
+                        <th scope="col" className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-slate-500 font-semibold hidden lg:table-cell">Assignees</th>
+                        <th scope="col" className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-slate-500 font-semibold whitespace-nowrap hidden sm:table-cell" aria-sort={timelineView.sort === 'created' ? (timelineView.dir === 1 ? 'ascending' : 'descending') : undefined}><button onClick={() => setTimelineSort('created')} className="uppercase tracking-wider hover:text-white">Created{timelineView.sort === 'created' && (timelineView.dir === 1 ? ' ▲' : ' ▼')}</button></th>
+                        <th scope="col" className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Status</th>
+                        {timelineStatusCols.map(n => <React.Fragment key={n}><th scope="col" className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-slate-500 font-semibold whitespace-nowrap hidden sm:table-cell" aria-sort={timelineView.sort === n ? (timelineView.dir === 1 ? 'ascending' : 'descending') : undefined}><button onClick={() => setTimelineSort(n)} className="uppercase tracking-wider hover:text-white">{n}{timelineView.sort === n && (timelineView.dir === 1 ? ' ▲' : ' ▼')}</button></th></React.Fragment>)}
+                        <th scope="col" className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-slate-500 font-semibold sm:hidden">Longest</th>
+                        <th scope="col" className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-slate-500 font-semibold whitespace-nowrap hidden sm:table-cell" aria-sort={timelineView.sort === 'cycle' ? (timelineView.dir === 1 ? 'ascending' : 'descending') : undefined}><button onClick={() => setTimelineSort('cycle')} className="uppercase tracking-wider hover:text-white">Cycle{timelineView.sort === 'cycle' && (timelineView.dir === 1 ? ' ▲' : ' ▼')}</button></th>
+                        <th scope="col" className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-slate-500 font-semibold whitespace-nowrap " aria-sort={timelineView.sort === 'lead' ? (timelineView.dir === 1 ? 'ascending' : 'descending') : undefined}><button onClick={() => setTimelineSort('lead')} className="uppercase tracking-wider hover:text-white">Lead{timelineView.sort === 'lead' && (timelineView.dir === 1 ? ' ▲' : ' ▼')}</button></th>
+                      </tr></thead>
+                      <tbody className="divide-y divide-white/5">
+                        {timelineLoading ? Array.from({ length: 5 }, (_, i) => <tr key={i}><td colSpan={timelineStatusCols.length + 8} className="px-3 py-3"><div className="h-3 rounded bg-slate-800/60 animate-pulse" /></td></tr>)
+                        : !timelineRows.length ? <tr><td colSpan={timelineStatusCols.length + 8} className="px-3 py-8 text-center text-sm text-slate-400">No tasks in the linked lists yet.</td></tr>
+                        : !timelineShown.length ? <tr><td colSpan={timelineStatusCols.length + 8} className="px-3 py-8 text-center text-sm text-slate-400">No tasks match. <button onClick={() => setTimelineView(v => ({ ...v, type: 'All', completeOnly: false }))} className="text-indigo-300 hover:underline">Clear the filter.</button></td></tr>
+                        : timelineVisible.map(r => {
+                          const cells = timelineStatusCols.map(n => r.byStatus[n] || 0);
+                          const max = Math.max(0, ...cells);
+                          const longest = Object.entries(r.byStatus).sort((a, b) => b[1] - a[1])[0];
+                          const st = (r.task.status?.status || '').toLowerCase();
+                          return (
+                            <tr key={r.task.id} onClick={(e) => openTimeline(r.task.id, e.currentTarget.querySelector('[data-tl-open]'))} className="hover:bg-white/[0.03] cursor-pointer">
+                              <td className="px-3 py-2.5 sticky left-0 bg-slate-950 z-[1] max-w-[260px]">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  {r.partial && <span title={historySince !== null ? `Recorded since ${formatDate(historySince)}; earlier time is not known.` : 'Status history is not recorded for this workspace.'} className="shrink-0 px-1.5 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-300 text-[10px] font-bold uppercase tracking-wider">Partial</span>}
+                                  <button data-tl-open onClick={(e) => { e.stopPropagation(); openTimeline(r.task.id, e.currentTarget); }} className="text-left truncate text-slate-200 hover:underline hover:text-indigo-200" title={r.task.name}>{r.task.name || 'Unnamed Task'}</button>
+                                </div>
+                                <div className="mt-1.5">{renderStrip(r, 'h-1.5')}</div>
+                              </td>
+                              <td className="px-3 py-2.5 text-slate-400 hidden lg:table-cell">{r.type}</td>
+                              <td className="px-3 py-2.5 hidden lg:table-cell"><span title={(r.task.assignees || []).map(a => a.username).join(', ')} className="text-xs text-slate-300">{(r.task.assignees || []).map(a => (a.username || '?').split(' ').map(w => w[0]).slice(0, 2).join('')).join(', ') || '—'}</span></td>
+                              <td className="px-3 py-2.5 text-slate-400 whitespace-nowrap hidden sm:table-cell">{formatDate(r.created)}</td>
+                              <td className="px-3 py-2.5 whitespace-nowrap"><span className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-slate-200"><span className="w-2 h-2 rounded-full" style={{ background: r.task.status?.color || statusColor(st) }} />{r.task.status?.status}</span></td>
+                              {cells.map((ms, i) => <td key={timelineStatusCols[i]} className={`px-3 py-2.5 tabular-nums whitespace-nowrap hidden sm:table-cell ${ms && ms === max ? 'font-bold text-white' : 'text-slate-200'}`}>{ms ? fmtDur(ms, r.shift) : <span className="text-slate-600" aria-label="none">—</span>}</td>)}
+                              <td className="px-3 py-2.5 whitespace-nowrap text-xs sm:hidden">{longest && longest[1] > 0 ? <><span className="capitalize text-slate-300">{longest[0]}</span> {fmtDur(longest[1], r.shift)}</> : <span className="text-slate-600">—</span>}</td>
+                              <td className="px-3 py-2.5 tabular-nums whitespace-nowrap hidden sm:table-cell">{r.cycleMs !== null ? fmtDur(r.cycleMs, r.shift) : <span className="text-slate-500">not known</span>}</td>
+                              <td className="px-3 py-2.5 tabular-nums whitespace-nowrap">{r.leadMs !== null ? fmtDur(r.leadMs, r.shift) : r.openMs !== null ? <span className="text-slate-400">open {fmtDur(r.openMs, r.shift)}</span> : <span className="text-slate-500">not known</span>}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  {!timelineLoading && timelineShown.length > 50 && <button onClick={() => setTimelineView(v => ({ ...v, all: !v.all }))} className="mt-2 w-full py-2 text-xs text-indigo-300 hover:text-white hover:bg-white/[0.03] rounded-lg">{timelineView.all ? 'Show first 50' : `Show all ${timelineShown.length}${timelineShown.length > 300 ? ' (may be slow)' : ''}`}</button>}
                 </div>
 
                 {/* 5. Team Workload */}
@@ -6383,7 +6788,7 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
                       {(attentionAll ? attentionTasks : attentionTasks.slice(0, 5)).map(({ task, labels, blocked }) => (
                         <li key={task.id} className="p-5 hover:bg-white/5 flex items-center justify-between gap-3 transition-colors">
                           <div className="min-w-0">
-                            <div className="flex items-center gap-2 mb-1.5"><div className="w-1.5 h-1.5 rounded-full shrink-0" style={{backgroundColor: task.status?.color || '#94a3b8'}}/><span className="text-sm font-bold text-slate-200 truncate">{task.name}</span></div>
+                            <div className="flex items-center gap-2 mb-1.5"><div className="w-1.5 h-1.5 rounded-full shrink-0" style={{backgroundColor: task.status?.color || '#94a3b8'}}/><button onClick={(e) => openTimeline(task.id, e.currentTarget)} className="text-left text-sm font-bold text-slate-200 truncate hover:underline hover:text-indigo-200">{task.name}</button></div>
                             <div className="flex flex-wrap gap-1.5 ml-3.5">
                               {labels.map((label, i) => (
                                 <span key={i} className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border ${blocked && i === 0 ? 'text-rose-300 bg-rose-500/10 border-rose-500/30' : 'text-amber-300 bg-amber-500/10 border-amber-500/20'}`}>{label}</span>
@@ -6431,7 +6836,7 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
                     return sections.map(({ workflow, groups }) => (
                       <div key={workflow.id} className="pb-2">
                         {activeWorkflows.length > 1 && <div className="px-6 pt-4 text-[11px] uppercase tracking-wide text-slate-500">{workflow.list}</div>}
-                        <StatusCarousel key={workflow.listId} groups={groups} storageKey={`weaver_status_order_${appId}_${portfolioUserKey || 'guest'}_${workflow.listId}_active`} expandedTasks={expandedTasks} toggleTaskExpand={toggleTaskExpand} />
+                        <StatusCarousel key={workflow.listId} groups={groups} storageKey={`weaver_status_order_${appId}_${portfolioUserKey || 'guest'}_${workflow.listId}_active`} expandedTasks={expandedTasks} toggleTaskExpand={toggleTaskExpand} defaultOrder={(workflow.listStatuses || []).map(x => x.status.toLowerCase())} onTimeline={openTimeline} />
                       </div>
                     ));
                   })()}
