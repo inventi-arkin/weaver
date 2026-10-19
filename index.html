@@ -6,7 +6,7 @@
   <title>Weaver - Thread Support and Development together</title>
   <meta name="referrer" content="no-referrer">
   <!-- Release version shown in the page footer; bump on every upload (YYYY.MM.DD-N) -->
-  <meta name="weaver-version" content="2026.10.16-1">
+  <meta name="weaver-version" content="2026.10.19-1">
   
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -1958,8 +1958,9 @@
           } else {
             try {
               const listDetail = await request(`list/${workflow.listId}`);
-              if (listDetail.start_date) listStartDate = listDetail.start_date;
-              if (listDetail.due_date) listDueDate = listDetail.due_date;
+              // Dates follow ClickUp, so a date cleared there is cleared here (a failed request keeps the old ones, below)
+              listStartDate = listDetail.start_date || null;
+              listDueDate = listDetail.due_date || null;
               if (listDetail.name) listName = listDetail.name;
               if (listDetail.space?.name) spaceName = listDetail.space.name;
               if (listDetail.folder) folderName = listDetail.folder.hidden ? 'No Folder' : (listDetail.folder.name || folderName);
