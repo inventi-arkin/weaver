@@ -6,7 +6,7 @@
   <title>Weaver - Thread Support and Development together</title>
   <meta name="referrer" content="no-referrer">
   <!-- Release version shown in the page footer; bump on every upload (YYYY.MM.DD-N) -->
-  <meta name="weaver-version" content="2026.10.20-3">
+  <meta name="weaver-version" content="2026.10.20-4">
   
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -474,7 +474,7 @@
       const isParent = depth === 0;
 
       const themeColor = task.status?.color || '#38bdf8';
-      const isDoneStatus = ['closed', 'complete', 'done', 'resolved'].includes((task.status?.status || '').toLowerCase());
+      const isDoneStatus = isDoneName(task.status?.status);
       
       const estimateMs = task.time_estimate ? parseInt(task.time_estimate) : 0;
       const spentMs = task.time_spent ? parseInt(task.time_spent) : (isDoneStatus ? estimateMs : 0);
@@ -542,10 +542,13 @@
     // ---- Status carousel: one floating card per status; status tabs can be dragged into a saved order ----
     const PRIORITY_DOT = { urgent: '#f87171', high: '#fb923c', normal: '#38bdf8', low: '#64748b' };
     const DONE_NAMES = ['closed', 'complete', 'done', 'resolved'];
+    // status-order A-2 FR-15: plus every status ClickUp types as done or closed in a linked list (e.g. invalid, spill over); filled in by the dashboard
+    const DONE_SET = new Set(DONE_NAMES);
+    const isDoneName = (n) => DONE_SET.has(String(n || '').toLowerCase());
 
     const taskTimes = (task) => {
       const est = task.time_estimate ? parseInt(task.time_estimate) : 0;
-      const isDone = DONE_NAMES.includes((task.status?.status || '').toLowerCase());
+      const isDone = isDoneName(task.status?.status);
       const spent = task.time_spent ? parseInt(task.time_spent) : (isDone ? est : 0);
       return { est, spent };
     };
@@ -617,7 +620,7 @@
       // status-order A-2 FR-9, FR-12, FR-13: the default is the list's own order in ClickUp; statuses ClickUp doesn't list go last, A to Z.
       // Without ClickUp's order (not synced yet): open statuses A to Z, then done statuses A to Z.
       const orderBy = (list, order) => [...list].sort((x, y) => { const ix = order.indexOf(keyOf(x)), iy = order.indexOf(keyOf(y)); return (ix < 0 ? 1e6 : ix) - (iy < 0 ? 1e6 : iy); });
-      const doneFirst = (g) => (DONE_NAMES.includes(keyOf(g)) ? 1 : 0); // done statuses follow the open ones by default
+      const doneFirst = (g) => (isDoneName(keyOf(g)) ? 1 : 0); // done statuses follow the open ones by default
       const rank = (g) => { const i = defaultOrder.indexOf(keyOf(g)); return i < 0 ? 1e6 : i; };
       const byDefault = [...groups].sort((x, y) => (defaultOrder.length ? rank(x) - rank(y) : doneFirst(x) - doneFirst(y)) || (keyOf(x) < keyOf(y) ? -1 : keyOf(x) > keyOf(y) ? 1 : 0));
       const cardData = orderBy(byDefault, saved);
@@ -3133,7 +3136,9 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
         };
         
         let filteredTasks = allFlatTasks.filter(checkGlobalFilter);
-        const doneStatuses = ['closed', 'complete', 'done', 'resolved'];
+        // status-order A-2 FR-15: end statuses = the usual names plus every status ClickUp types as done or closed in the linked lists
+        const doneStatuses = [...new Set([...DONE_NAMES, ...activeWorkflows.flatMap(wf => (wf.listStatuses || []).filter(x => x.type === 'done' || x.type === 'closed').map(x => x.status.toLowerCase()))])];
+        doneStatuses.forEach(n => DONE_SET.add(n));
         const backlogStatuses = ['open', 'backlog', 'sprint backlog', 'todo', 'to do', 'new', 'pending'];
 
         const buildFilteredTree = (tasks, isDoneMode) => {
@@ -4229,7 +4234,7 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
         }
 
         const timeInStatusStats = {};
-        const excludedStatusesForAccuracy = ['open', 'backlog', 'sprint backlog', 'todo', 'to do', 'closed', 'complete', 'done', 'resolved'];
+        const excludedStatusesForAccuracy = ['open', 'backlog', 'sprint backlog', 'todo', 'to do', ...doneStatuses];
 
         filteredTasks.forEach(t => {
             const statusName = (t.status?.status || 'open').toLowerCase();
