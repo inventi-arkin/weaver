@@ -6,7 +6,7 @@
   <title>Weaver - Thread Support and Development together</title>
   <meta name="referrer" content="no-referrer">
   <!-- Release version shown in the page footer; bump on every upload (YYYY.MM.DD-N) -->
-  <meta name="weaver-version" content="2026.10.20-1">
+  <meta name="weaver-version" content="2026.10.20-2">
   
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -216,6 +216,10 @@
     .wv-card { position: absolute; left: 50%; top: 0; margin-left: -190px; width: 380px; height: 480px; will-change: transform, opacity; }
     .wv-card:not([data-center="1"]) * { pointer-events: none; }
     .wv-card:not([data-center="1"]) { cursor: pointer; }
+    /* task-timeline table: one box that scrolls both ways, with a bar thick enough to grab */
+    .wv-table-box { scrollbar-width: auto; scrollbar-color: rgba(99,102,241,.55) rgba(15,23,42,.6); }
+    .wv-table-box::-webkit-scrollbar { width: 10px; height: 10px; }
+    .wv-table-box::-webkit-scrollbar-thumb { background: rgba(99,102,241,.45); border-radius: 6px; }
     .wv-tasks { overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: rgba(99,102,241,.4) transparent; }
   </style>
 
@@ -3756,7 +3760,7 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
         const recorderOff = !timelineLoading && historySince === null;
         const fmtWhen = (ms) => new Date(ms).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
         // FR-14 to FR-17: the Task Timelines table: filter, sort (lead time, longest first; unknown last), first 50 rows
-        const tlSortVal = (r, key) => key === 'name' ? (r.task.name || '').toLowerCase() : key === 'created' ? r.created : key === 'lead' ? r.leadMs : key === 'cycle' ? r.cycleMs : (r.byStatus[key] || 0);
+        const tlSortVal = (r, key) => key === 'name' ? (r.task.name || '').toLowerCase() : key === 'created' ? r.created : key === 'status' ? statusRank(r.task.status?.status) : key === 'lead' ? r.leadMs : key === 'cycle' ? r.cycleMs : (r.byStatus[key] || 0);
         const timelineShown = timelineRows
             .filter(r => timelineView.type === 'All' || (timelineView.type === 'Bugs' ? r.type === 'Bug' : r.type === 'Task'))
             .filter(r => !timelineView.completeOnly || r.complete)
@@ -3766,7 +3770,7 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
                 return (x > y ? 1 : x < y ? -1 : 0) * timelineView.dir;
             });
         const timelineVisible = timelineView.all ? timelineShown : timelineShown.slice(0, 50);
-        const setTimelineSort = (key) => setTimelineView(v => ({ ...v, sort: key, dir: v.sort === key ? -v.dir : (key === 'name' ? 1 : -1) }));
+        const setTimelineSort = (key) => setTimelineView(v => ({ ...v, sort: key, dir: v.sort === key ? -v.dir : (key === 'name' || key === 'status' ? 1 : -1) })); // status: ClickUp order first
         // FR-18: one CSV row per period of the rows the filter shows
         const exportTimelineCsv = () => {
             if (!timelineShown.length) return;
@@ -6636,18 +6640,18 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
                   </div>
                   {recorderOff && user?.isTeam && <div className="mb-3 rounded-xl border border-slate-600/50 bg-slate-800/40 p-3 text-xs text-slate-300 flex flex-wrap items-center gap-3"><span className="flex-1 min-w-[200px]">Status history isn't being recorded for this workspace. Turn on <b>Record status history</b> on the Portfolio page to build timelines from now on.</span><button onClick={() => setActiveView('portfolio')} className="btn-neon btn-neon-sm">Open Portfolio</button></div>}
                   {historyError && <div role="alert" className="mb-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-200">History could not be loaded; retrying on the next sync.</div>}
-                  <div className="overflow-x-auto rounded-xl border border-white/5">
+                  <div className="wv-table-box overflow-auto max-h-[min(70vh,640px)] rounded-xl border border-white/5" tabIndex={0} aria-label="Task timelines table (scrolls both ways)">
                     <table className="w-full text-sm">
-                      <thead className="border-b border-white/5"><tr>
-                        <th scope="col" className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-slate-500 font-semibold whitespace-nowrap sticky left-0 bg-slate-900 z-[1]" aria-sort={timelineView.sort === 'name' ? (timelineView.dir === 1 ? 'ascending' : 'descending') : undefined}><button onClick={() => setTimelineSort('name')} className="uppercase tracking-wider hover:text-white">Task{timelineView.sort === 'name' && (timelineView.dir === 1 ? ' ▲' : ' ▼')}</button></th>
-                        <th scope="col" className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-slate-500 font-semibold hidden lg:table-cell">Type</th>
-                        <th scope="col" className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-slate-500 font-semibold hidden lg:table-cell">Assignees</th>
-                        <th scope="col" className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-slate-500 font-semibold whitespace-nowrap hidden sm:table-cell" aria-sort={timelineView.sort === 'created' ? (timelineView.dir === 1 ? 'ascending' : 'descending') : undefined}><button onClick={() => setTimelineSort('created')} className="uppercase tracking-wider hover:text-white">Created{timelineView.sort === 'created' && (timelineView.dir === 1 ? ' ▲' : ' ▼')}</button></th>
-                        <th scope="col" className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Status</th>
-                        {timelineStatusCols.map(n => <React.Fragment key={n}><th scope="col" className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-slate-500 font-semibold whitespace-nowrap hidden sm:table-cell" aria-sort={timelineView.sort === n ? (timelineView.dir === 1 ? 'ascending' : 'descending') : undefined}><button onClick={() => setTimelineSort(n)} className="uppercase tracking-wider hover:text-white">{n}{timelineView.sort === n && (timelineView.dir === 1 ? ' ▲' : ' ▼')}</button></th></React.Fragment>)}
-                        <th scope="col" className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-slate-500 font-semibold sm:hidden">Longest</th>
-                        <th scope="col" className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-slate-500 font-semibold whitespace-nowrap hidden sm:table-cell" aria-sort={timelineView.sort === 'cycle' ? (timelineView.dir === 1 ? 'ascending' : 'descending') : undefined}><button onClick={() => setTimelineSort('cycle')} className="uppercase tracking-wider hover:text-white">Cycle{timelineView.sort === 'cycle' && (timelineView.dir === 1 ? ' ▲' : ' ▼')}</button></th>
-                        <th scope="col" className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-slate-500 font-semibold whitespace-nowrap " aria-sort={timelineView.sort === 'lead' ? (timelineView.dir === 1 ? 'ascending' : 'descending') : undefined}><button onClick={() => setTimelineSort('lead')} className="uppercase tracking-wider hover:text-white">Lead{timelineView.sort === 'lead' && (timelineView.dir === 1 ? ' ▲' : ' ▼')}</button></th>
+                      <thead><tr>
+                        <th scope="col" className="sticky top-0 left-0 bg-slate-900 z-[3] px-3 py-2 text-left align-bottom text-[10px] uppercase tracking-wider text-slate-500 font-semibold whitespace-nowrap" aria-sort={timelineView.sort === 'name' ? (timelineView.dir === 1 ? 'ascending' : 'descending') : undefined}><button onClick={() => setTimelineSort('name')} className="uppercase tracking-wider hover:text-white">Task{timelineView.sort === 'name' && (timelineView.dir === 1 ? ' ▲' : ' ▼')}</button></th>
+                        <th scope="col" className="sticky top-0 bg-slate-900 z-[2] px-3 py-2 text-left align-bottom text-[10px] uppercase tracking-wider text-slate-500 font-semibold hidden lg:table-cell">Type</th>
+                        <th scope="col" className="sticky top-0 bg-slate-900 z-[2] px-3 py-2 text-left align-bottom text-[10px] uppercase tracking-wider text-slate-500 font-semibold hidden lg:table-cell">Assignees</th>
+                        <th scope="col" className="sticky top-0 bg-slate-900 z-[2] px-3 py-2 text-left align-bottom text-[10px] uppercase tracking-wider text-slate-500 font-semibold whitespace-nowrap hidden sm:table-cell" aria-sort={timelineView.sort === 'created' ? (timelineView.dir === 1 ? 'ascending' : 'descending') : undefined}><button onClick={() => setTimelineSort('created')} className="uppercase tracking-wider hover:text-white">Created{timelineView.sort === 'created' && (timelineView.dir === 1 ? ' ▲' : ' ▼')}</button></th>
+                        <th scope="col" className="sticky top-0 bg-slate-900 z-[2] px-3 py-2 text-left align-bottom text-[10px] uppercase tracking-wider text-slate-500 font-semibold whitespace-nowrap" aria-sort={timelineView.sort === 'status' ? (timelineView.dir === 1 ? 'ascending' : 'descending') : undefined}><button onClick={() => setTimelineSort('status')} title="Sort in ClickUp's status order" className="uppercase tracking-wider hover:text-white">Status{timelineView.sort === 'status' && (timelineView.dir === 1 ? ' ▲' : ' ▼')}</button></th>
+                        {timelineStatusCols.map(n => <React.Fragment key={n}><th scope="col" className="sticky top-0 bg-slate-900 z-[2] px-3 py-2 text-left align-bottom text-[10px] uppercase tracking-wider text-slate-500 font-semibold whitespace-normal min-w-[64px] max-w-[96px] leading-tight hidden sm:table-cell" aria-sort={timelineView.sort === n ? (timelineView.dir === 1 ? 'ascending' : 'descending') : undefined}><button onClick={() => setTimelineSort(n)} className="uppercase tracking-wider hover:text-white">{n}{timelineView.sort === n && (timelineView.dir === 1 ? ' ▲' : ' ▼')}</button></th></React.Fragment>)}
+                        <th scope="col" className="sticky top-0 bg-slate-900 z-[2] px-3 py-2 text-left align-bottom text-[10px] uppercase tracking-wider text-slate-500 font-semibold sm:hidden">Longest</th>
+                        <th scope="col" className="sticky top-0 bg-slate-900 z-[2] px-3 py-2 text-left align-bottom text-[10px] uppercase tracking-wider text-slate-500 font-semibold whitespace-nowrap hidden sm:table-cell" aria-sort={timelineView.sort === 'cycle' ? (timelineView.dir === 1 ? 'ascending' : 'descending') : undefined}><button onClick={() => setTimelineSort('cycle')} className="uppercase tracking-wider hover:text-white">Cycle{timelineView.sort === 'cycle' && (timelineView.dir === 1 ? ' ▲' : ' ▼')}</button></th>
+                        <th scope="col" className="sticky top-0 bg-slate-900 z-[2] px-3 py-2 text-left align-bottom text-[10px] uppercase tracking-wider text-slate-500 font-semibold whitespace-nowrap " aria-sort={timelineView.sort === 'lead' ? (timelineView.dir === 1 ? 'ascending' : 'descending') : undefined}><button onClick={() => setTimelineSort('lead')} className="uppercase tracking-wider hover:text-white">Lead{timelineView.sort === 'lead' && (timelineView.dir === 1 ? ' ▲' : ' ▼')}</button></th>
                       </tr></thead>
                       <tbody className="divide-y divide-white/5">
                         {timelineLoading ? Array.from({ length: 5 }, (_, i) => <tr key={i}><td colSpan={timelineStatusCols.length + 8} className="px-3 py-3"><div className="h-3 rounded bg-slate-800/60 animate-pulse" /></td></tr>)
@@ -6713,7 +6717,7 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
                                 </select>
                               </div>
                               <div className="flex flex-wrap gap-1.5 mb-6">
-                                {Object.entries(assignee.statusCounts).map(([status, {count, color}]) => (
+                                {Object.entries(assignee.statusCounts).sort((a, b) => byStatusOrder(a[0], b[0])).map(([status, {count, color}]) => ( // status-order A-2 FR-14
                                   <span key={status} className="px-2 py-0.5 text-[10px] font-bold rounded capitalize border flex items-center gap-1" style={{ color, backgroundColor: `${color}10`, borderColor: `${color}30` }}>
                                     {status} <span className="opacity-70">{count}</span>
                                   </span>
