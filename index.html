@@ -6,7 +6,7 @@
   <title>Weaver - Thread Support and Development together</title>
   <meta name="referrer" content="no-referrer">
   <!-- Release version shown in the page footer; bump on every upload (YYYY.MM.DD-N) -->
-  <meta name="weaver-version" content="2026.10.20-4">
+  <meta name="weaver-version" content="2026.10.22-1">
   
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -5424,7 +5424,7 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
                               <div className="mb-4">{renderStrip(r, 'h-3')}</div>
                               <ol>
                                 <li className="relative pl-6 pb-4">
-                                  <span className="absolute left-[5px] top-3 bottom-0 border-l-2 border-slate-700" aria-hidden="true" />
+                                  {r.periods.length > 0 && <span className="absolute left-[5px] top-[10px] -bottom-[10px] border-l-2 border-slate-700" aria-hidden="true" />}
                                   <span className="absolute left-0 top-1 w-3 h-3 rounded-full border-2 border-indigo-400 bg-slate-900" aria-hidden="true" />
                                   <div className="flex items-baseline justify-between gap-3"><span className="text-sm text-slate-200">Created</span><span className="text-xs text-slate-400 tabular-nums whitespace-nowrap">{fmtWhen(r.created)}</span></div>
                                 </li>
@@ -5432,7 +5432,7 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
                                   const c = statusColor(x.status);
                                   if (x.source === 'gap') return (
                                     <li key={i} className="relative pl-6 pb-4" aria-label={`Not recorded, ${formatDate(x.from)} to ${formatDate(x.end)}, ${fmtCalendar(x.calMs)}, not counted`}>
-                                      <span className="absolute left-[5px] top-0 bottom-0 border-l-2 border-dashed border-slate-600" aria-hidden="true" />
+                                      {i < r.periods.length - 1 && <span className="absolute left-[5px] top-[10px] -bottom-[10px] border-l-2 border-dashed border-slate-600" aria-hidden="true" />}
                                       <span className="absolute left-0 top-1 w-3 h-3 rounded-full border-2 border-dashed border-slate-500 bg-slate-900" aria-hidden="true" />
                                       <div className="flex items-baseline justify-between gap-3"><span className="text-sm italic text-slate-500">Unknown <span className="not-italic text-[10px] uppercase tracking-wider">not recorded</span></span><span className="text-xs text-slate-500 tabular-nums whitespace-nowrap">{formatDate(x.from)} → {formatDate(x.end)}</span></div>
                                       <div className="text-xs text-slate-500">({fmtCalendar(x.calMs)}, not counted)</div>
@@ -5441,7 +5441,7 @@ portfoliosRef.current = []; setPortfolios([]); setPortfoliosReady(false); active
                                   const hollow = x.source === 'inferred' || x.source === 'since';
                                   return (
                                     <li key={i} className="relative pl-6 pb-4" aria-label={`${x.status}, ${x.source}, entered ${fmtWhen(x.from)}, ${fmtDur(x.workMs, r.shift)} working time${x.current ? ', current status' : ''}`}>
-                                      <span className={`absolute left-[5px] top-0 bottom-0 border-l-2 ${x.source === 'since' ? 'border-dashed' : ''}`} style={{ borderColor: hollow ? `${c}80` : c }} aria-hidden="true" />
+                                      {i < r.periods.length - 1 && <span className={`absolute left-[5px] top-[10px] -bottom-[10px] border-l-2 ${x.source === 'since' ? 'border-dashed' : ''}`} style={{ borderColor: hollow ? `${c}80` : c }} aria-hidden="true" />}
                                       <span className={`absolute left-0 top-1 w-3 h-3 rounded-full ${x.current ? 'animate-pulse motion-reduce:animate-none' : ''}`} style={hollow ? { border: `2px solid ${c}`, background: '#0f172a' } : { background: c }} aria-hidden="true" />
                                       <div className="flex items-baseline justify-between gap-3"><span className="text-sm text-slate-200"><span className="capitalize">{x.status}</span>{srcTag(x)}</span><span className="text-xs text-slate-400 tabular-nums whitespace-nowrap">{x.source === 'since' ? `since at least ${formatDate(x.from)}` : fmtWhen(x.from)}</span></div>
                                       {x.source !== 'since' && <div className="text-xs text-slate-300 tabular-nums" title={`${fmtCalendar(x.calMs)} calendar · 1d = ${r.shift.hours} h, ${r.shift.role} shift`}>{x.current && <b className="text-indigo-300">now </b>}{fmtDur(x.workMs, r.shift)} <span className="text-slate-500">working</span></div>}
